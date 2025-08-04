@@ -19,7 +19,7 @@ package {
     // all of the 'license_kinds' from "system_bt_license"
     // to get the below license kinds:
     //   SPDX-license-identifier-Apache-2.0
-    default_applicable_licenses: ["system_bt_license"],
+    default_applicable_licenses: ["rootcanal_license"],
 }
 
 cc_library_static {
