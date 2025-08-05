@@ -1,19 +1,11 @@
-// simulation library for testing virtual devices
 package {
-    default_applicable_licenses: ["rootcanal_license"],
+    default_applicable_licenses: ["Android-Apache-2.0"],
     default_visibility: [
         "//device:__subpackages__",
-        "//packages/modules/Bluetooth:__subpackages__",
         "//platform_testing:__subpackages__",
         "//tools/netsim:__subpackages__",
+        ":__subpackages__",
     ],
-}
-
-license {
-    name: "rootcanal_license",
-    visibility: [":__subpackages__"],
-    license_kinds: ["SPDX-license-identifier-Apache-2.0"],
-    license_text: ["NOTICE"],
 }
 
 cc_defaults {
