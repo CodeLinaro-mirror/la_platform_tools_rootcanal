@@ -16,7 +16,7 @@ cc_library_static {
         canonical_path_from_root: false,
         type: "full",
         include_dirs: [
-            "proto",
+            "tools/rootcanal/proto",
         ],
     },
     shared_libs: [

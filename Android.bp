@@ -42,7 +42,7 @@ cc_defaults {
         "-fvisibility=hidden",
     ],
     include_dirs: [
-        "include",
+        "tools/rootcanal/include",
     ],
     header_libs: [
         "libbase_headers",
@@ -259,9 +259,6 @@ cc_test_host {
         "test/controller/le/le_set_scan_parameters_test.cc",
         "test/controller/le/rpa_generation_test.cc",
     ],
-    header_libs: [
-        "libbluetooth_headers",
-    ],
     local_include_dirs: [
         ".",
     ],
@@ -313,20 +310,12 @@ python_test_host {
 // test-vendor unit tests for host
 cc_test_host {
     name: "rootcanal_test_host",
-    defaults: [
-        "bluetooth_cflags",
-    ],
-    // TODO(b/231993739): Reenable isolated:true by deleting the explicit disable below
-    isolated: false,
     srcs: [
         "test/async_manager_unittest.cc",
         "test/h4_parser_unittest.cc",
         "test/invalid_packet_handler_unittest.cc",
         "test/pcap_filter_unittest.cc",
         "test/posix_socket_unittest.cc",
-    ],
-    header_libs: [
-        "libbluetooth_headers",
     ],
     local_include_dirs: [
         "include",
@@ -356,9 +345,6 @@ cc_binary_host {
     srcs: [
         "desktop/root_canal_main.cc",
         "desktop/test_environment.cc",
-    ],
-    header_libs: [
-        "libbluetooth_headers",
     ],
     shared_libs: [
         "libbase",
