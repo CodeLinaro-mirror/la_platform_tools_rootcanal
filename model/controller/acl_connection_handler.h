@@ -93,9 +93,6 @@ public:
   // if the handle is not currently used.
   AclConnection& GetAclConnection(uint16_t handle);
 
-  void Encrypt(uint16_t handle);
-  bool IsEncrypted(uint16_t handle) const;
-
   void SetRssi(uint16_t handle, int8_t rssi);
   int8_t GetRssi(uint16_t handle) const;
 
@@ -103,8 +100,6 @@ public:
 
   uint16_t GetAclLinkPolicySettings(uint16_t handle) const;
   void SetAclLinkPolicySettings(uint16_t handle, uint16_t settings);
-
-  bluetooth::hci::Role GetAclRole(uint16_t handle) const;
 
   std::vector<uint16_t> GetAclHandles() const;
 

@@ -186,20 +186,6 @@ AddressWithType AclConnectionHandler::GetResolvedAddress(uint16_t handle) const 
   return acl_connections_.at(handle).GetResolvedAddress();
 }
 
-void AclConnectionHandler::Encrypt(uint16_t handle) {
-  if (!HasHandle(handle)) {
-    return;
-  }
-  acl_connections_.at(handle).Encrypt();
-}
-
-bool AclConnectionHandler::IsEncrypted(uint16_t handle) const {
-  if (!HasHandle(handle)) {
-    return false;
-  }
-  return acl_connections_.at(handle).IsEncrypted();
-}
-
 void AclConnectionHandler::SetRssi(uint16_t handle, int8_t rssi) {
   if (HasHandle(handle)) {
     acl_connections_.at(handle).SetRssi(rssi);
@@ -223,10 +209,6 @@ uint16_t AclConnectionHandler::GetAclLinkPolicySettings(uint16_t handle) const {
 
 void AclConnectionHandler::SetAclLinkPolicySettings(uint16_t handle, uint16_t settings) {
   acl_connections_.at(handle).SetLinkPolicySettings(settings);
-}
-
-bluetooth::hci::Role AclConnectionHandler::GetAclRole(uint16_t handle) const {
-  return acl_connections_.at(handle).GetRole();
 }
 
 void AclConnectionHandler::CreateScoConnection(bluetooth::hci::Address addr,

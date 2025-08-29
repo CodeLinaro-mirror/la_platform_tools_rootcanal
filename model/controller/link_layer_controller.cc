@@ -4405,12 +4405,15 @@ void LinkLayerController::IncomingLeEncryptConnectionResponse(
         model::packets::LinkLayerPacketView incoming) {
   INFO(id_, "IncomingLeEncryptConnectionResponse");
   // TODO: Check keys
+
   uint16_t handle = connections_.GetHandleOnlyAddress(incoming.GetSourceAddress());
   if (handle == kReservedHandle) {
     INFO(id_, "@{}: Unknown connection @{}", incoming.GetDestinationAddress(),
          incoming.GetSourceAddress());
     return;
   }
+
+  auto& connection = connections_.GetAclConnection(handle);
   ErrorCode status = ErrorCode::SUCCESS;
   auto response = model::packets::LeEncryptConnectionResponseView::Create(incoming);
   ASSERT(response.IsValid());
@@ -4422,12 +4425,12 @@ void LinkLayerController::IncomingLeEncryptConnectionResponse(
     success = false;
   }
 
-  if (connections_.IsEncrypted(handle)) {
+  if (connection.IsEncrypted()) {
     if (IsEventUnmasked(EventCode::ENCRYPTION_KEY_REFRESH_COMPLETE)) {
       send_event_(bluetooth::hci::EncryptionKeyRefreshCompleteBuilder::Create(status, handle));
     }
   } else if (success) {
-    connections_.Encrypt(handle);
+    connection.Encrypt();
     if (IsEventUnmasked(EventCode::ENCRYPTION_CHANGE)) {
       send_event_(bluetooth::hci::EncryptionChangeBuilder::Create(
               status, handle, bluetooth::hci::EncryptionEnabled::ON));
@@ -5317,7 +5320,8 @@ ErrorCode LinkLayerController::RoleDiscovery(uint16_t handle, bluetooth::hci::Ro
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
-  *role = connections_.GetAclRole(handle);
+  auto const& connection = connections_.GetAclConnection(handle);
+  *role = connection.GetRole();
   return ErrorCode::SUCCESS;
 }
 
@@ -5559,15 +5563,15 @@ ErrorCode LinkLayerController::LeConnectionUpdate(uint16_t handle, uint16_t inte
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
-  bluetooth::hci::Role role = connections_.GetAclRole(handle);
+  auto& connection = connections_.GetAclConnection(handle);
+  bluetooth::hci::Role role = connection.GetRole();
 
   if (role == bluetooth::hci::Role::CENTRAL) {
     // As Central, it is allowed to directly send
     // LL_CONNECTION_PARAM_UPDATE_IND to update the parameters.
     SendLeLinkLayerPacket(LeConnectionParameterUpdateBuilder::Create(
-            connections_.GetOwnAddress(handle).GetAddress(),
-            connections_.GetAddress(handle).GetAddress(), static_cast<uint8_t>(ErrorCode::SUCCESS),
-            interval_max, latency, supervision_timeout));
+            connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress(),
+            static_cast<uint8_t>(ErrorCode::SUCCESS), interval_max, latency, supervision_timeout));
 
     if (IsLeEventUnmasked(SubeventCode::LE_CONNECTION_UPDATE_COMPLETE)) {
       send_event_(bluetooth::hci::LeConnectionUpdateCompleteBuilder::Create(
@@ -5577,9 +5581,8 @@ ErrorCode LinkLayerController::LeConnectionUpdate(uint16_t handle, uint16_t inte
     // Send LL_CONNECTION_PARAM_REQ and wait for LL_CONNECTION_PARAM_RSP
     // in return.
     SendLeLinkLayerPacket(LeConnectionParameterRequestBuilder::Create(
-            connections_.GetOwnAddress(handle).GetAddress(),
-            connections_.GetAddress(handle).GetAddress(), interval_min, interval_max, latency,
-            supervision_timeout));
+            connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress(),
+            interval_min, interval_max, latency, supervision_timeout));
   }
 
   return ErrorCode::SUCCESS;
@@ -5659,14 +5662,16 @@ ErrorCode LinkLayerController::LeLongTermKeyRequestReply(uint16_t handle,
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
+  auto& connection = connections_.GetAclConnection(handle);
+
   // TODO: Check keys
-  if (connections_.IsEncrypted(handle)) {
+  if (connection.IsEncrypted()) {
     if (IsEventUnmasked(EventCode::ENCRYPTION_KEY_REFRESH_COMPLETE)) {
       send_event_(bluetooth::hci::EncryptionKeyRefreshCompleteBuilder::Create(ErrorCode::SUCCESS,
                                                                               handle));
     }
   } else {
-    connections_.Encrypt(handle);
+    connection.Encrypt();
     if (IsEventUnmasked(EventCode::ENCRYPTION_CHANGE_V2)) {
       send_event_(bluetooth::hci::EncryptionChangeV2Builder::Create(
               ErrorCode::SUCCESS, handle, bluetooth::hci::EncryptionEnabled::ON,
@@ -5677,8 +5682,8 @@ ErrorCode LinkLayerController::LeLongTermKeyRequestReply(uint16_t handle,
     }
   }
   SendLeLinkLayerPacket(model::packets::LeEncryptConnectionResponseBuilder::Create(
-          connections_.GetOwnAddress(handle).GetAddress(),
-          connections_.GetAddress(handle).GetAddress(), std::array<uint8_t, 8>(), uint16_t(), ltk));
+          connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress(),
+          std::array<uint8_t, 8>(), uint16_t(), ltk));
 
   return ErrorCode::SUCCESS;
 }
