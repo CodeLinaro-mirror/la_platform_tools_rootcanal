@@ -1074,6 +1074,17 @@ private:
   // RootCanal will allow only one page request running at the same time.
   std::optional<Page> page_;
 
+  struct PageScan {
+    Address bd_addr;
+    bool authentication_required;
+    uint8_t allow_role_switch;
+  };
+
+  // Page scan substate.
+  // Set when page scan is enabled and a valid page request is received.
+  // Holds the state for the connection being established.
+  std::optional<PageScan> page_scan_;
+
   std::chrono::steady_clock::time_point last_inquiry_;
   model::packets::InquiryType inquiry_mode_{model::packets::InquiryType::STANDARD};
   TaskId inquiry_timer_task_id_ = kInvalidTaskId;
