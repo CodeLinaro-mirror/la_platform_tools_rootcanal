@@ -136,15 +136,6 @@ bool AclConnectionHandler::Disconnect(uint16_t handle, std::function<void(TaskId
   return false;
 }
 
-uint16_t AclConnectionHandler::GetHandle(AddressWithType addr) const {
-  for (auto pair : acl_connections_) {
-    if (std::get<AclConnection>(pair).GetAddress() == addr) {
-      return std::get<0>(pair);
-    }
-  }
-  return kReservedHandle;
-}
-
 uint16_t AclConnectionHandler::GetHandleOnlyAddress(bluetooth::hci::Address addr) const {
   for (auto pair : acl_connections_) {
     if (std::get<AclConnection>(pair).GetAddress().GetAddress() == addr) {
@@ -236,10 +227,6 @@ void AclConnectionHandler::SetAclLinkPolicySettings(uint16_t handle, uint16_t se
 
 bluetooth::hci::Role AclConnectionHandler::GetAclRole(uint16_t handle) const {
   return acl_connections_.at(handle).GetRole();
-}
-
-void AclConnectionHandler::SetAclRole(uint16_t handle, bluetooth::hci::Role role) {
-  acl_connections_.at(handle).SetRole(role);
 }
 
 void AclConnectionHandler::CreateScoConnection(bluetooth::hci::Address addr,
