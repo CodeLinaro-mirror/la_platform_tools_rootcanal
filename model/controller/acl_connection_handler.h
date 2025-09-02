@@ -82,7 +82,6 @@ public:
   // \p bd_addr is the peer address.
   std::optional<uint16_t> GetAclConnectionHandle(bluetooth::hci::Address bd_addr) const;
 
-  uint16_t GetHandle(bluetooth::hci::AddressWithType addr) const;
   uint16_t GetHandleOnlyAddress(bluetooth::hci::Address addr) const;
   bluetooth::hci::AddressWithType GetAddress(uint16_t handle) const;
   std::optional<AddressWithType> GetAddressSafe(uint16_t handle) const;
@@ -94,9 +93,6 @@ public:
   // if the handle is not currently used.
   AclConnection& GetAclConnection(uint16_t handle);
 
-  void Encrypt(uint16_t handle);
-  bool IsEncrypted(uint16_t handle) const;
-
   void SetRssi(uint16_t handle, int8_t rssi);
   int8_t GetRssi(uint16_t handle) const;
 
@@ -104,9 +100,6 @@ public:
 
   uint16_t GetAclLinkPolicySettings(uint16_t handle) const;
   void SetAclLinkPolicySettings(uint16_t handle, uint16_t settings);
-
-  bluetooth::hci::Role GetAclRole(uint16_t handle) const;
-  void SetAclRole(uint16_t handle, bluetooth::hci::Role role);
 
   std::vector<uint16_t> GetAclHandles() const;
 
