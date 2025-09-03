@@ -67,46 +67,14 @@ uint16_t AclConnectionHandler::GetUnusedHandle() {
   return unused_handle;
 }
 
-bool AclConnectionHandler::CreatePendingConnection(Address addr, bool authenticate_on_connect,
-                                                   bool allow_role_switch) {
-  if (classic_connection_pending_ || GetAclConnectionHandle(addr).has_value()) {
-    return false;
-  }
-  classic_connection_pending_ = true;
-  pending_connection_address_ = addr;
-  authenticate_pending_classic_connection_ = authenticate_on_connect;
-  pending_classic_connection_allow_role_switch_ = allow_role_switch;
-  return true;
-}
-
-bool AclConnectionHandler::HasPendingConnection(Address addr) const {
-  return classic_connection_pending_ && pending_connection_address_ == addr;
-}
-
-bool AclConnectionHandler::AuthenticatePendingConnection() const {
-  return authenticate_pending_classic_connection_;
-}
-
-bool AclConnectionHandler::CancelPendingConnection(Address addr) {
-  if (!classic_connection_pending_ || pending_connection_address_ != addr) {
-    return false;
-  }
-  classic_connection_pending_ = false;
-  pending_connection_address_ = Address::kEmpty;
-  return true;
-}
-
-uint16_t AclConnectionHandler::CreateConnection(Address addr, Address own_addr, bool pending) {
-  if (!pending || CancelPendingConnection(addr)) {
-    uint16_t handle = GetUnusedHandle();
-    acl_connections_.emplace(
-            handle,
-            AclConnection{AddressWithType{addr, AddressType::PUBLIC_DEVICE_ADDRESS},
-                          AddressWithType{own_addr, AddressType::PUBLIC_DEVICE_ADDRESS},
-                          AddressWithType(), Phy::Type::BR_EDR, bluetooth::hci::Role::CENTRAL});
-    return handle;
-  }
-  return kReservedHandle;
+uint16_t AclConnectionHandler::CreateConnection(Address addr, Address own_addr) {
+  uint16_t handle = GetUnusedHandle();
+  acl_connections_.emplace(
+          handle,
+          AclConnection{AddressWithType{addr, AddressType::PUBLIC_DEVICE_ADDRESS},
+                        AddressWithType{own_addr, AddressType::PUBLIC_DEVICE_ADDRESS},
+                        AddressWithType(), Phy::Type::BR_EDR, bluetooth::hci::Role::CENTRAL});
+  return handle;
 }
 
 uint16_t AclConnectionHandler::CreateLeConnection(AddressWithType addr,
@@ -344,10 +312,6 @@ std::chrono::steady_clock::duration AclConnectionHandler::TimeUntilLinkExpired(
 
 bool AclConnectionHandler::HasLinkExpired(uint16_t handle) const {
   return acl_connections_.at(handle).HasExpired();
-}
-
-bool AclConnectionHandler::IsRoleSwitchAllowedForPendingConnection() const {
-  return pending_classic_connection_allow_role_switch_;
 }
 
 }  // namespace rootcanal
