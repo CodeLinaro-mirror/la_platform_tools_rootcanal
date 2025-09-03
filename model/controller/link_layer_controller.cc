@@ -2050,7 +2050,7 @@ LinkLayerController::LinkLayerController(const Address& address,
                     Address source = connection.GetOwnAddress().GetAddress();
                     Address destination = connection.GetAddress().GetAddress();
 
-                    controller->SendLinkLayerPacket(model::packets::LlcpBuilder::Create(
+                    controller->SendLeLinkLayerPacket(model::packets::LlcpBuilder::Create(
                             source, destination, std::vector(data, data + len)));
                   }};
 
@@ -2113,10 +2113,6 @@ ErrorCode LinkLayerController::SendCommandToRemoteByAddress(OpCode opcode, pdl::
       SendLinkLayerPacket(model::packets::ReadRemoteExtendedFeaturesBuilder::Create(
               own_address, peer_address, page_number));
     } break;
-    case (OpCode::READ_REMOTE_VERSION_INFORMATION):
-      SendLinkLayerPacket(model::packets::ReadRemoteVersionInformationBuilder::Create(
-              own_address, peer_address));
-      break;
     case (OpCode::READ_CLOCK_OFFSET):
       SendLinkLayerPacket(
               model::packets::ReadClockOffsetBuilder::Create(own_address, peer_address));
@@ -2165,53 +2161,36 @@ ErrorCode LinkLayerController::SendScoToRemote(bluetooth::hci::ScoView sco_packe
 }
 
 void LinkLayerController::IncomingPacket(model::packets::LinkLayerPacketView incoming,
-                                         int8_t rssi) {
+                                         Phy::Type phy, int8_t rssi) {
   ASSERT(incoming.IsValid());
+
+  switch (phy) {
+    case Phy::Type::BR_EDR:
+      IncomingBrEdrPacket(incoming, rssi);
+      break;
+    case Phy::Type::LOW_ENERGY:
+      IncomingLePacket(incoming, rssi);
+      break;
+  }
+}
+
+void LinkLayerController::IncomingBrEdrPacket(model::packets::LinkLayerPacketView incoming,
+                                              int8_t rssi) {
   auto destination_address = incoming.GetDestinationAddress();
-
-  // Match broadcasts
-  bool address_matches = (destination_address == Address::kEmpty);
-
-  // Address match is performed in specific handlers for these PDU types.
-  switch (incoming.GetType()) {
-    case model::packets::PacketType::LE_SCAN:
-    case model::packets::PacketType::LE_SCAN_RESPONSE:
-    case model::packets::PacketType::LE_LEGACY_ADVERTISING_PDU:
-    case model::packets::PacketType::LE_EXTENDED_ADVERTISING_PDU:
-    case model::packets::PacketType::LE_CONNECT:
-      address_matches = true;
-      break;
-    default:
-      break;
-  }
-
-  // Check public address
-  if (destination_address == address_ || destination_address == random_address_) {
-    address_matches = true;
-  }
-
-  // Check current connection address
-  if (destination_address == initiator_.initiating_address) {
-    address_matches = true;
-  }
-
-  // Check connection addresses
   auto source_address = incoming.GetSourceAddress();
-  auto handle = connections_.GetHandleOnlyAddress(source_address);
-  if (handle != kReservedHandle) {
-    if (connections_.GetOwnAddress(handle).GetAddress() == destination_address) {
-      address_matches = true;
 
-      // Update link timeout for valid ACL connections
-      connections_.ResetLinkTimer(handle);
-    }
+  // Accept broadcasts to address 00:00:00:00:00:00 but otherwise ignore the incoming
+  // packet if the destination address is not the local public address.
+  if (destination_address != Address::kEmpty && destination_address != address_) {
+    DEBUG(id_, "[LM] {} | Dropping {} packet not addressed to me {}->{}", address_,
+          PacketTypeText(incoming.GetType()), source_address, destination_address);
+    return;
   }
 
-  // Drop packets not addressed to me
-  if (!address_matches) {
-    INFO(id_, "{} | Dropping packet not addressed to me {}->{} (type 0x{:x})", address_,
-         source_address, destination_address, static_cast<int>(incoming.GetType()));
-    return;
+  // Update link timeout for established ACL connections.
+  auto connection_handle = connections_.GetHandleOnlyAddress(source_address);
+  if (connection_handle != kReservedHandle) {
+    connections_.ResetLinkTimer(connection_handle);
   }
 
   switch (incoming.GetType()) {
@@ -2221,17 +2200,11 @@ void LinkLayerController::IncomingPacket(model::packets::LinkLayerPacketView inc
     case model::packets::PacketType::SCO:
       IncomingScoPacket(incoming);
       break;
-    case model::packets::PacketType::LE_CONNECTED_ISOCHRONOUS_PDU:
-      IncomingLeConnectedIsochronousPdu(incoming);
-      break;
     case model::packets::PacketType::DISCONNECT:
       IncomingDisconnectPacket(incoming);
       break;
     case model::packets::PacketType::LMP:
       IncomingLmpPacket(incoming);
-      break;
-    case model::packets::PacketType::LLCP:
-      IncomingLlcpPacket(incoming);
       break;
     case model::packets::PacketType::INQUIRY:
       if (inquiry_scan_enable_) {
@@ -2240,45 +2213,6 @@ void LinkLayerController::IncomingPacket(model::packets::LinkLayerPacketView inc
       break;
     case model::packets::PacketType::INQUIRY_RESPONSE:
       IncomingInquiryResponsePacket(incoming);
-      break;
-    case model::packets::PacketType::LE_LEGACY_ADVERTISING_PDU:
-      IncomingLeLegacyAdvertisingPdu(incoming, rssi);
-      return;
-    case model::packets::PacketType::LE_EXTENDED_ADVERTISING_PDU:
-      IncomingLeExtendedAdvertisingPdu(incoming, rssi);
-      return;
-    case model::packets::PacketType::LE_PERIODIC_ADVERTISING_PDU:
-      IncomingLePeriodicAdvertisingPdu(incoming, rssi);
-      return;
-    case model::packets::PacketType::LE_CONNECT:
-      IncomingLeConnectPacket(incoming);
-      break;
-    case model::packets::PacketType::LE_CONNECT_COMPLETE:
-      IncomingLeConnectCompletePacket(incoming);
-      break;
-    case model::packets::PacketType::LE_CONNECTION_PARAMETER_REQUEST:
-      IncomingLeConnectionParameterRequest(incoming);
-      break;
-    case model::packets::PacketType::LE_CONNECTION_PARAMETER_UPDATE:
-      IncomingLeConnectionParameterUpdate(incoming);
-      break;
-    case model::packets::PacketType::LE_ENCRYPT_CONNECTION:
-      IncomingLeEncryptConnection(incoming);
-      break;
-    case model::packets::PacketType::LE_ENCRYPT_CONNECTION_RESPONSE:
-      IncomingLeEncryptConnectionResponse(incoming);
-      break;
-    case (model::packets::PacketType::LE_READ_REMOTE_FEATURES):
-      IncomingLeReadRemoteFeatures(incoming);
-      break;
-    case (model::packets::PacketType::LE_READ_REMOTE_FEATURES_RESPONSE):
-      IncomingLeReadRemoteFeaturesResponse(incoming);
-      break;
-    case model::packets::PacketType::LE_SCAN:
-      IncomingLeScanPacket(incoming);
-      break;
-    case model::packets::PacketType::LE_SCAN_RESPONSE:
-      IncomingLeScanResponsePacket(incoming, rssi);
       break;
     case model::packets::PacketType::PAGE:
       if (page_scan_enable_) {
@@ -2291,40 +2225,40 @@ void LinkLayerController::IncomingPacket(model::packets::LinkLayerPacketView inc
     case model::packets::PacketType::PAGE_REJECT:
       IncomingPageRejectPacket(incoming);
       break;
-    case (model::packets::PacketType::REMOTE_NAME_REQUEST):
+    case model::packets::PacketType::REMOTE_NAME_REQUEST:
       IncomingRemoteNameRequest(incoming);
       break;
-    case (model::packets::PacketType::REMOTE_NAME_REQUEST_RESPONSE):
+    case model::packets::PacketType::REMOTE_NAME_REQUEST_RESPONSE:
       IncomingRemoteNameRequestResponse(incoming);
       break;
-    case (model::packets::PacketType::READ_REMOTE_SUPPORTED_FEATURES):
+    case model::packets::PacketType::READ_REMOTE_SUPPORTED_FEATURES:
       IncomingReadRemoteSupportedFeatures(incoming);
       break;
-    case (model::packets::PacketType::READ_REMOTE_SUPPORTED_FEATURES_RESPONSE):
+    case model::packets::PacketType::READ_REMOTE_SUPPORTED_FEATURES_RESPONSE:
       IncomingReadRemoteSupportedFeaturesResponse(incoming);
       break;
-    case (model::packets::PacketType::READ_REMOTE_LMP_FEATURES):
+    case model::packets::PacketType::READ_REMOTE_LMP_FEATURES:
       IncomingReadRemoteLmpFeatures(incoming);
       break;
-    case (model::packets::PacketType::READ_REMOTE_LMP_FEATURES_RESPONSE):
+    case model::packets::PacketType::READ_REMOTE_LMP_FEATURES_RESPONSE:
       IncomingReadRemoteLmpFeaturesResponse(incoming);
       break;
-    case (model::packets::PacketType::READ_REMOTE_EXTENDED_FEATURES):
+    case model::packets::PacketType::READ_REMOTE_EXTENDED_FEATURES:
       IncomingReadRemoteExtendedFeatures(incoming);
       break;
-    case (model::packets::PacketType::READ_REMOTE_EXTENDED_FEATURES_RESPONSE):
+    case model::packets::PacketType::READ_REMOTE_EXTENDED_FEATURES_RESPONSE:
       IncomingReadRemoteExtendedFeaturesResponse(incoming);
       break;
-    case (model::packets::PacketType::READ_REMOTE_VERSION_INFORMATION):
-      IncomingReadRemoteVersion(incoming);
+    case model::packets::PacketType::READ_REMOTE_VERSION_INFORMATION:
+      IncomingReadRemoteVersion(incoming, true);
       break;
-    case (model::packets::PacketType::READ_REMOTE_VERSION_INFORMATION_RESPONSE):
+    case model::packets::PacketType::READ_REMOTE_VERSION_INFORMATION_RESPONSE:
       IncomingReadRemoteVersionResponse(incoming);
       break;
-    case (model::packets::PacketType::READ_CLOCK_OFFSET):
+    case model::packets::PacketType::READ_CLOCK_OFFSET:
       IncomingReadClockOffset(incoming);
       break;
-    case (model::packets::PacketType::READ_CLOCK_OFFSET_RESPONSE):
+    case model::packets::PacketType::READ_CLOCK_OFFSET_RESPONSE:
       IncomingReadClockOffsetResponse(incoming);
       break;
     case model::packets::PacketType::SCO_CONNECTION_REQUEST:
@@ -2347,6 +2281,96 @@ void LinkLayerController::IncomingPacket(model::packets::LinkLayerPacketView inc
       break;
     case model::packets::PacketType::ROLE_SWITCH_RESPONSE:
       IncomingRoleSwitchResponse(incoming);
+      break;
+    default:
+      WARNING(id_, "Dropping unhandled packet of type {}",
+              model::packets::PacketTypeText(incoming.GetType()));
+  }
+}
+
+void LinkLayerController::IncomingLePacket(model::packets::LinkLayerPacketView incoming,
+                                           int8_t rssi) {
+  auto destination_address = incoming.GetDestinationAddress();
+  auto source_address = incoming.GetSourceAddress();
+
+  // Handle connection-less packet types.
+  // Whether the packet needs to be handled by this controller instance is decided
+  // by the current controller state.
+  switch (incoming.GetType()) {
+    case model::packets::PacketType::LE_SCAN:
+      return IncomingLeScanPacket(incoming);
+    case model::packets::PacketType::LE_SCAN_RESPONSE:
+      return IncomingLeScanResponsePacket(incoming, rssi);
+    case model::packets::PacketType::LE_LEGACY_ADVERTISING_PDU:
+      return IncomingLeLegacyAdvertisingPdu(incoming, rssi);
+    case model::packets::PacketType::LE_EXTENDED_ADVERTISING_PDU:
+      return IncomingLeExtendedAdvertisingPdu(incoming, rssi);
+    case model::packets::PacketType::LE_PERIODIC_ADVERTISING_PDU:
+      return IncomingLePeriodicAdvertisingPdu(incoming, rssi);
+    case model::packets::PacketType::LE_CONNECT:
+      return IncomingLeConnectPacket(incoming);
+    case model::packets::PacketType::LE_CONNECT_COMPLETE:
+      return IncomingLeConnectCompletePacket(incoming);
+    default:
+      break;
+  }
+
+  // Verify the existence of an LE-ACL connection with the proper source and
+  // destination addresses.
+  auto connection_handle =
+          connections_.GetLeAclConnectionHandle(destination_address, source_address);
+  if (!connection_handle.has_value()) {
+    DEBUG(id_, "[LL] {} | Dropping {} packet not addressed to me {}->{}", address_,
+          PacketTypeText(incoming.GetType()), source_address, destination_address);
+    return;
+  }
+
+  // Update link timeout for valid ACL connections
+  auto& connection = connections_.GetAclConnection(*connection_handle);
+  connection.ResetLinkTimer();
+
+  switch (incoming.GetType()) {
+    case model::packets::PacketType::ACL:
+      IncomingAclPacket(incoming, rssi);
+      break;
+    case model::packets::PacketType::LE_CONNECTED_ISOCHRONOUS_PDU:
+      IncomingLeConnectedIsochronousPdu(incoming);
+      break;
+    case model::packets::PacketType::DISCONNECT:
+      IncomingDisconnectPacket(incoming);
+      break;
+    case model::packets::PacketType::LLCP:
+      IncomingLlcpPacket(incoming);
+      break;
+    case model::packets::PacketType::LE_CONNECTION_PARAMETER_REQUEST:
+      IncomingLeConnectionParameterRequest(incoming);
+      break;
+    case model::packets::PacketType::LE_CONNECTION_PARAMETER_UPDATE:
+      IncomingLeConnectionParameterUpdate(incoming);
+      break;
+    case model::packets::PacketType::LE_ENCRYPT_CONNECTION:
+      IncomingLeEncryptConnection(incoming);
+      break;
+    case model::packets::PacketType::LE_ENCRYPT_CONNECTION_RESPONSE:
+      IncomingLeEncryptConnectionResponse(incoming);
+      break;
+    case (model::packets::PacketType::LE_READ_REMOTE_FEATURES):
+      IncomingLeReadRemoteFeatures(incoming);
+      break;
+    case (model::packets::PacketType::LE_READ_REMOTE_FEATURES_RESPONSE):
+      IncomingLeReadRemoteFeaturesResponse(incoming);
+      break;
+    case model::packets::PacketType::READ_REMOTE_VERSION_INFORMATION:
+      IncomingReadRemoteVersion(incoming, false);
+      break;
+    case model::packets::PacketType::READ_REMOTE_VERSION_INFORMATION_RESPONSE:
+      IncomingReadRemoteVersionResponse(incoming);
+      break;
+    case model::packets::PacketType::PING_REQUEST:
+      IncomingPingRequest(incoming);
+      break;
+    case model::packets::PacketType::PING_RESPONSE:
+      // ping responses require no action
       break;
     case model::packets::PacketType::LL_PHY_REQ:
       IncomingLlPhyReq(incoming);
@@ -2503,11 +2527,19 @@ void LinkLayerController::IncomingReadRemoteExtendedFeaturesResponse(
   }
 }
 
-void LinkLayerController::IncomingReadRemoteVersion(model::packets::LinkLayerPacketView incoming) {
-  SendLinkLayerPacket(model::packets::ReadRemoteVersionInformationResponseBuilder::Create(
-          incoming.GetDestinationAddress(), incoming.GetSourceAddress(),
-          static_cast<uint8_t>(properties_.lmp_version),
-          static_cast<uint16_t>(properties_.lmp_subversion), properties_.company_identifier));
+void LinkLayerController::IncomingReadRemoteVersion(model::packets::LinkLayerPacketView incoming,
+                                                    bool is_br_edr) {
+  if (is_br_edr) {
+    SendLinkLayerPacket(model::packets::ReadRemoteVersionInformationResponseBuilder::Create(
+            incoming.GetDestinationAddress(), incoming.GetSourceAddress(),
+            static_cast<uint8_t>(properties_.lmp_version),
+            static_cast<uint16_t>(properties_.lmp_subversion), properties_.company_identifier));
+  } else {
+    SendLeLinkLayerPacket(model::packets::ReadRemoteVersionInformationResponseBuilder::Create(
+            incoming.GetDestinationAddress(), incoming.GetSourceAddress(),
+            static_cast<uint8_t>(properties_.lmp_version),
+            static_cast<uint16_t>(properties_.lmp_subversion), properties_.company_identifier));
+  }
 }
 
 void LinkLayerController::IncomingReadRemoteVersionResponse(
@@ -4014,7 +4046,8 @@ void LinkLayerController::HandleIso(bluetooth::hci::IsoView iso) {
     }
 
     SendLeLinkLayerPacket(model::packets::LeConnectedIsochronousPduBuilder::Create(
-            address_, connections_.GetAddress(acl_connection_handle).GetAddress(), cig_id, cis_id,
+            connections_.GetOwnAddress(acl_connection_handle).GetAddress(),
+            connections_.GetAddress(acl_connection_handle).GetAddress(), cig_id, cis_id,
             packet_sequence_number, std::move(iso_sdu_)));
   }
 }
@@ -4027,6 +4060,8 @@ uint16_t LinkLayerController::HandleLeConnection(
   // HCI_LE_Enhanced_Connection_Complete event (see Section 7.7.65.10) is
   // unmasked.
 
+  INFO(id_, "Creating LE connection with peer {}|{} and local address {}", address,
+       resolved_address, own_address);
   uint16_t handle = connections_.CreateLeConnection(address, resolved_address, own_address, role);
   if (handle == kReservedHandle) {
     WARNING(id_, "No pending connection for connection from {}", address);
@@ -5240,6 +5275,25 @@ ErrorCode LinkLayerController::Disconnect(uint16_t handle, ErrorCode host_reason
   } else {
     ASSERT(link_layer_remove_link(ll_.get(), handle, static_cast<uint8_t>(controller_reason)));
   }
+  return ErrorCode::SUCCESS;
+}
+
+ErrorCode LinkLayerController::ReadRemoteVersionInformation(uint16_t connection_handle) {
+  if (!connections_.HasHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  auto const& connection = connections_.GetAclConnection(connection_handle);
+  auto is_br_edr = connection.GetPhyType() == Phy::Type::BR_EDR;
+
+  if (is_br_edr) {
+    SendLinkLayerPacket(model::packets::ReadRemoteVersionInformationBuilder::Create(
+            connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress()));
+  } else {
+    SendLeLinkLayerPacket(model::packets::ReadRemoteVersionInformationBuilder::Create(
+            connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress()));
+  }
+
   return ErrorCode::SUCCESS;
 }
 
