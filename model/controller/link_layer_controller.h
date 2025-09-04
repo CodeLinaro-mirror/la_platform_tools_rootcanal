@@ -635,12 +635,18 @@ protected:
 
   void IncomingLeConnectPacket(model::packets::LinkLayerPacketView incoming);
   void IncomingLeConnectCompletePacket(model::packets::LinkLayerPacketView incoming);
-  void IncomingLeConnectionParameterRequest(model::packets::LinkLayerPacketView incoming);
-  void IncomingLeConnectionParameterUpdate(model::packets::LinkLayerPacketView incoming);
-  void IncomingLeEncryptConnection(model::packets::LinkLayerPacketView incoming);
-  void IncomingLeEncryptConnectionResponse(model::packets::LinkLayerPacketView incoming);
-  void IncomingLeReadRemoteFeatures(model::packets::LinkLayerPacketView incoming);
-  void IncomingLeReadRemoteFeaturesResponse(model::packets::LinkLayerPacketView incoming);
+  void IncomingLeConnectionParameterRequest(LeAclConnection& connection,
+                                            model::packets::LinkLayerPacketView incoming);
+  void IncomingLeConnectionParameterUpdate(LeAclConnection& connection,
+                                           model::packets::LinkLayerPacketView incoming);
+  void IncomingLeEncryptConnection(LeAclConnection& connection,
+                                   model::packets::LinkLayerPacketView incoming);
+  void IncomingLeEncryptConnectionResponse(LeAclConnection& connection,
+                                           model::packets::LinkLayerPacketView incoming);
+  void IncomingLeReadRemoteFeatures(LeAclConnection& connection,
+                                    model::packets::LinkLayerPacketView incoming);
+  void IncomingLeReadRemoteFeaturesResponse(LeAclConnection& connection,
+                                            model::packets::LinkLayerPacketView incoming);
 
   void ProcessIncomingLegacyScanRequest(AddressWithType scanning_address,
                                         AddressWithType resolved_scanning_address,
@@ -681,9 +687,10 @@ protected:
   void IncomingRoleSwitchRequest(model::packets::LinkLayerPacketView incoming);
   void IncomingRoleSwitchResponse(model::packets::LinkLayerPacketView incoming);
 
-  void IncomingLlPhyReq(model::packets::LinkLayerPacketView incoming);
-  void IncomingLlPhyRsp(model::packets::LinkLayerPacketView incoming);
-  void IncomingLlPhyUpdateInd(model::packets::LinkLayerPacketView incoming);
+  void IncomingLlPhyReq(LeAclConnection& connection, model::packets::LinkLayerPacketView incoming);
+  void IncomingLlPhyRsp(LeAclConnection& connection, model::packets::LinkLayerPacketView incoming);
+  void IncomingLlPhyUpdateInd(LeAclConnection& connection,
+                              model::packets::LinkLayerPacketView incoming);
 
 public:
   bool IsEventUnmasked(bluetooth::hci::EventCode event) const;

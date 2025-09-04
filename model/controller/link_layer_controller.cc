@@ -476,18 +476,10 @@ static uint8_t indicate_phy(bluetooth::hci::PhyType selected, bluetooth::hci::Ph
                                                          : 0x1;
 }
 
-void LinkLayerController::IncomingLlPhyReq(model::packets::LinkLayerPacketView incoming) {
+void LinkLayerController::IncomingLlPhyReq(LeAclConnection& connection,
+                                           model::packets::LinkLayerPacketView incoming) {
   auto phy_req = model::packets::LlPhyReqView::Create(incoming);
   ASSERT(phy_req.IsValid());
-  uint16_t connection_handle = connections_.GetHandleOnlyAddress(incoming.GetSourceAddress());
-
-  if (connection_handle == kReservedHandle) {
-    INFO(id_, "@{}: Unknown connection @{}", incoming.GetDestinationAddress(),
-         incoming.GetSourceAddress());
-    return;
-  }
-
-  AclConnection& connection = connections_.GetAclConnection(connection_handle);
 
   if (connection.GetRole() == bluetooth::hci::Role::PERIPHERAL) {
     // Peripheral receives the request: respond with local phy preferences
@@ -524,7 +516,7 @@ void LinkLayerController::IncomingLlPhyReq(model::packets::LinkLayerPacketView i
     if ((phy_c_to_p != connection.GetTxPhy() || phy_p_to_c != connection.GetRxPhy()) &&
         IsLeEventUnmasked(SubeventCode::LE_PHY_UPDATE_COMPLETE)) {
       send_event_(bluetooth::hci::LePhyUpdateCompleteBuilder::Create(
-              ErrorCode::SUCCESS, connection_handle, phy_c_to_p, phy_p_to_c));
+              ErrorCode::SUCCESS, connection.handle, phy_c_to_p, phy_p_to_c));
     }
 
     // Update local state.
@@ -533,18 +525,10 @@ void LinkLayerController::IncomingLlPhyReq(model::packets::LinkLayerPacketView i
   }
 }
 
-void LinkLayerController::IncomingLlPhyRsp(model::packets::LinkLayerPacketView incoming) {
+void LinkLayerController::IncomingLlPhyRsp(LeAclConnection& connection,
+                                           model::packets::LinkLayerPacketView incoming) {
   auto phy_rsp = model::packets::LlPhyRspView::Create(incoming);
   ASSERT(phy_rsp.IsValid());
-  uint16_t connection_handle = connections_.GetHandleOnlyAddress(incoming.GetSourceAddress());
-
-  if (connection_handle == kReservedHandle) {
-    INFO(id_, "@{}: Unknown connection @{}", incoming.GetDestinationAddress(),
-         incoming.GetSourceAddress());
-    return;
-  }
-
-  AclConnection& connection = connections_.GetAclConnection(connection_handle);
   ASSERT(connection.GetRole() == bluetooth::hci::Role::CENTRAL);
 
   // Intersect phy preferences with local preferences.
@@ -571,7 +555,7 @@ void LinkLayerController::IncomingLlPhyRsp(model::packets::LinkLayerPacketView i
   // (initiator in this case).
   if (IsLeEventUnmasked(SubeventCode::LE_PHY_UPDATE_COMPLETE)) {
     send_event_(bluetooth::hci::LePhyUpdateCompleteBuilder::Create(
-            ErrorCode::SUCCESS, connection_handle, phy_c_to_p, phy_p_to_c));
+            ErrorCode::SUCCESS, connection.handle, phy_c_to_p, phy_p_to_c));
   }
 
   // Update local state.
@@ -580,18 +564,10 @@ void LinkLayerController::IncomingLlPhyRsp(model::packets::LinkLayerPacketView i
   connection.SetRxPhy(phy_p_to_c);
 }
 
-void LinkLayerController::IncomingLlPhyUpdateInd(model::packets::LinkLayerPacketView incoming) {
+void LinkLayerController::IncomingLlPhyUpdateInd(LeAclConnection& connection,
+                                                 model::packets::LinkLayerPacketView incoming) {
   auto phy_update_ind = model::packets::LlPhyUpdateIndView::Create(incoming);
   ASSERT(phy_update_ind.IsValid());
-  uint16_t connection_handle = connections_.GetHandleOnlyAddress(incoming.GetSourceAddress());
-
-  if (connection_handle == kReservedHandle) {
-    INFO(id_, "@{}: Unknown connection @{}", incoming.GetDestinationAddress(),
-         incoming.GetSourceAddress());
-    return;
-  }
-
-  AclConnection& connection = connections_.GetAclConnection(connection_handle);
   ASSERT(connection.GetRole() == bluetooth::hci::Role::PERIPHERAL);
 
   bluetooth::hci::PhyType tx_phy = select_phy(phy_update_ind.GetPhyPToC(), connection.GetTxPhy());
@@ -604,7 +580,7 @@ void LinkLayerController::IncomingLlPhyUpdateInd(model::packets::LinkLayerPacket
       (tx_phy != connection.GetTxPhy() || rx_phy != connection.GetRxPhy() ||
        connection.InitiatedPhyUpdate())) {
     send_event_(bluetooth::hci::LePhyUpdateCompleteBuilder::Create(
-            ErrorCode::SUCCESS, connection_handle, tx_phy, rx_phy));
+            ErrorCode::SUCCESS, connection.handle, tx_phy, rx_phy));
   }
 
   connection.PhyUpdateComplete();
@@ -2343,22 +2319,22 @@ void LinkLayerController::IncomingLePacket(model::packets::LinkLayerPacketView i
       IncomingLlcpPacket(incoming);
       break;
     case model::packets::PacketType::LE_CONNECTION_PARAMETER_REQUEST:
-      IncomingLeConnectionParameterRequest(incoming);
+      IncomingLeConnectionParameterRequest(connection, incoming);
       break;
     case model::packets::PacketType::LE_CONNECTION_PARAMETER_UPDATE:
-      IncomingLeConnectionParameterUpdate(incoming);
+      IncomingLeConnectionParameterUpdate(connection, incoming);
       break;
     case model::packets::PacketType::LE_ENCRYPT_CONNECTION:
-      IncomingLeEncryptConnection(incoming);
+      IncomingLeEncryptConnection(connection, incoming);
       break;
     case model::packets::PacketType::LE_ENCRYPT_CONNECTION_RESPONSE:
-      IncomingLeEncryptConnectionResponse(incoming);
+      IncomingLeEncryptConnectionResponse(connection, incoming);
       break;
     case (model::packets::PacketType::LE_READ_REMOTE_FEATURES):
-      IncomingLeReadRemoteFeatures(incoming);
+      IncomingLeReadRemoteFeatures(connection, incoming);
       break;
     case (model::packets::PacketType::LE_READ_REMOTE_FEATURES_RESPONSE):
-      IncomingLeReadRemoteFeaturesResponse(incoming);
+      IncomingLeReadRemoteFeaturesResponse(connection, incoming);
       break;
     case model::packets::PacketType::READ_REMOTE_VERSION_INFORMATION:
       IncomingReadRemoteVersion(incoming, false);
@@ -2373,13 +2349,13 @@ void LinkLayerController::IncomingLePacket(model::packets::LinkLayerPacketView i
       // ping responses require no action
       break;
     case model::packets::PacketType::LL_PHY_REQ:
-      IncomingLlPhyReq(incoming);
+      IncomingLlPhyReq(connection, incoming);
       break;
     case model::packets::PacketType::LL_PHY_RSP:
-      IncomingLlPhyRsp(incoming);
+      IncomingLlPhyRsp(connection, incoming);
       break;
     case model::packets::PacketType::LL_PHY_UPDATE_IND:
-      IncomingLlPhyUpdateInd(incoming);
+      IncomingLlPhyUpdateInd(connection, incoming);
       break;
     default:
       WARNING(id_, "Dropping unhandled packet of type {}",
@@ -4384,20 +4360,14 @@ void LinkLayerController::IncomingLeConnectCompletePacket(
 }
 
 void LinkLayerController::IncomingLeConnectionParameterRequest(
-        model::packets::LinkLayerPacketView incoming) {
+        LeAclConnection& connection, model::packets::LinkLayerPacketView incoming) {
   auto request = model::packets::LeConnectionParameterRequestView::Create(incoming);
   ASSERT(request.IsValid());
-  Address peer = incoming.GetSourceAddress();
-  uint16_t handle = connections_.GetHandleOnlyAddress(peer);
-  if (handle == kReservedHandle) {
-    INFO(id_, "@{}: Unknown connection @{}", incoming.GetDestinationAddress(), peer);
-    return;
-  }
 
   if (IsLeEventUnmasked(SubeventCode::LE_REMOTE_CONNECTION_PARAMETER_REQUEST)) {
     send_event_(bluetooth::hci::LeRemoteConnectionParameterRequestBuilder::Create(
-            handle, request.GetIntervalMin(), request.GetIntervalMax(), request.GetLatency(),
-            request.GetTimeout()));
+            connection.handle, request.GetIntervalMin(), request.GetIntervalMax(),
+            request.GetLatency(), request.GetTimeout()));
   } else {
     // If the request is being indicated to the Host and the event to the Host
     // is masked, then the Link Layer shall issue an LL_REJECT_EXT_IND PDU with
@@ -4409,56 +4379,37 @@ void LinkLayerController::IncomingLeConnectionParameterRequest(
 }
 
 void LinkLayerController::IncomingLeConnectionParameterUpdate(
-        model::packets::LinkLayerPacketView incoming) {
+        LeAclConnection& connection, model::packets::LinkLayerPacketView incoming) {
   auto update = model::packets::LeConnectionParameterUpdateView::Create(incoming);
   ASSERT(update.IsValid());
-  Address peer = incoming.GetSourceAddress();
-  uint16_t handle = connections_.GetHandleOnlyAddress(peer);
-  if (handle == kReservedHandle) {
-    INFO(id_, "@{}: Unknown connection @{}", incoming.GetDestinationAddress(), peer);
-    return;
-  }
+
   if (IsLeEventUnmasked(SubeventCode::LE_CONNECTION_UPDATE_COMPLETE)) {
     send_event_(bluetooth::hci::LeConnectionUpdateCompleteBuilder::Create(
-            static_cast<ErrorCode>(update.GetStatus()), handle, update.GetInterval(),
+            static_cast<ErrorCode>(update.GetStatus()), connection.handle, update.GetInterval(),
             update.GetLatency(), update.GetTimeout()));
   }
 }
 
 void LinkLayerController::IncomingLeEncryptConnection(
-        model::packets::LinkLayerPacketView incoming) {
+        LeAclConnection& connection, model::packets::LinkLayerPacketView incoming) {
   INFO(id_, "IncomingLeEncryptConnection");
 
-  Address peer = incoming.GetSourceAddress();
-  uint16_t handle = connections_.GetHandleOnlyAddress(peer);
-  if (handle == kReservedHandle) {
-    INFO(id_, "@{}: Unknown connection @{}", incoming.GetDestinationAddress(), peer);
-    return;
-  }
   auto le_encrypt = model::packets::LeEncryptConnectionView::Create(incoming);
   ASSERT(le_encrypt.IsValid());
 
   // TODO: Save keys to check
 
   if (IsEventUnmasked(EventCode::LE_META_EVENT)) {
-    send_event_(bluetooth::hci::LeLongTermKeyRequestBuilder::Create(handle, le_encrypt.GetRand(),
-                                                                    le_encrypt.GetEdiv()));
+    send_event_(bluetooth::hci::LeLongTermKeyRequestBuilder::Create(
+            connection.handle, le_encrypt.GetRand(), le_encrypt.GetEdiv()));
   }
 }
 
 void LinkLayerController::IncomingLeEncryptConnectionResponse(
-        model::packets::LinkLayerPacketView incoming) {
+        LeAclConnection& connection, model::packets::LinkLayerPacketView incoming) {
   INFO(id_, "IncomingLeEncryptConnectionResponse");
   // TODO: Check keys
 
-  uint16_t handle = connections_.GetHandleOnlyAddress(incoming.GetSourceAddress());
-  if (handle == kReservedHandle) {
-    INFO(id_, "@{}: Unknown connection @{}", incoming.GetDestinationAddress(),
-         incoming.GetSourceAddress());
-    return;
-  }
-
-  auto& connection = connections_.GetAclConnection(handle);
   ErrorCode status = ErrorCode::SUCCESS;
   auto response = model::packets::LeEncryptConnectionResponseView::Create(incoming);
   ASSERT(response.IsValid());
@@ -4472,51 +4423,40 @@ void LinkLayerController::IncomingLeEncryptConnectionResponse(
 
   if (connection.IsEncrypted()) {
     if (IsEventUnmasked(EventCode::ENCRYPTION_KEY_REFRESH_COMPLETE)) {
-      send_event_(bluetooth::hci::EncryptionKeyRefreshCompleteBuilder::Create(status, handle));
+      send_event_(bluetooth::hci::EncryptionKeyRefreshCompleteBuilder::Create(status,
+                                                                              connection.handle));
     }
   } else if (success) {
     connection.Encrypt();
     if (IsEventUnmasked(EventCode::ENCRYPTION_CHANGE)) {
       send_event_(bluetooth::hci::EncryptionChangeBuilder::Create(
-              status, handle, bluetooth::hci::EncryptionEnabled::ON));
+              status, connection.handle, bluetooth::hci::EncryptionEnabled::ON));
     }
   } else {
     if (IsEventUnmasked(EventCode::ENCRYPTION_CHANGE)) {
       send_event_(bluetooth::hci::EncryptionChangeBuilder::Create(
-              status, handle, bluetooth::hci::EncryptionEnabled::OFF));
+              status, connection.handle, bluetooth::hci::EncryptionEnabled::OFF));
     }
   }
 }
 
 void LinkLayerController::IncomingLeReadRemoteFeatures(
-        model::packets::LinkLayerPacketView incoming) {
-  uint16_t handle = connections_.GetHandleOnlyAddress(incoming.GetSourceAddress());
+        LeAclConnection& /*connection*/, model::packets::LinkLayerPacketView incoming) {
   ErrorCode status = ErrorCode::SUCCESS;
-  if (handle == kReservedHandle) {
-    WARNING(id_, "@{}: Unknown connection @{}", incoming.GetDestinationAddress(),
-            incoming.GetSourceAddress());
-  }
   SendLeLinkLayerPacket(model::packets::LeReadRemoteFeaturesResponseBuilder::Create(
           incoming.GetDestinationAddress(), incoming.GetSourceAddress(), GetLeSupportedFeatures(),
           static_cast<uint8_t>(status)));
 }
 
 void LinkLayerController::IncomingLeReadRemoteFeaturesResponse(
-        model::packets::LinkLayerPacketView incoming) {
-  uint16_t handle = connections_.GetHandleOnlyAddress(incoming.GetSourceAddress());
-  ErrorCode status = ErrorCode::SUCCESS;
+        LeAclConnection& connection, model::packets::LinkLayerPacketView incoming) {
   auto response = model::packets::LeReadRemoteFeaturesResponseView::Create(incoming);
   ASSERT(response.IsValid());
-  if (handle == kReservedHandle) {
-    INFO(id_, "@{}: Unknown connection @{}", incoming.GetDestinationAddress(),
-         incoming.GetSourceAddress());
-    status = ErrorCode::UNKNOWN_CONNECTION;
-  } else {
-    status = static_cast<ErrorCode>(response.GetStatus());
-  }
+  ErrorCode status = static_cast<ErrorCode>(response.GetStatus());
+
   if (IsEventUnmasked(EventCode::LE_META_EVENT)) {
     send_event_(bluetooth::hci::LeReadRemoteFeaturesPage0CompleteBuilder::Create(
-            status, handle, response.GetFeatures()));
+            status, connection.handle, response.GetFeatures()));
   }
 }
 
