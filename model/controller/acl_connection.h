@@ -36,7 +36,9 @@ enum AclConnectionState {
 // Model the connection of a device to the controller.
 class AclConnection {
 public:
-  AclConnection(AddressWithType address, AddressWithType own_address,
+  const uint16_t handle;
+
+  AclConnection(uint16_t handle, AddressWithType address, AddressWithType own_address,
                 AddressWithType resolved_address, Phy::Type phy_type, bluetooth::hci::Role role);
 
   virtual ~AclConnection() = default;

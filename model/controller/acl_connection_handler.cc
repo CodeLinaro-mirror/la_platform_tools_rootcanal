@@ -45,6 +45,7 @@ void AclConnectionHandler::Reset(std::function<void(TaskId)> stopStream) {
 
   sco_connections_.clear();
   acl_connections_.clear();
+  last_handle_ = kReservedHandle - 2;
 }
 
 bool AclConnectionHandler::HasHandle(uint16_t handle) const {
@@ -71,7 +72,7 @@ uint16_t AclConnectionHandler::CreateConnection(Address addr, Address own_addr) 
   uint16_t handle = GetUnusedHandle();
   acl_connections_.emplace(
           handle,
-          AclConnection{AddressWithType{addr, AddressType::PUBLIC_DEVICE_ADDRESS},
+          AclConnection{handle, AddressWithType{addr, AddressType::PUBLIC_DEVICE_ADDRESS},
                         AddressWithType{own_addr, AddressType::PUBLIC_DEVICE_ADDRESS},
                         AddressWithType(), Phy::Type::BR_EDR, bluetooth::hci::Role::CENTRAL});
   return handle;
@@ -82,8 +83,8 @@ uint16_t AclConnectionHandler::CreateLeConnection(AddressWithType addr,
                                                   AddressWithType own_addr,
                                                   bluetooth::hci::Role role) {
   uint16_t handle = GetUnusedHandle();
-  acl_connections_.emplace(
-          handle, AclConnection{addr, own_addr, resolved_peer, Phy::Type::LOW_ENERGY, role});
+  acl_connections_.emplace(handle, AclConnection{handle, addr, own_addr, resolved_peer,
+                                                 Phy::Type::LOW_ENERGY, role});
   return handle;
 }
 
@@ -105,9 +106,9 @@ bool AclConnectionHandler::Disconnect(uint16_t handle, std::function<void(TaskId
 }
 
 uint16_t AclConnectionHandler::GetHandleOnlyAddress(bluetooth::hci::Address addr) const {
-  for (auto pair : acl_connections_) {
-    if (std::get<AclConnection>(pair).GetAddress().GetAddress() == addr) {
-      return std::get<0>(pair);
+  for (auto const& [handle, connection] : acl_connections_) {
+    if (connection.GetAddress().GetAddress() == addr) {
+      return handle;
     }
   }
   return kReservedHandle;

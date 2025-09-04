@@ -5779,6 +5779,8 @@ ErrorCode LinkLayerController::LeLongTermKeyRequestNegativeReply(uint16_t handle
 }
 
 void LinkLayerController::Reset() {
+  connections_.Reset([this](TaskId task_id) { CancelScheduledTask(task_id); });
+
   host_supported_features_ = 0;
   le_host_support_ = false;
   secure_simple_pairing_host_support_ = false;
@@ -5810,7 +5812,6 @@ void LinkLayerController::Reset() {
   le_suggested_max_tx_time_ = 0x0148;
   resolvable_private_address_timeout_ = std::chrono::seconds(0x0384);
   page_scan_repetition_mode_ = PageScanRepetitionMode::R0;
-  connections_ = AclConnectionHandler();
   oob_id_ = 1;
   key_id_ = 1;
   le_periodic_advertiser_list_.clear();
@@ -5839,6 +5840,7 @@ void LinkLayerController::Reset() {
   current_iac_lap_list_.emplace_back(general_iac);
 
   page_ = {};
+  page_scan_ = {};
 
   if (inquiry_timer_task_id_ != kInvalidTaskId) {
     CancelScheduledTask(inquiry_timer_task_id_);

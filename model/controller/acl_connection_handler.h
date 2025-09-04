@@ -31,13 +31,17 @@
 #include "phy.h"
 
 namespace rootcanal {
+
 static constexpr uint16_t kReservedHandle = 0xF00;
 static constexpr uint16_t kCisHandleRangeStart = 0xE00;
 static constexpr uint16_t kCisHandleRangeEnd = 0xEFE;
 
+using LeAclConnection = AclConnection;
+
 class AclConnectionHandler {
 public:
   AclConnectionHandler() = default;
+  AclConnectionHandler& operator=(AclConnectionHandler const&) = delete;
   virtual ~AclConnectionHandler() = default;
 
   using TaskId = uint32_t;
