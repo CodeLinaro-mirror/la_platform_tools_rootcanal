@@ -4405,12 +4405,15 @@ void LinkLayerController::IncomingLeEncryptConnectionResponse(
         model::packets::LinkLayerPacketView incoming) {
   INFO(id_, "IncomingLeEncryptConnectionResponse");
   // TODO: Check keys
+
   uint16_t handle = connections_.GetHandleOnlyAddress(incoming.GetSourceAddress());
   if (handle == kReservedHandle) {
     INFO(id_, "@{}: Unknown connection @{}", incoming.GetDestinationAddress(),
          incoming.GetSourceAddress());
     return;
   }
+
+  auto& connection = connections_.GetAclConnection(handle);
   ErrorCode status = ErrorCode::SUCCESS;
   auto response = model::packets::LeEncryptConnectionResponseView::Create(incoming);
   ASSERT(response.IsValid());
@@ -4422,12 +4425,12 @@ void LinkLayerController::IncomingLeEncryptConnectionResponse(
     success = false;
   }
 
-  if (connections_.IsEncrypted(handle)) {
+  if (connection.IsEncrypted()) {
     if (IsEventUnmasked(EventCode::ENCRYPTION_KEY_REFRESH_COMPLETE)) {
       send_event_(bluetooth::hci::EncryptionKeyRefreshCompleteBuilder::Create(status, handle));
     }
   } else if (success) {
-    connections_.Encrypt(handle);
+    connection.Encrypt();
     if (IsEventUnmasked(EventCode::ENCRYPTION_CHANGE)) {
       send_event_(bluetooth::hci::EncryptionChangeBuilder::Create(
               status, handle, bluetooth::hci::EncryptionEnabled::ON));
@@ -4834,15 +4837,20 @@ void LinkLayerController::IncomingPagePacket(model::packets::LinkLayerPacketView
     return;
   }
 
-  bool allow_role_switch = page.GetAllowRoleSwitch();
-  if (!connections_.CreatePendingConnection(
-              bd_addr, authentication_enable_ == AuthenticationEnable::REQUIRED,
-              allow_role_switch)) {
-    // Will be triggered when multiple hosts are paging simultaneously;
-    // only one connection will be accepted.
-    WARNING(id_, "Failed to create a pending connection for {}", bd_addr);
+  // Cannot establish multiple connections simultaneously.
+  if (page_scan_.has_value()) {
+    INFO(id_, "ignoring connection request from {}, already connecting to {}", bd_addr,
+         page_scan_->bd_addr);
     return;
   }
+
+  INFO(id_, "processing connection request from {}", bd_addr);
+
+  page_scan_ = PageScan{
+          .bd_addr = bd_addr,
+          .authentication_required = authentication_enable_ == AuthenticationEnable::REQUIRED,
+          .allow_role_switch = page.GetAllowRoleSwitch(),
+  };
 
   send_event_(bluetooth::hci::ConnectionRequestBuilder::Create(
           bd_addr, page.GetClassOfDevice(), bluetooth::hci::ConnectionRequestLinkType::ACL));
@@ -4884,7 +4892,7 @@ void LinkLayerController::IncomingPageResponsePacket(model::packets::LinkLayerPa
 
   INFO(id_, "Received Page Response packet from {}", bd_addr);
 
-  uint16_t connection_handle = connections_.CreateConnection(bd_addr, GetAddress(), false);
+  uint16_t connection_handle = connections_.CreateConnection(bd_addr, GetAddress());
   ASSERT(connection_handle != kReservedHandle);
 
   bluetooth::hci::Role role = page_->allow_role_switch && response.GetTryRoleSwitch()
@@ -4984,7 +4992,7 @@ void LinkLayerController::WriteCurrentIacLap(std::vector<bluetooth::hci::Lap> ia
 
 ErrorCode LinkLayerController::AcceptConnectionRequest(const Address& bd_addr,
                                                        bool try_role_switch) {
-  if (connections_.HasPendingConnection(bd_addr)) {
+  if (page_scan_.has_value() && page_scan_->bd_addr == bd_addr) {
     INFO(id_, "Accepting connection request from {}", bd_addr);
     ScheduleTask(kNoDelayMs, [this, bd_addr, try_role_switch]() {
       INFO(id_, "Accepted connection from {}", bd_addr);
@@ -5042,10 +5050,9 @@ void LinkLayerController::MakePeripheralConnection(const Address& bd_addr, bool 
     return;
   }
 
-  bluetooth::hci::Role role =
-          try_role_switch && connections_.IsRoleSwitchAllowedForPendingConnection()
-                  ? bluetooth::hci::Role::CENTRAL
-                  : bluetooth::hci::Role::PERIPHERAL;
+  bluetooth::hci::Role role = try_role_switch && page_scan_->allow_role_switch
+                                      ? bluetooth::hci::Role::CENTRAL
+                                      : bluetooth::hci::Role::PERIPHERAL;
 
   AclConnection& connection = connections_.GetAclConnection(connection_handle);
   CheckExpiringConnection(connection_handle);
@@ -5080,13 +5087,16 @@ void LinkLayerController::MakePeripheralConnection(const Address& bd_addr, bool 
     page_ = {};
   }
 
+  // Reset the page scan state.
+  page_scan_ = {};
+
   INFO(id_, "Sending page response to {}", bd_addr.ToString());
   SendLinkLayerPacket(
           model::packets::PageResponseBuilder::Create(GetAddress(), bd_addr, try_role_switch));
 }
 
 ErrorCode LinkLayerController::RejectConnectionRequest(const Address& addr, uint8_t reason) {
-  if (!connections_.HasPendingConnection(addr)) {
+  if (!page_scan_.has_value() || page_scan_->bd_addr != addr) {
     INFO(id_, "No pending connection for {}", addr);
     return ErrorCode::UNKNOWN_CONNECTION;
   }
@@ -5117,11 +5127,17 @@ ErrorCode LinkLayerController::CreateConnection(const Address& bd_addr, uint16_t
     return ErrorCode::COMMAND_DISALLOWED;
   }
 
-  // Reject the command if a connection or pending connection already exists
+  // Reject the command if a connection already exists
   // for the selected peer address.
-  if (connections_.HasPendingConnection(bd_addr) ||
-      connections_.GetAclConnectionHandle(bd_addr).has_value()) {
-    INFO(id_, "Connection with {} already exists", bd_addr.ToString());
+  if (connections_.GetAclConnectionHandle(bd_addr).has_value()) {
+    INFO(id_, "Connection with {} already exists", bd_addr);
+    return ErrorCode::CONNECTION_ALREADY_EXISTS;
+  }
+
+  // Reject the command if a pending connection already exists
+  // for the selected peer address.
+  if (page_scan_.has_value() && page_scan_->bd_addr == bd_addr) {
+    INFO(id_, "Connection with {} is already being established", bd_addr);
     return ErrorCode::CONNECTION_ALREADY_EXISTS;
   }
 
@@ -5317,7 +5333,8 @@ ErrorCode LinkLayerController::RoleDiscovery(uint16_t handle, bluetooth::hci::Ro
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
-  *role = connections_.GetAclRole(handle);
+  auto const& connection = connections_.GetAclConnection(handle);
+  *role = connection.GetRole();
   return ErrorCode::SUCCESS;
 }
 
@@ -5559,15 +5576,15 @@ ErrorCode LinkLayerController::LeConnectionUpdate(uint16_t handle, uint16_t inte
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
-  bluetooth::hci::Role role = connections_.GetAclRole(handle);
+  auto& connection = connections_.GetAclConnection(handle);
+  bluetooth::hci::Role role = connection.GetRole();
 
   if (role == bluetooth::hci::Role::CENTRAL) {
     // As Central, it is allowed to directly send
     // LL_CONNECTION_PARAM_UPDATE_IND to update the parameters.
     SendLeLinkLayerPacket(LeConnectionParameterUpdateBuilder::Create(
-            connections_.GetOwnAddress(handle).GetAddress(),
-            connections_.GetAddress(handle).GetAddress(), static_cast<uint8_t>(ErrorCode::SUCCESS),
-            interval_max, latency, supervision_timeout));
+            connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress(),
+            static_cast<uint8_t>(ErrorCode::SUCCESS), interval_max, latency, supervision_timeout));
 
     if (IsLeEventUnmasked(SubeventCode::LE_CONNECTION_UPDATE_COMPLETE)) {
       send_event_(bluetooth::hci::LeConnectionUpdateCompleteBuilder::Create(
@@ -5577,9 +5594,8 @@ ErrorCode LinkLayerController::LeConnectionUpdate(uint16_t handle, uint16_t inte
     // Send LL_CONNECTION_PARAM_REQ and wait for LL_CONNECTION_PARAM_RSP
     // in return.
     SendLeLinkLayerPacket(LeConnectionParameterRequestBuilder::Create(
-            connections_.GetOwnAddress(handle).GetAddress(),
-            connections_.GetAddress(handle).GetAddress(), interval_min, interval_max, latency,
-            supervision_timeout));
+            connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress(),
+            interval_min, interval_max, latency, supervision_timeout));
   }
 
   return ErrorCode::SUCCESS;
@@ -5659,14 +5675,16 @@ ErrorCode LinkLayerController::LeLongTermKeyRequestReply(uint16_t handle,
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
+  auto& connection = connections_.GetAclConnection(handle);
+
   // TODO: Check keys
-  if (connections_.IsEncrypted(handle)) {
+  if (connection.IsEncrypted()) {
     if (IsEventUnmasked(EventCode::ENCRYPTION_KEY_REFRESH_COMPLETE)) {
       send_event_(bluetooth::hci::EncryptionKeyRefreshCompleteBuilder::Create(ErrorCode::SUCCESS,
                                                                               handle));
     }
   } else {
-    connections_.Encrypt(handle);
+    connection.Encrypt();
     if (IsEventUnmasked(EventCode::ENCRYPTION_CHANGE_V2)) {
       send_event_(bluetooth::hci::EncryptionChangeV2Builder::Create(
               ErrorCode::SUCCESS, handle, bluetooth::hci::EncryptionEnabled::ON,
@@ -5677,8 +5695,8 @@ ErrorCode LinkLayerController::LeLongTermKeyRequestReply(uint16_t handle,
     }
   }
   SendLeLinkLayerPacket(model::packets::LeEncryptConnectionResponseBuilder::Create(
-          connections_.GetOwnAddress(handle).GetAddress(),
-          connections_.GetAddress(handle).GetAddress(), std::array<uint8_t, 8>(), uint16_t(), ltk));
+          connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress(),
+          std::array<uint8_t, 8>(), uint16_t(), ltk));
 
   return ErrorCode::SUCCESS;
 }
@@ -5786,7 +5804,7 @@ void LinkLayerController::Paging() {
   // Paging is suppressed while a pending connection with the same peer is
   // being established (i.e. two hosts initiated a connection simultaneously).
   if (page_.has_value() && now >= page_->next_page_event &&
-      !connections_.HasPendingConnection(page_->bd_addr)) {
+      !(page_scan_.has_value() && page_scan_->bd_addr == page_->bd_addr)) {
     SendLinkLayerPacket(model::packets::PageBuilder::Create(
             GetAddress(), page_->bd_addr, class_of_device_, page_->allow_role_switch));
     page_->next_page_event = now + kPageInterval;
