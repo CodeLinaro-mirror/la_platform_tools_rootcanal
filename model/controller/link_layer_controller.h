@@ -113,6 +113,9 @@ public:
   // HCI command Create Connection Cancel (Vol 4, Part E § 7.1.7).
   ErrorCode CreateConnectionCancel(const Address& bd_addr);
 
+  // HCI command Read Remote Version Information (Vol 4, Part E § 7.1.23).
+  ErrorCode ReadRemoteVersionInformation(uint16_t connection_handle);
+
   // Internal task scheduler.
   // This scheduler is driven by the tick function only,
   // hence the precision of the scheduler is within a tick period.
@@ -143,7 +146,9 @@ private:
 public:
   const Address& GetAddress() const;
 
-  void IncomingPacket(model::packets::LinkLayerPacketView incoming, int8_t rssi);
+  void IncomingPacket(model::packets::LinkLayerPacketView incoming, Phy::Type phy, int8_t rssi);
+  void IncomingBrEdrPacket(model::packets::LinkLayerPacketView incoming, int8_t rssi);
+  void IncomingLePacket(model::packets::LinkLayerPacketView incoming, int8_t rssi);
 
   void Tick();
 
@@ -661,7 +666,7 @@ protected:
   void IncomingReadRemoteSupportedFeaturesResponse(model::packets::LinkLayerPacketView incoming);
   void IncomingReadRemoteExtendedFeatures(model::packets::LinkLayerPacketView incoming);
   void IncomingReadRemoteExtendedFeaturesResponse(model::packets::LinkLayerPacketView incoming);
-  void IncomingReadRemoteVersion(model::packets::LinkLayerPacketView incoming);
+  void IncomingReadRemoteVersion(model::packets::LinkLayerPacketView incoming, bool is_br_edr);
   void IncomingReadRemoteVersionResponse(model::packets::LinkLayerPacketView incoming);
   void IncomingReadClockOffset(model::packets::LinkLayerPacketView incoming);
   void IncomingReadClockOffsetResponse(model::packets::LinkLayerPacketView incoming);

@@ -120,7 +120,7 @@ public:
   };
 
   void SendPacket(model::packets::LinkLayerPacketView packet) {
-    controller_.IncomingPacket(packet, -90);
+    controller_.IncomingPacket(packet, Phy::Type::LOW_ENERGY, -90);
   }
 
   /// Helper for sending the provided packet to the controller then checking if

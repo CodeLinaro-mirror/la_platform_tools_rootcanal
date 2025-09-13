@@ -74,8 +74,8 @@ void DualModeController::SetProperties(ControllerProperties properties) {
 std::string DualModeController::GetTypeString() const { return "Simulated Bluetooth Controller"; }
 
 void DualModeController::ReceiveLinkLayerPacket(model::packets::LinkLayerPacketView incoming,
-                                                Phy::Type /*type*/, int8_t rssi) {
-  link_layer_controller_.IncomingPacket(incoming, rssi);
+                                                Phy::Type type, int8_t rssi) {
+  link_layer_controller_.IncomingPacket(incoming, type, rssi);
 }
 
 void DualModeController::Tick() { link_layer_controller_.Tick(); }
@@ -404,9 +404,8 @@ void DualModeController::ReadRemoteVersionInformation(CommandView command) {
   DEBUG(id_, "<< Read Remote Version Information");
   DEBUG(id_, "   connection_handle=0x{:x}", command_view.GetConnectionHandle());
 
-  auto status = link_layer_controller_.SendCommandToRemoteByHandle(
-          OpCode::READ_REMOTE_VERSION_INFORMATION, command.bytes(),
-          command_view.GetConnectionHandle());
+  auto status =
+          link_layer_controller_.ReadRemoteVersionInformation(command_view.GetConnectionHandle());
 
   send_event_(bluetooth::hci::ReadRemoteVersionInformationStatusBuilder::Create(
           status, kNumCommandPackets));
