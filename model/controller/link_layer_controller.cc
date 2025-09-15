@@ -4349,9 +4349,19 @@ void LinkLayerController::IncomingLeConnectCompletePacket(
   auto complete = model::packets::LeConnectCompleteView::Create(incoming);
   ASSERT(complete.IsValid());
 
+  AddressWithType initiating_address{
+          incoming.GetDestinationAddress(),
+          static_cast<bluetooth::hci::AddressType>(complete.GetInitiatingAddressType())};
   AddressWithType advertising_address{
           incoming.GetSourceAddress(),
           static_cast<bluetooth::hci::AddressType>(complete.GetAdvertisingAddressType())};
+
+  if (initiator_.pending_connect_request != advertising_address &&
+      initiator_.initiating_address != initiating_address.GetAddress()) {
+    INFO(id_, "Ignoring unexpected LE Connect complete response {} -> {}", advertising_address,
+         initiating_address);
+    return;
+  }
 
   INFO(id_, "Received LE Connect complete response with advertising address {}",
        advertising_address);
