@@ -124,6 +124,18 @@ std::optional<uint16_t> AclConnectionHandler::GetAclConnectionHandle(
   return {};
 }
 
+std::optional<uint16_t> AclConnectionHandler::GetLeAclConnectionHandle(
+        bluetooth::hci::Address local_address, bluetooth::hci::Address remote_address) const {
+  for (auto const& [handle, connection] : acl_connections_) {
+    if (connection.GetAddress().GetAddress() == remote_address &&
+        connection.GetOwnAddress().GetAddress() == local_address &&
+        connection.GetPhyType() == Phy::Type::LOW_ENERGY) {
+      return handle;
+    }
+  }
+  return {};
+}
+
 AclConnection& AclConnectionHandler::GetAclConnection(uint16_t handle) {
   ASSERT_LOG(HasHandle(handle), "Unknown handle %d", handle);
   return acl_connections_.at(handle);

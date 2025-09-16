@@ -75,6 +75,11 @@ public:
   // \p bd_addr is the peer address.
   std::optional<uint16_t> GetAclConnectionHandle(bluetooth::hci::Address bd_addr) const;
 
+  // Return the connection handle for a LE ACL connection identified with
+  // local and remote addresses.
+  std::optional<uint16_t> GetLeAclConnectionHandle(bluetooth::hci::Address local_address,
+                                                   bluetooth::hci::Address remote_address) const;
+
   uint16_t GetHandleOnlyAddress(bluetooth::hci::Address addr) const;
   bluetooth::hci::AddressWithType GetAddress(uint16_t handle) const;
   std::optional<AddressWithType> GetAddressSafe(uint16_t handle) const;
