@@ -284,15 +284,20 @@ std::optional<AddressWithType> LinkLayerController::GenerateResolvablePrivateAdd
 
 // HCI Read Rssi command (Vol 4, Part E § 7.5.4).
 ErrorCode LinkLayerController::ReadRssi(uint16_t connection_handle, int8_t* rssi) {
-  // Not documented: If the connection handle is not found, the Controller
-  // shall return the error code Unknown Connection Identifier (0x02).
-  if (!connections_.HasHandle(connection_handle)) {
-    INFO(id_, "unknown connection identifier");
-    return ErrorCode::UNKNOWN_CONNECTION;
+  if (connections_.HasAclHandle(connection_handle)) {
+    *rssi = connections_.GetAclConnection(connection_handle).GetRssi();
+    return ErrorCode::SUCCESS;
   }
 
-  *rssi = connections_.GetRssi(connection_handle);
-  return ErrorCode::SUCCESS;
+  if (connections_.HasLeAclHandle(connection_handle)) {
+    *rssi = connections_.GetLeAclConnection(connection_handle).GetRssi();
+    return ErrorCode::SUCCESS;
+  }
+
+  // Not documented: If the connection handle is not found, the Controller
+  // shall return the error code Unknown Connection Identifier (0x02).
+  INFO(id_, "unknown connection identifier");
+  return ErrorCode::UNKNOWN_CONNECTION;
 }
 
 // =============================================================================
@@ -2051,18 +2056,14 @@ void LinkLayerController::SendLinkLayerPacket(
   });
 }
 
-ErrorCode LinkLayerController::SendLeCommandToRemoteByAddress(OpCode opcode,
-                                                              const Address& own_address,
-                                                              const Address& peer_address) {
-  switch (opcode) {
-    case (OpCode::LE_READ_REMOTE_FEATURES_PAGE_0):
-      SendLeLinkLayerPacket(
-              model::packets::LeReadRemoteFeaturesBuilder::Create(own_address, peer_address));
-      break;
-    default:
-      INFO(id_, "Dropping unhandled command 0x{:04x}", static_cast<uint16_t>(opcode));
-      return ErrorCode::UNKNOWN_HCI_COMMAND;
+ErrorCode LinkLayerController::LeReadRemoteFeaturesPage0(uint16_t connection_handle) {
+  if (!connections_.HasLeAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
   }
+
+  auto const& connection = connections_.GetLeAclConnection(connection_handle);
+  SendLeLinkLayerPacket(model::packets::LeReadRemoteFeaturesBuilder::Create(
+          connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress()));
 
   return ErrorCode::SUCCESS;
 }
@@ -2102,19 +2103,12 @@ ErrorCode LinkLayerController::SendCommandToRemoteByAddress(OpCode opcode, pdl::
 
 ErrorCode LinkLayerController::SendCommandToRemoteByHandle(OpCode opcode, pdl::packet::slice args,
                                                            uint16_t handle) {
-  if (!connections_.HasHandle(handle)) {
+  if (!connections_.HasAclHandle(handle)) {
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
-  switch (opcode) {
-    case (OpCode::LE_READ_REMOTE_FEATURES_PAGE_0):
-      return SendLeCommandToRemoteByAddress(opcode, connections_.GetOwnAddress(handle).GetAddress(),
-                                            connections_.GetAddress(handle).GetAddress());
-    default:
-      return SendCommandToRemoteByAddress(opcode, args,
-                                          connections_.GetOwnAddress(handle).GetAddress(),
-                                          connections_.GetAddress(handle).GetAddress());
-  }
+  return SendCommandToRemoteByAddress(opcode, args, connections_.GetOwnAddress(handle).GetAddress(),
+                                      connections_.GetAddress(handle).GetAddress());
 }
 
 ErrorCode LinkLayerController::SendScoToRemote(bluetooth::hci::ScoView sco_packet) {

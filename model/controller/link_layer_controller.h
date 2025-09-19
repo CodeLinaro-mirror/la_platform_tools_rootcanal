@@ -82,8 +82,6 @@ public:
 
   ErrorCode SendCommandToRemoteByAddress(OpCode opcode, pdl::packet::slice args,
                                          const Address& own_address, const Address& peer_address);
-  ErrorCode SendLeCommandToRemoteByAddress(OpCode opcode, const Address& own_address,
-                                           const Address& peer_address);
   ErrorCode SendCommandToRemoteByHandle(OpCode opcode, pdl::packet::slice args, uint16_t handle);
   ErrorCode SendScoToRemote(bluetooth::hci::ScoView sco_packet);
 
@@ -327,6 +325,9 @@ public:
   ErrorCode ReadRssi(uint16_t connection_handle, int8_t* rssi);
 
   // LE Commands
+
+  // HCI LE Read Remote Features (Vol 4, Part E § 7.8.21).
+  ErrorCode LeReadRemoteFeaturesPage0(uint16_t connection_handle);
 
   // HCI LE Set Random Address command (Vol 4, Part E § 7.8.4).
   ErrorCode LeSetRandomAddress(Address random_address);
