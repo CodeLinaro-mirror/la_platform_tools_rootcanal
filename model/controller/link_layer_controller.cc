@@ -5188,44 +5188,48 @@ ErrorCode LinkLayerController::Disconnect(uint16_t handle, ErrorCode host_reason
     return ErrorCode::SUCCESS;
   }
 
-  if (!connections_.HasHandle(handle)) {
-    return ErrorCode::UNKNOWN_CONNECTION;
-  }
+  if (connections_.HasAclHandle(handle)) {
+    auto connection = connections_.GetAclConnection(handle);
+    INFO(id_, "Disconnecting ACL connection with {}", connection.GetAddress());
 
-  const AddressWithType remote = connections_.GetAddress(handle);
-  auto is_br_edr = connections_.GetPhyType(handle) == Phy::Type::BR_EDR;
-
-  if (is_br_edr) {
-    INFO(id_, "Disconnecting ACL connection with {}", remote);
-
-    uint16_t sco_handle = connections_.GetScoHandle(remote.GetAddress());
+    uint16_t sco_handle = connections_.GetScoHandle(connection.GetAddress().GetAddress());
     if (sco_handle != kReservedHandle) {
       SendLinkLayerPacket(model::packets::ScoDisconnectBuilder::Create(
-              GetAddress(), remote.GetAddress(), static_cast<uint8_t>(host_reason)));
+              GetAddress(), connection.GetAddress().GetAddress(),
+              static_cast<uint8_t>(host_reason)));
 
       connections_.Disconnect(sco_handle, [this](TaskId task_id) { CancelScheduledTask(task_id); });
       SendDisconnectionCompleteEvent(sco_handle, controller_reason);
     }
 
     SendLinkLayerPacket(model::packets::DisconnectBuilder::Create(
-            GetAddress(), remote.GetAddress(), static_cast<uint8_t>(host_reason)));
-  } else {
-    INFO(id_, "Disconnecting LE connection with {}", remote);
+            GetAddress(), connection.GetAddress().GetAddress(), static_cast<uint8_t>(host_reason)));
+
+    connections_.Disconnect(handle, [this](TaskId task_id) { CancelScheduledTask(task_id); });
+    SendDisconnectionCompleteEvent(handle, controller_reason);
+
+    ASSERT(link_manager_remove_link(
+            lm_.get(),
+            reinterpret_cast<uint8_t (*)[6]>(connection.GetAddress().GetAddress().data())));
+    return ErrorCode::SUCCESS;
+  }
+
+  if (connections_.HasLeAclHandle(handle)) {
+    auto connection = connections_.GetLeAclConnection(handle);
+    INFO(id_, "Disconnecting LE-ACL connection with {}", connection.GetAddress());
 
     SendLeLinkLayerPacket(model::packets::DisconnectBuilder::Create(
-            connections_.GetOwnAddress(handle).GetAddress(), remote.GetAddress(),
+            connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress(),
             static_cast<uint8_t>(host_reason)));
+
+    connections_.Disconnect(handle, [this](TaskId task_id) { CancelScheduledTask(task_id); });
+    SendDisconnectionCompleteEvent(handle, controller_reason);
+
+    ASSERT(link_layer_remove_link(ll_.get(), handle, static_cast<uint8_t>(controller_reason)));
+    return ErrorCode::SUCCESS;
   }
 
-  connections_.Disconnect(handle, [this](TaskId task_id) { CancelScheduledTask(task_id); });
-  SendDisconnectionCompleteEvent(handle, controller_reason);
-  if (is_br_edr) {
-    ASSERT(link_manager_remove_link(lm_.get(),
-                                    reinterpret_cast<uint8_t (*)[6]>(remote.GetAddress().data())));
-  } else {
-    ASSERT(link_layer_remove_link(ll_.get(), handle, static_cast<uint8_t>(controller_reason)));
-  }
-  return ErrorCode::SUCCESS;
+  return ErrorCode::UNKNOWN_CONNECTION;
 }
 
 ErrorCode LinkLayerController::ReadRemoteVersionInformation(uint16_t connection_handle) {

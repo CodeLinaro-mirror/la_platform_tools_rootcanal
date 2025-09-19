@@ -52,6 +52,16 @@ bool AclConnectionHandler::HasHandle(uint16_t handle) const {
   return acl_connections_.count(handle) != 0;
 }
 
+bool AclConnectionHandler::HasAclHandle(uint16_t handle) const {
+  return acl_connections_.count(handle) != 0 &&
+         acl_connections_.at(handle).GetPhyType() == Phy::Type::BR_EDR;
+}
+
+bool AclConnectionHandler::HasLeAclHandle(uint16_t handle) const {
+  return acl_connections_.count(handle) != 0 &&
+         acl_connections_.at(handle).GetPhyType() == Phy::Type::LOW_ENERGY;
+}
+
 bool AclConnectionHandler::HasScoHandle(uint16_t handle) const {
   return sco_connections_.count(handle) != 0;
 }
@@ -139,6 +149,11 @@ std::optional<uint16_t> AclConnectionHandler::GetLeAclConnectionHandle(
 
 AclConnection& AclConnectionHandler::GetAclConnection(uint16_t handle) {
   ASSERT_LOG(HasHandle(handle), "Unknown handle %d", handle);
+  return acl_connections_.at(handle);
+}
+
+LeAclConnection& AclConnectionHandler::GetLeAclConnection(uint16_t handle) {
+  ASSERT_LOG(HasLeAclHandle(handle), "Unknown handle %d", handle);
   return acl_connections_.at(handle);
 }
 
