@@ -338,13 +338,12 @@ ErrorCode LinkLayerController::LeReadPhy(uint16_t connection_handle,
                                          bluetooth::hci::PhyType* tx_phy,
                                          bluetooth::hci::PhyType* rx_phy) {
   // Note: no documented status code for this case.
-  if (!connections_.HasHandle(connection_handle) ||
-      connections_.GetPhyType(connection_handle) != Phy::Type::LOW_ENERGY) {
+  if (!connections_.HasLeAclHandle(connection_handle)) {
     INFO(id_, "unknown or invalid connection handle");
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
-  AclConnection const& connection = connections_.GetAclConnection(connection_handle);
+  LeAclConnection const& connection = connections_.GetLeAclConnection(connection_handle);
   *tx_phy = connection.GetTxPhy();
   *rx_phy = connection.GetRxPhy();
   return ErrorCode::SUCCESS;
@@ -405,11 +404,12 @@ ErrorCode LinkLayerController::LeSetPhy(uint16_t connection_handle,
   uint8_t supported_phys = properties_.LeSupportedPhys();
 
   // Note: no documented status code for this case.
-  if (!connections_.HasHandle(connection_handle) ||
-      connections_.GetPhyType(connection_handle) != Phy::Type::LOW_ENERGY) {
+  if (!connections_.HasLeAclHandle(connection_handle)) {
     INFO(id_, "unknown or invalid connection handle");
     return ErrorCode::UNKNOWN_CONNECTION;
   }
+
+  auto& connection = connections_.GetLeAclConnection(connection_handle);
 
   // If the All_PHYs parameter specifies that the Host has no preference,
   // the TX_PHYs parameter shall be ignored; otherwise at least one bit shall
@@ -450,10 +450,10 @@ ErrorCode LinkLayerController::LeSetPhy(uint16_t connection_handle,
   // or both PHY changes or when the Controller determines that neither PHY
   // will change immediately.
   SendLeLinkLayerPacket(model::packets::LlPhyReqBuilder::Create(
-          connections_.GetOwnAddress(connection_handle).GetAddress(),
-          connections_.GetAddress(connection_handle).GetAddress(), tx_phys, rx_phys));
+          connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress(), tx_phys,
+          rx_phys));
 
-  connections_.GetAclConnection(connection_handle).InitiatePhyUpdate();
+  connection.InitiatePhyUpdate();
   requested_tx_phys_ = tx_phys;
   requested_rx_phys_ = rx_phys;
   return ErrorCode::SUCCESS;
@@ -592,8 +592,7 @@ void LinkLayerController::IncomingLlPhyUpdateInd(LeAclConnection& connection,
 ErrorCode LinkLayerController::LeSetDataLength(uint16_t connection_handle, uint16_t tx_octets,
                                                uint16_t tx_time) {
   // Note: no documented status code for this case.
-  if (!connections_.HasHandle(connection_handle) ||
-      connections_.GetPhyType(connection_handle) != Phy::Type::LOW_ENERGY) {
+  if (!connections_.HasLeAclHandle(connection_handle)) {
     INFO(id_, "unknown or invalid connection handle");
     return ErrorCode::UNKNOWN_CONNECTION;
   }
@@ -2014,15 +2013,15 @@ LinkLayerController::LinkLayerController(const Address& address,
                      uintptr_t len) {
                     auto controller = static_cast<LinkLayerController*>(user);
 
-                    if (!controller->connections_.HasHandle(acl_connection_handle)) {
+                    if (!controller->connections_.HasLeAclHandle(acl_connection_handle)) {
                       ERROR("Dropping LLCP packet sent for unknown connection handle "
                             "0x{:x}",
                             acl_connection_handle);
                       return;
                     }
 
-                    AclConnection const& connection =
-                            controller->connections_.GetAclConnection(acl_connection_handle);
+                    LeAclConnection const& connection =
+                            controller->connections_.GetLeAclConnection(acl_connection_handle);
                     Address source = connection.GetOwnAddress().GetAddress();
                     Address destination = connection.GetAddress().GetAddress();
 
@@ -2302,7 +2301,7 @@ void LinkLayerController::IncomingLePacket(model::packets::LinkLayerPacketView i
   }
 
   // Update link timeout for valid ACL connections
-  auto& connection = connections_.GetAclConnection(*connection_handle);
+  auto& connection = connections_.GetLeAclConnection(*connection_handle);
   connection.ResetLinkTimer();
 
   switch (incoming.GetType()) {
@@ -5252,7 +5251,7 @@ ErrorCode LinkLayerController::ReadRemoteVersionInformation(uint16_t connection_
 }
 
 ErrorCode LinkLayerController::ChangeConnectionPacketType(uint16_t handle, uint16_t types) {
-  if (!connections_.HasHandle(handle)) {
+  if (!connections_.HasAclHandle(handle)) {
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
@@ -5268,7 +5267,7 @@ ErrorCode LinkLayerController::ChangeConnectionPacketType(uint16_t handle, uint1
 
 // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
 ErrorCode LinkLayerController::ChangeConnectionLinkKey(uint16_t handle) {
-  if (!connections_.HasHandle(handle)) {
+  if (!connections_.HasAclHandle(handle)) {
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
@@ -5284,7 +5283,7 @@ ErrorCode LinkLayerController::CentralLinkKey(uint8_t /* key_flag */) {
 
 ErrorCode LinkLayerController::HoldMode(uint16_t handle, uint16_t hold_mode_max_interval,
                                         uint16_t hold_mode_min_interval) {
-  if (!connections_.HasHandle(handle)) {
+  if (!connections_.HasAclHandle(handle)) {
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
@@ -5299,7 +5298,7 @@ ErrorCode LinkLayerController::HoldMode(uint16_t handle, uint16_t hold_mode_max_
 ErrorCode LinkLayerController::SniffMode(uint16_t handle, uint16_t sniff_max_interval,
                                          uint16_t sniff_min_interval, uint16_t sniff_attempt,
                                          uint16_t sniff_timeout) {
-  if (!connections_.HasHandle(handle)) {
+  if (!connections_.HasAclHandle(handle)) {
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
@@ -5313,7 +5312,7 @@ ErrorCode LinkLayerController::SniffMode(uint16_t handle, uint16_t sniff_max_int
 }
 
 ErrorCode LinkLayerController::ExitSniffMode(uint16_t handle) {
-  if (!connections_.HasHandle(handle)) {
+  if (!connections_.HasAclHandle(handle)) {
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
@@ -5324,7 +5323,7 @@ ErrorCode LinkLayerController::ExitSniffMode(uint16_t handle) {
 ErrorCode LinkLayerController::QosSetup(uint16_t handle, uint8_t service_type,
                                         uint32_t /* token_rate */, uint32_t /* peak_bandwidth */,
                                         uint32_t /* latency */, uint32_t /* delay_variation */) {
-  if (!connections_.HasHandle(handle)) {
+  if (!connections_.HasAclHandle(handle)) {
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
@@ -5455,7 +5454,7 @@ void LinkLayerController::IncomingRoleSwitchResponse(model::packets::LinkLayerPa
 }
 
 ErrorCode LinkLayerController::ReadLinkPolicySettings(uint16_t handle, uint16_t* settings) {
-  if (!connections_.HasHandle(handle)) {
+  if (!connections_.HasAclHandle(handle)) {
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
@@ -5464,7 +5463,7 @@ ErrorCode LinkLayerController::ReadLinkPolicySettings(uint16_t handle, uint16_t*
 }
 
 ErrorCode LinkLayerController::WriteLinkPolicySettings(uint16_t handle, uint16_t settings) {
-  if (!connections_.HasHandle(handle)) {
+  if (!connections_.HasAclHandle(handle)) {
     return ErrorCode::UNKNOWN_CONNECTION;
   }
   if (settings > 7 /* Sniff + Hold + Role switch */) {
@@ -5528,7 +5527,7 @@ ErrorCode LinkLayerController::FlowSpecification(uint16_t handle, uint8_t flow_d
                                                  uint32_t /* token_bucket_size */,
                                                  uint32_t /* peak_bandwidth */,
                                                  uint32_t /* access_latency */) {
-  if (!connections_.HasHandle(handle)) {
+  if (!connections_.HasAclHandle(handle)) {
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
@@ -5542,7 +5541,7 @@ ErrorCode LinkLayerController::FlowSpecification(uint16_t handle, uint8_t flow_d
 
 ErrorCode LinkLayerController::WriteLinkSupervisionTimeout(uint16_t handle,
                                                            uint16_t /* timeout */) {
-  if (!connections_.HasHandle(handle)) {
+  if (!connections_.HasAclHandle(handle)) {
     return ErrorCode::UNKNOWN_CONNECTION;
   }
   return ErrorCode::SUCCESS;
@@ -5552,7 +5551,7 @@ void LinkLayerController::LeConnectionUpdateComplete(uint16_t handle, uint16_t i
                                                      uint16_t interval_max, uint16_t latency,
                                                      uint16_t supervision_timeout) {
   ErrorCode status = ErrorCode::SUCCESS;
-  if (!connections_.HasHandle(handle)) {
+  if (!connections_.HasLeAclHandle(handle)) {
     status = ErrorCode::UNKNOWN_CONNECTION;
   }
 
@@ -5580,11 +5579,11 @@ void LinkLayerController::LeConnectionUpdateComplete(uint16_t handle, uint16_t i
 ErrorCode LinkLayerController::LeConnectionUpdate(uint16_t handle, uint16_t interval_min,
                                                   uint16_t interval_max, uint16_t latency,
                                                   uint16_t supervision_timeout) {
-  if (!connections_.HasHandle(handle)) {
+  if (!connections_.HasLeAclHandle(handle)) {
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
-  auto& connection = connections_.GetAclConnection(handle);
+  auto& connection = connections_.GetLeAclConnection(handle);
   bluetooth::hci::Role role = connection.GetRole();
 
   if (role == bluetooth::hci::Role::CENTRAL) {
@@ -5612,7 +5611,7 @@ ErrorCode LinkLayerController::LeConnectionUpdate(uint16_t handle, uint16_t inte
 ErrorCode LinkLayerController::LeRemoteConnectionParameterRequestReply(
         uint16_t connection_handle, uint16_t interval_min, uint16_t interval_max, uint16_t timeout,
         uint16_t latency, uint16_t minimum_ce_length, uint16_t maximum_ce_length) {
-  if (!connections_.HasHandle(connection_handle)) {
+  if (!connections_.HasLeAclHandle(connection_handle)) {
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
@@ -5629,7 +5628,7 @@ ErrorCode LinkLayerController::LeRemoteConnectionParameterRequestReply(
 
 ErrorCode LinkLayerController::LeRemoteConnectionParameterRequestNegativeReply(
         uint16_t connection_handle, bluetooth::hci::ErrorCode reason) {
-  if (!connections_.HasHandle(connection_handle)) {
+  if (!connections_.HasLeAclHandle(connection_handle)) {
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
@@ -5654,7 +5653,7 @@ void LinkLayerController::HandleLeEnableEncryption(uint16_t handle, std::array<u
                                                    std::array<uint8_t, kLtkSize> ltk) {
   // TODO: Check keys
   // TODO: Block ACL traffic or at least guard against it
-  if (!connections_.HasHandle(handle)) {
+  if (!connections_.HasLeAclHandle(handle)) {
     return;
   }
   SendLeLinkLayerPacket(model::packets::LeEncryptConnectionBuilder::Create(
@@ -5665,7 +5664,7 @@ void LinkLayerController::HandleLeEnableEncryption(uint16_t handle, std::array<u
 ErrorCode LinkLayerController::LeEnableEncryption(uint16_t handle, std::array<uint8_t, 8> rand,
                                                   uint16_t ediv,
                                                   std::array<uint8_t, kLtkSize> ltk) {
-  if (!connections_.HasHandle(handle)) {
+  if (!connections_.HasLeAclHandle(handle)) {
     INFO(id_, "Unknown handle 0x{:04x}", handle);
     return ErrorCode::UNKNOWN_CONNECTION;
   }
@@ -5678,7 +5677,7 @@ ErrorCode LinkLayerController::LeEnableEncryption(uint16_t handle, std::array<ui
 
 ErrorCode LinkLayerController::LeLongTermKeyRequestReply(uint16_t handle,
                                                          std::array<uint8_t, kLtkSize> ltk) {
-  if (!connections_.HasHandle(handle)) {
+  if (!connections_.HasLeAclHandle(handle)) {
     INFO(id_, "Unknown handle {:04x}", handle);
     return ErrorCode::UNKNOWN_CONNECTION;
   }
@@ -5710,7 +5709,7 @@ ErrorCode LinkLayerController::LeLongTermKeyRequestReply(uint16_t handle,
 }
 
 ErrorCode LinkLayerController::LeLongTermKeyRequestNegativeReply(uint16_t handle) {
-  if (!connections_.HasHandle(handle)) {
+  if (!connections_.HasLeAclHandle(handle)) {
     INFO(id_, "Unknown handle {:04x}", handle);
     return ErrorCode::UNKNOWN_CONNECTION;
   }
@@ -5868,7 +5867,7 @@ void LinkLayerController::SetPageTimeout(uint16_t page_timeout) { page_timeout_ 
 
 ErrorCode LinkLayerController::AddScoConnection(uint16_t connection_handle, uint16_t packet_type,
                                                 ScoDatapath datapath) {
-  if (!connections_.HasHandle(connection_handle)) {
+  if (!connections_.HasAclHandle(connection_handle)) {
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
@@ -5907,7 +5906,7 @@ ErrorCode LinkLayerController::SetupSynchronousConnection(
         uint16_t connection_handle, uint32_t transmit_bandwidth, uint32_t receive_bandwidth,
         uint16_t max_latency, uint16_t voice_setting, uint8_t retransmission_effort,
         uint16_t packet_types, ScoDatapath datapath) {
-  if (!connections_.HasHandle(connection_handle)) {
+  if (!connections_.HasAclHandle(connection_handle)) {
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
