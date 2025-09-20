@@ -3899,35 +3899,34 @@ void LinkLayerController::HandleAcl(bluetooth::hci::AclView acl) {
           static_cast<int>(bc_flag));
   }
 
-  // ACL HCI packets received with an unknown or invalid Connection Handle are
-  // immediately acknowledged and silently dropped.
-  if (!connections_.HasHandle(connection_handle)) {
+  if (connections_.HasAclHandle(connection_handle)) {
+    // Classic ACL connection.
+    auto& connection = connections_.GetAclConnection(connection_handle);
+    auto acl_payload = acl.GetPayload();
+    auto acl_packet = model::packets::AclBuilder::Create(
+            connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress(),
+            static_cast<uint8_t>(pb_flag), static_cast<uint8_t>(bc_flag),
+            std::vector(acl_payload.begin(), acl_payload.end()));
+    SendLinkLayerPacket(std::move(acl_packet));
+
+  } else if (connections_.HasLeAclHandle(connection_handle)) {
+    // LE-ACL connection.
+    auto& connection = connections_.GetLeAclConnection(connection_handle);
+    auto acl_payload = acl.GetPayload();
+    auto acl_packet = model::packets::AclBuilder::Create(
+            connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress(),
+            static_cast<uint8_t>(pb_flag), static_cast<uint8_t>(bc_flag),
+            std::vector(acl_payload.begin(), acl_payload.end()));
+    SendLeLinkLayerPacket(std::move(acl_packet));
+
+  } else {
+    // ACL HCI packets received with an unknown or invalid Connection Handle
+    // are silently dropped.
     DEBUG("Received ACL HCI packet with invalid ACL connection handle 0x{:x}", connection_handle);
-    ScheduleTask(kNoDelayMs, [this, connection_handle]() {
-      send_event_(bluetooth::hci::NumberOfCompletedPacketsBuilder::Create(
-              {bluetooth::hci::CompletedPackets(connection_handle, 1)}));
-    });
-    return;
   }
 
-  AddressWithType source = connections_.GetOwnAddress(connection_handle);
-  AddressWithType destination = connections_.GetAddress(connection_handle);
-  Phy::Type phy = connections_.GetPhyType(connection_handle);
-
-  auto acl_payload = acl.GetPayload();
-  auto acl_packet = model::packets::AclBuilder::Create(
-          source.GetAddress(), destination.GetAddress(), static_cast<uint8_t>(pb_flag),
-          static_cast<uint8_t>(bc_flag), std::vector(acl_payload.begin(), acl_payload.end()));
-
-  switch (phy) {
-    case Phy::Type::BR_EDR:
-      SendLinkLayerPacket(std::move(acl_packet));
-      break;
-    case Phy::Type::LOW_ENERGY:
-      SendLeLinkLayerPacket(std::move(acl_packet));
-      break;
-  }
-
+  // Send immediate acknowledgment for the ACL packet.
+  // We don't really have a transmission queue in the controller.
   ScheduleTask(kNoDelayMs, [this, connection_handle]() {
     send_event_(bluetooth::hci::NumberOfCompletedPacketsBuilder::Create(
             {bluetooth::hci::CompletedPackets(connection_handle, 1)}));
@@ -5226,22 +5225,21 @@ ErrorCode LinkLayerController::Disconnect(uint16_t handle, ErrorCode host_reason
 }
 
 ErrorCode LinkLayerController::ReadRemoteVersionInformation(uint16_t connection_handle) {
-  if (!connections_.HasHandle(connection_handle)) {
-    return ErrorCode::UNKNOWN_CONNECTION;
-  }
-
-  auto const& connection = connections_.GetAclConnection(connection_handle);
-  auto is_br_edr = connection.GetPhyType() == Phy::Type::BR_EDR;
-
-  if (is_br_edr) {
+  if (connections_.HasAclHandle(connection_handle)) {
+    auto const& connection = connections_.GetAclConnection(connection_handle);
     SendLinkLayerPacket(model::packets::ReadRemoteVersionInformationBuilder::Create(
             connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress()));
-  } else {
-    SendLeLinkLayerPacket(model::packets::ReadRemoteVersionInformationBuilder::Create(
-            connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress()));
+    return ErrorCode::SUCCESS;
   }
 
-  return ErrorCode::SUCCESS;
+  if (connections_.HasLeAclHandle(connection_handle)) {
+    auto const& connection = connections_.GetLeAclConnection(connection_handle);
+    SendLeLinkLayerPacket(model::packets::ReadRemoteVersionInformationBuilder::Create(
+            connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress()));
+    return ErrorCode::SUCCESS;
+  }
+
+  return ErrorCode::UNKNOWN_CONNECTION;
 }
 
 ErrorCode LinkLayerController::ChangeConnectionPacketType(uint16_t handle, uint16_t types) {
@@ -5330,7 +5328,7 @@ ErrorCode LinkLayerController::QosSetup(uint16_t handle, uint8_t service_type,
 }
 
 ErrorCode LinkLayerController::RoleDiscovery(uint16_t handle, bluetooth::hci::Role* role) {
-  if (!connections_.HasHandle(handle)) {
+  if (!connections_.HasAclHandle(handle)) {
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
