@@ -87,11 +87,8 @@ public:
                                                    bluetooth::hci::Address remote_address) const;
 
   uint16_t GetHandleOnlyAddress(bluetooth::hci::Address addr) const;
-  bluetooth::hci::AddressWithType GetAddress(uint16_t handle) const;
   std::optional<AddressWithType> GetAddressSafe(uint16_t handle) const;
   bluetooth::hci::Address GetScoAddress(uint16_t handle) const;
-  bluetooth::hci::AddressWithType GetOwnAddress(uint16_t handle) const;
-  bluetooth::hci::AddressWithType GetResolvedAddress(uint16_t handle) const;
 
   // Return the AclConnection for the selected connection handle, asserts
   // if the handle is not currently used.
