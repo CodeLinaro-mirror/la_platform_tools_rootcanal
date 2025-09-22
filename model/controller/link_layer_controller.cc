@@ -1961,7 +1961,10 @@ LinkLayerController::LinkLayerController(const Address& address,
                   [](void* user, const uint8_t (*address)[6]) {
                     auto controller = static_cast<LinkLayerController*>(user);
 
-                    return controller->connections_.GetHandleOnlyAddress(Address(*address));
+                    // Returns the connection handle but only for established
+                    // BR-EDR connections.
+                    return controller->connections_.GetAclConnectionHandle(Address(*address))
+                            .value_or(kReservedHandle);
                   },
 
           .get_address =
@@ -2158,9 +2161,9 @@ void LinkLayerController::IncomingBrEdrPacket(model::packets::LinkLayerPacketVie
   }
 
   // Update link timeout for established ACL connections.
-  auto connection_handle = connections_.GetHandleOnlyAddress(source_address);
-  if (connection_handle != kReservedHandle) {
-    connections_.ResetLinkTimer(connection_handle);
+  auto connection_handle = connections_.GetAclConnectionHandle(source_address);
+  if (connection_handle.has_value()) {
+    connections_.ResetLinkTimer(*connection_handle);
   }
 
   switch (incoming.GetType()) {
@@ -2177,17 +2180,13 @@ void LinkLayerController::IncomingBrEdrPacket(model::packets::LinkLayerPacketVie
       IncomingLmpPacket(incoming);
       break;
     case model::packets::PacketType::INQUIRY:
-      if (inquiry_scan_enable_) {
-        IncomingInquiryPacket(incoming, rssi);
-      }
+      IncomingInquiryPacket(incoming, rssi);
       break;
     case model::packets::PacketType::INQUIRY_RESPONSE:
       IncomingInquiryResponsePacket(incoming);
       break;
     case model::packets::PacketType::PAGE:
-      if (page_scan_enable_) {
-        IncomingPagePacket(incoming);
-      }
+      IncomingPagePacket(incoming);
       break;
     case model::packets::PacketType::PAGE_RESPONSE:
       IncomingPageResponsePacket(incoming);
@@ -2223,7 +2222,7 @@ void LinkLayerController::IncomingBrEdrPacket(model::packets::LinkLayerPacketVie
       IncomingReadRemoteVersion(incoming, true);
       break;
     case model::packets::PacketType::READ_REMOTE_VERSION_INFORMATION_RESPONSE:
-      IncomingReadRemoteVersionResponse(incoming);
+      IncomingReadRemoteVersionResponse(incoming, true);
       break;
     case model::packets::PacketType::READ_CLOCK_OFFSET:
       IncomingReadClockOffset(incoming);
@@ -2301,13 +2300,13 @@ void LinkLayerController::IncomingLePacket(model::packets::LinkLayerPacketView i
 
   switch (incoming.GetType()) {
     case model::packets::PacketType::ACL:
-      IncomingAclPacket(incoming, rssi);
+      IncomingLeAclPacket(connection, incoming, rssi);
       break;
     case model::packets::PacketType::LE_CONNECTED_ISOCHRONOUS_PDU:
       IncomingLeConnectedIsochronousPdu(incoming);
       break;
     case model::packets::PacketType::DISCONNECT:
-      IncomingDisconnectPacket(incoming);
+      IncomingLeDisconnectPacket(connection, incoming);
       break;
     case model::packets::PacketType::LLCP:
       IncomingLlcpPacket(incoming);
@@ -2334,7 +2333,7 @@ void LinkLayerController::IncomingLePacket(model::packets::LinkLayerPacketView i
       IncomingReadRemoteVersion(incoming, false);
       break;
     case model::packets::PacketType::READ_REMOTE_VERSION_INFORMATION_RESPONSE:
-      IncomingReadRemoteVersionResponse(incoming);
+      IncomingReadRemoteVersionResponse(incoming, false);
       break;
     case model::packets::PacketType::PING_REQUEST:
       IncomingPingRequest(incoming);
@@ -2371,20 +2370,46 @@ void LinkLayerController::IncomingAclPacket(model::packets::LinkLayerPacketView 
     packet_boundary_flag = bluetooth::hci::PacketBoundaryFlag::FIRST_AUTOMATICALLY_FLUSHABLE;
   }
 
-  INFO(id_, "Acl Packet [{}] {} -> {}", acl_data.size(), incoming.GetSourceAddress(),
+  INFO(id_, "ACL Packet [{}] {} -> {}", acl_data.size(), incoming.GetSourceAddress(),
        incoming.GetDestinationAddress());
 
-  uint16_t connection_handle = connections_.GetHandleOnlyAddress(incoming.GetSourceAddress());
-  if (connection_handle == kReservedHandle) {
+  auto connection_handle = connections_.GetAclConnectionHandle(incoming.GetSourceAddress());
+  if (!connection_handle.has_value()) {
     INFO(id_, "Dropping packet since connection does not exist");
     return;
   }
 
   // Update the RSSI for the local ACL connection.
-  connections_.SetRssi(connection_handle, rssi);
+  connections_.SetRssi(*connection_handle, rssi);
 
   send_acl_(bluetooth::hci::AclBuilder::Create(
-          connection_handle, packet_boundary_flag, broadcast_flag,
+          *connection_handle, packet_boundary_flag, broadcast_flag,
+          std::vector<uint8_t>(acl_data.begin(), acl_data.end())));
+}
+
+void LinkLayerController::IncomingLeAclPacket(LeAclConnection& connection,
+                                              model::packets::LinkLayerPacketView incoming,
+                                              int8_t rssi) {
+  auto acl = model::packets::AclView::Create(incoming);
+  ASSERT(acl.IsValid());
+
+  auto acl_data = acl.GetData();
+  auto packet_boundary_flag = bluetooth::hci::PacketBoundaryFlag(acl.GetPacketBoundaryFlag());
+  auto broadcast_flag = bluetooth::hci::BroadcastFlag(acl.GetBroadcastFlag());
+
+  if (packet_boundary_flag ==
+      bluetooth::hci::PacketBoundaryFlag::FIRST_NON_AUTOMATICALLY_FLUSHABLE) {
+    packet_boundary_flag = bluetooth::hci::PacketBoundaryFlag::FIRST_AUTOMATICALLY_FLUSHABLE;
+  }
+
+  INFO(id_, "LE-ACL Packet [{}] {} -> {}", acl_data.size(), incoming.GetSourceAddress(),
+       incoming.GetDestinationAddress());
+
+  // Update the RSSI for the local ACL connection.
+  connection.SetRssi(rssi);
+
+  send_acl_(bluetooth::hci::AclBuilder::Create(
+          connection.handle, packet_boundary_flag, broadcast_flag,
           std::vector<uint8_t>(acl_data.begin(), acl_data.end())));
 }
 
@@ -2455,14 +2480,14 @@ void LinkLayerController::IncomingReadRemoteSupportedFeaturesResponse(
   auto view = model::packets::ReadRemoteSupportedFeaturesResponseView::Create(incoming);
   ASSERT(view.IsValid());
   Address source = incoming.GetSourceAddress();
-  uint16_t handle = connections_.GetHandleOnlyAddress(source);
-  if (handle == kReservedHandle) {
+  auto handle = connections_.GetAclConnectionHandle(source);
+  if (!handle.has_value()) {
     INFO(id_, "Discarding response from a disconnected device {}", source);
     return;
   }
   if (IsEventUnmasked(EventCode::READ_REMOTE_SUPPORTED_FEATURES_COMPLETE)) {
     send_event_(bluetooth::hci::ReadRemoteSupportedFeaturesCompleteBuilder::Create(
-            ErrorCode::SUCCESS, handle, view.GetFeatures()));
+            ErrorCode::SUCCESS, *handle, view.GetFeatures()));
   }
 }
 
@@ -2485,14 +2510,14 @@ void LinkLayerController::IncomingReadRemoteExtendedFeaturesResponse(
   auto view = model::packets::ReadRemoteExtendedFeaturesResponseView::Create(incoming);
   ASSERT(view.IsValid());
   Address source = incoming.GetSourceAddress();
-  uint16_t handle = connections_.GetHandleOnlyAddress(source);
-  if (handle == kReservedHandle) {
+  auto handle = connections_.GetAclConnectionHandle(source);
+  if (!handle.has_value()) {
     INFO(id_, "Discarding response from a disconnected device {}", source);
     return;
   }
   if (IsEventUnmasked(EventCode::READ_REMOTE_EXTENDED_FEATURES_COMPLETE)) {
     send_event_(bluetooth::hci::ReadRemoteExtendedFeaturesCompleteBuilder::Create(
-            static_cast<ErrorCode>(view.GetStatus()), handle, view.GetPageNumber(),
+            static_cast<ErrorCode>(view.GetStatus()), *handle, view.GetPageNumber(),
             view.GetMaxPageNumber(), view.GetFeatures()));
   }
 }
@@ -2513,18 +2538,23 @@ void LinkLayerController::IncomingReadRemoteVersion(model::packets::LinkLayerPac
 }
 
 void LinkLayerController::IncomingReadRemoteVersionResponse(
-        model::packets::LinkLayerPacketView incoming) {
+        model::packets::LinkLayerPacketView incoming, bool is_br_edr) {
   auto view = model::packets::ReadRemoteVersionInformationResponseView::Create(incoming);
   ASSERT(view.IsValid());
   Address source = incoming.GetSourceAddress();
-  uint16_t handle = connections_.GetHandleOnlyAddress(source);
-  if (handle == kReservedHandle) {
+  Address destination = incoming.GetDestinationAddress();
+
+  auto handle = is_br_edr ? connections_.GetAclConnectionHandle(source)
+                          : connections_.GetLeAclConnectionHandle(destination, source);
+
+  if (!handle.has_value()) {
     INFO(id_, "Discarding response from a disconnected device {}", source);
     return;
   }
+
   if (IsEventUnmasked(EventCode::READ_REMOTE_VERSION_INFORMATION_COMPLETE)) {
     send_event_(bluetooth::hci::ReadRemoteVersionInformationCompleteBuilder::Create(
-            ErrorCode::SUCCESS, handle, view.GetLmpVersion(), view.GetManufacturerName(),
+            ErrorCode::SUCCESS, *handle, view.GetLmpVersion(), view.GetManufacturerName(),
             view.GetLmpSubversion()));
   }
 }
@@ -2539,13 +2569,13 @@ void LinkLayerController::IncomingReadClockOffsetResponse(
   auto view = model::packets::ReadClockOffsetResponseView::Create(incoming);
   ASSERT(view.IsValid());
   Address source = incoming.GetSourceAddress();
-  uint16_t handle = connections_.GetHandleOnlyAddress(source);
-  if (handle == kReservedHandle) {
+  auto handle = connections_.GetAclConnectionHandle(source);
+  if (!handle.has_value()) {
     INFO(id_, "Discarding response from a disconnected device {}", source);
     return;
   }
   if (IsEventUnmasked(EventCode::READ_CLOCK_OFFSET_COMPLETE)) {
-    send_event_(bluetooth::hci::ReadClockOffsetCompleteBuilder::Create(ErrorCode::SUCCESS, handle,
+    send_event_(bluetooth::hci::ReadClockOffsetCompleteBuilder::Create(ErrorCode::SUCCESS, *handle,
                                                                        view.GetOffset()));
   }
 }
@@ -2556,29 +2586,43 @@ void LinkLayerController::IncomingDisconnectPacket(model::packets::LinkLayerPack
   ASSERT(disconnect.IsValid());
 
   Address peer = incoming.GetSourceAddress();
-  uint16_t handle = connections_.GetHandleOnlyAddress(peer);
-  if (handle == kReservedHandle) {
+  auto handle = connections_.GetAclConnectionHandle(peer);
+  if (!handle.has_value()) {
     INFO(id_, "Discarding disconnect from a disconnected device {}", peer);
     return;
   }
-  auto is_br_edr = connections_.GetPhyType(handle) == Phy::Type::BR_EDR;
-  ASSERT_LOG(
-          connections_.Disconnect(handle, [this](TaskId task_id) { CancelScheduledTask(task_id); }),
-          "GetHandle() returned invalid handle 0x{:x}", handle);
+
+  ASSERT_LOG(connections_.Disconnect(*handle,
+                                     [this](TaskId task_id) { CancelScheduledTask(task_id); }),
+             "GetHandle() returned invalid handle 0x{:x}", *handle);
 
   uint8_t reason = disconnect.GetReason();
-  if (is_br_edr) {
-    ASSERT(link_manager_remove_link(lm_.get(), reinterpret_cast<uint8_t (*)[6]>(peer.data())));
-  } else {
-    // Will optionally notify CIS disconnections.
-    ASSERT(link_layer_remove_link(ll_.get(), handle, reason));
-  }
+  ASSERT(link_manager_remove_link(lm_.get(), reinterpret_cast<uint8_t (*)[6]>(peer.data())));
+  SendDisconnectionCompleteEvent(*handle, ErrorCode(reason));
+}
 
-  SendDisconnectionCompleteEvent(handle, ErrorCode(reason));
+void LinkLayerController::IncomingLeDisconnectPacket(LeAclConnection& connection,
+                                                     model::packets::LinkLayerPacketView incoming) {
+  INFO(id_, "Disconnect Packet");
+  auto disconnect = model::packets::DisconnectView::Create(incoming);
+  ASSERT(disconnect.IsValid());
+
+  ASSERT_LOG(connections_.Disconnect(connection.handle,
+                                     [this](TaskId task_id) { CancelScheduledTask(task_id); }),
+             "GetHandle() returned invalid handle 0x{:x}", connection.handle);
+
+  uint8_t reason = disconnect.GetReason();
+  // Will optionally notify CIS disconnections.
+  ASSERT(link_layer_remove_link(ll_.get(), connection.handle, reason));
+  SendDisconnectionCompleteEvent(connection.handle, ErrorCode(reason));
 }
 
 void LinkLayerController::IncomingInquiryPacket(model::packets::LinkLayerPacketView incoming,
                                                 uint8_t rssi) {
+  if (!inquiry_scan_enable_) {
+    return;
+  }
+
   auto inquiry = model::packets::InquiryView::Create(incoming);
   ASSERT(inquiry.IsValid());
 
@@ -3834,19 +3878,20 @@ void LinkLayerController::IncomingLmpPacket(model::packets::LinkLayerPacketView 
 }
 
 void LinkLayerController::IncomingLlcpPacket(model::packets::LinkLayerPacketView incoming) {
-  Address address = incoming.GetSourceAddress();
+  Address source = incoming.GetSourceAddress();
+  Address destination = incoming.GetDestinationAddress();
   auto request = model::packets::LlcpView::Create(incoming);
   ASSERT(request.IsValid());
   auto payload = request.GetPayload();
   auto packet = std::vector(payload.begin(), payload.end());
-  uint16_t acl_connection_handle = connections_.GetHandleOnlyAddress(address);
+  auto acl_connection_handle = connections_.GetLeAclConnectionHandle(destination, source);
 
-  if (acl_connection_handle == kReservedHandle) {
+  if (!acl_connection_handle.has_value()) {
     INFO(id_, "Dropping LLCP packet since connection does not exist");
     return;
   }
 
-  ASSERT(link_layer_ingest_llcp(ll_.get(), acl_connection_handle, packet.data(), packet.size()));
+  ASSERT(link_layer_ingest_llcp(ll_.get(), *acl_connection_handle, packet.data(), packet.size()));
 }
 
 void LinkLayerController::IncomingLeConnectedIsochronousPdu(LinkLayerPacketView incoming) {
@@ -4792,6 +4837,10 @@ void LinkLayerController::LeSynchronization() {
 }
 
 void LinkLayerController::IncomingPagePacket(model::packets::LinkLayerPacketView incoming) {
+  if (!page_scan_enable_) {
+    return;
+  }
+
   auto bd_addr = incoming.GetSourceAddress();
   auto page = model::packets::PageView::Create(incoming);
   ASSERT(page.IsValid());
@@ -5342,13 +5391,13 @@ ErrorCode LinkLayerController::SwitchRole(Address bd_addr, bluetooth::hci::Role 
   // The BD_ADDR command parameter indicates for which connection
   // the role switch is to be performed and shall specify a BR/EDR Controller
   // for which a connection already exists.
-  uint16_t connection_handle = connections_.GetHandleOnlyAddress(bd_addr);
-  if (connection_handle == kReservedHandle) {
+  auto connection_handle = connections_.GetAclConnectionHandle(bd_addr);
+  if (!connection_handle.has_value()) {
     INFO(id_, "unknown connection address {}", bd_addr);
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
-  AclConnection& connection = connections_.GetAclConnection(connection_handle);
+  AclConnection& connection = connections_.GetAclConnection(*connection_handle);
 
   // If there is an (e)SCO connection between the local device and the device
   // identified by the BD_ADDR parameter, an attempt to perform a role switch
@@ -5384,16 +5433,16 @@ ErrorCode LinkLayerController::SwitchRole(Address bd_addr, bluetooth::hci::Role 
 
 void LinkLayerController::IncomingRoleSwitchRequest(model::packets::LinkLayerPacketView incoming) {
   auto bd_addr = incoming.GetSourceAddress();
-  auto connection_handle = connections_.GetHandleOnlyAddress(bd_addr);
+  auto connection_handle = connections_.GetAclConnectionHandle(bd_addr);
   auto switch_req = model::packets::RoleSwitchRequestView::Create(incoming);
   ASSERT(switch_req.IsValid());
 
-  if (connection_handle == kReservedHandle) {
+  if (!connection_handle.has_value()) {
     INFO(id_, "ignoring Switch Request received on unknown connection");
     return;
   }
 
-  AclConnection& connection = connections_.GetAclConnection(connection_handle);
+  AclConnection& connection = connections_.GetAclConnection(*connection_handle);
 
   if (!connection.IsRoleSwitchEnabled()) {
     INFO(id_, "role switch disabled by local link policy settings");
@@ -5421,16 +5470,16 @@ void LinkLayerController::IncomingRoleSwitchRequest(model::packets::LinkLayerPac
 
 void LinkLayerController::IncomingRoleSwitchResponse(model::packets::LinkLayerPacketView incoming) {
   auto bd_addr = incoming.GetSourceAddress();
-  auto connection_handle = connections_.GetHandleOnlyAddress(bd_addr);
+  auto connection_handle = connections_.GetAclConnectionHandle(bd_addr);
   auto switch_rsp = model::packets::RoleSwitchResponseView::Create(incoming);
   ASSERT(switch_rsp.IsValid());
 
-  if (connection_handle == kReservedHandle) {
+  if (!connection_handle.has_value()) {
     INFO(id_, "ignoring Switch Response received on unknown connection");
     return;
   }
 
-  AclConnection& connection = connections_.GetAclConnection(connection_handle);
+  AclConnection& connection = connections_.GetAclConnection(*connection_handle);
   ErrorCode status = ErrorCode(switch_rsp.GetStatus());
   bluetooth::hci::Role new_role = status != ErrorCode::SUCCESS ? connection.GetRole()
                                   : connection.GetRole() == bluetooth::hci::Role::CENTRAL

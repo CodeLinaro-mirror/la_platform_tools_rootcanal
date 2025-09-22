@@ -613,8 +613,12 @@ protected:
                              int8_t tx_power = 0);
 
   void IncomingAclPacket(model::packets::LinkLayerPacketView incoming, int8_t rssi);
+  void IncomingLeAclPacket(LeAclConnection& connection,
+                           model::packets::LinkLayerPacketView incoming, int8_t rssi);
   void IncomingScoPacket(model::packets::LinkLayerPacketView incoming);
   void IncomingDisconnectPacket(model::packets::LinkLayerPacketView incoming);
+  void IncomingLeDisconnectPacket(LeAclConnection& connection,
+                                  model::packets::LinkLayerPacketView incoming);
   void IncomingEncryptConnection(model::packets::LinkLayerPacketView incoming);
   void IncomingEncryptConnectionResponse(model::packets::LinkLayerPacketView incoming);
   void IncomingInquiryPacket(model::packets::LinkLayerPacketView incoming, uint8_t rssi);
@@ -674,7 +678,8 @@ protected:
   void IncomingReadRemoteExtendedFeatures(model::packets::LinkLayerPacketView incoming);
   void IncomingReadRemoteExtendedFeaturesResponse(model::packets::LinkLayerPacketView incoming);
   void IncomingReadRemoteVersion(model::packets::LinkLayerPacketView incoming, bool is_br_edr);
-  void IncomingReadRemoteVersionResponse(model::packets::LinkLayerPacketView incoming);
+  void IncomingReadRemoteVersionResponse(model::packets::LinkLayerPacketView incoming,
+                                         bool is_br_edr);
   void IncomingReadClockOffset(model::packets::LinkLayerPacketView incoming);
   void IncomingReadClockOffsetResponse(model::packets::LinkLayerPacketView incoming);
   void IncomingRemoteNameRequest(model::packets::LinkLayerPacketView incoming);

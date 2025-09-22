@@ -86,7 +86,6 @@ public:
   std::optional<uint16_t> GetLeAclConnectionHandle(bluetooth::hci::Address local_address,
                                                    bluetooth::hci::Address remote_address) const;
 
-  uint16_t GetHandleOnlyAddress(bluetooth::hci::Address addr) const;
   std::optional<AddressWithType> GetAddressSafe(uint16_t handle) const;
   bluetooth::hci::Address GetScoAddress(uint16_t handle) const;
 

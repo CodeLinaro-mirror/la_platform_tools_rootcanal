@@ -116,15 +116,6 @@ bool AclConnectionHandler::Disconnect(uint16_t handle, std::function<void(TaskId
   return false;
 }
 
-uint16_t AclConnectionHandler::GetHandleOnlyAddress(bluetooth::hci::Address addr) const {
-  for (auto const& [handle, connection] : acl_connections_) {
-    if (connection.GetAddress().GetAddress() == addr) {
-      return handle;
-    }
-  }
-  return kReservedHandle;
-}
-
 std::optional<uint16_t> AclConnectionHandler::GetAclConnectionHandle(
         bluetooth::hci::Address bd_addr) const {
   for (auto const& [handle, connection] : acl_connections_) {
