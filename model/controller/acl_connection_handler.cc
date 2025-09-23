@@ -159,31 +159,6 @@ Address AclConnectionHandler::GetScoAddress(uint16_t handle) const {
   return sco_connections_.at(handle).GetAddress();
 }
 
-void AclConnectionHandler::SetRssi(uint16_t handle, int8_t rssi) {
-  if (HasHandle(handle)) {
-    acl_connections_.at(handle).SetRssi(rssi);
-  }
-}
-
-int8_t AclConnectionHandler::GetRssi(uint16_t handle) const {
-  return HasHandle(handle) ? acl_connections_.at(handle).GetRssi() : 0;
-}
-
-Phy::Type AclConnectionHandler::GetPhyType(uint16_t handle) const {
-  if (!HasHandle(handle)) {
-    return Phy::Type::BR_EDR;
-  }
-  return acl_connections_.at(handle).GetPhyType();
-}
-
-uint16_t AclConnectionHandler::GetAclLinkPolicySettings(uint16_t handle) const {
-  return acl_connections_.at(handle).GetLinkPolicySettings();
-}
-
-void AclConnectionHandler::SetAclLinkPolicySettings(uint16_t handle, uint16_t settings) {
-  acl_connections_.at(handle).SetLinkPolicySettings(settings);
-}
-
 void AclConnectionHandler::CreateScoConnection(bluetooth::hci::Address addr,
                                                ScoConnectionParameters const& parameters,
                                                ScoState state, ScoDatapath datapath, bool legacy) {
@@ -295,28 +270,6 @@ std::vector<uint16_t> AclConnectionHandler::GetAclHandles() const {
     keys.push_back(pair.first);
   }
   return keys;
-}
-
-void AclConnectionHandler::ResetLinkTimer(uint16_t handle) {
-  acl_connections_.at(handle).ResetLinkTimer();
-}
-
-std::chrono::steady_clock::duration AclConnectionHandler::TimeUntilLinkNearExpiring(
-        uint16_t handle) const {
-  return acl_connections_.at(handle).TimeUntilNearExpiring();
-}
-
-bool AclConnectionHandler::IsLinkNearExpiring(uint16_t handle) const {
-  return acl_connections_.at(handle).IsNearExpiring();
-}
-
-std::chrono::steady_clock::duration AclConnectionHandler::TimeUntilLinkExpired(
-        uint16_t handle) const {
-  return acl_connections_.at(handle).TimeUntilExpired();
-}
-
-bool AclConnectionHandler::HasLinkExpired(uint16_t handle) const {
-  return acl_connections_.at(handle).HasExpired();
 }
 
 }  // namespace rootcanal

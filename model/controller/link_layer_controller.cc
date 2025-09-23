@@ -2163,7 +2163,7 @@ void LinkLayerController::IncomingBrEdrPacket(model::packets::LinkLayerPacketVie
   // Update link timeout for established ACL connections.
   auto connection_handle = connections_.GetAclConnectionHandle(source_address);
   if (connection_handle.has_value()) {
-    connections_.ResetLinkTimer(*connection_handle);
+    connections_.GetAclConnection(*connection_handle).ResetLinkTimer();
   }
 
   switch (incoming.GetType()) {
@@ -2380,7 +2380,8 @@ void LinkLayerController::IncomingAclPacket(model::packets::LinkLayerPacketView 
   }
 
   // Update the RSSI for the local ACL connection.
-  connections_.SetRssi(*connection_handle, rssi);
+  auto& connection = connections_.GetAclConnection(*connection_handle);
+  connection.SetRssi(rssi);
 
   send_acl_(bluetooth::hci::AclBuilder::Create(
           *connection_handle, packet_boundary_flag, broadcast_flag,
@@ -5500,7 +5501,7 @@ ErrorCode LinkLayerController::ReadLinkPolicySettings(uint16_t handle, uint16_t*
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
-  *settings = connections_.GetAclLinkPolicySettings(handle);
+  *settings = connections_.GetAclConnection(handle).GetLinkPolicySettings();
   return ErrorCode::SUCCESS;
 }
 
@@ -5511,7 +5512,7 @@ ErrorCode LinkLayerController::WriteLinkPolicySettings(uint16_t handle, uint16_t
   if (settings > 7 /* Sniff + Hold + Role switch */) {
     return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
   }
-  connections_.SetAclLinkPolicySettings(handle, settings);
+  connections_.GetAclConnection(handle).SetLinkPolicySettings(settings);
   return ErrorCode::SUCCESS;
 }
 
@@ -6074,15 +6075,13 @@ void LinkLayerController::CheckExpiringConnection(uint16_t handle) {
   if (connection.IsNearExpiring()) {
     SendLinkLayerPacket(model::packets::PingRequestBuilder::Create(
             connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress()));
-    ScheduleTask(
-            std::chrono::duration_cast<milliseconds>(connections_.TimeUntilLinkExpired(handle)),
-            [this, handle] { CheckExpiringConnection(handle); });
+    ScheduleTask(std::chrono::duration_cast<milliseconds>(connection.TimeUntilExpired()),
+                 [this, handle] { CheckExpiringConnection(handle); });
     return;
   }
 
-  ScheduleTask(
-          std::chrono::duration_cast<milliseconds>(connections_.TimeUntilLinkNearExpiring(handle)),
-          [this, handle] { CheckExpiringConnection(handle); });
+  ScheduleTask(std::chrono::duration_cast<milliseconds>(connection.TimeUntilNearExpiring()),
+               [this, handle] { CheckExpiringConnection(handle); });
 }
 
 void LinkLayerController::IncomingPingRequest(model::packets::LinkLayerPacketView incoming) {

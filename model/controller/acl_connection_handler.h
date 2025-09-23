@@ -65,13 +65,13 @@ public:
   ScoConnectionParameters GetScoConnectionParameters(bluetooth::hci::Address addr) const;
   ScoLinkParameters GetScoLinkParameters(bluetooth::hci::Address addr) const;
 
-  // \p pending is true if the connection is expected to be
-  // in pending state.
   uint16_t CreateConnection(bluetooth::hci::Address addr, bluetooth::hci::Address own_addr);
   uint16_t CreateLeConnection(bluetooth::hci::AddressWithType addr,
                               bluetooth::hci::AddressWithType resolved_addr,
                               bluetooth::hci::AddressWithType own_addr, bluetooth::hci::Role role);
+
   bool Disconnect(uint16_t handle, std::function<void(TaskId)> stopStream);
+
   bool HasHandle(uint16_t handle) const;
   bool HasAclHandle(uint16_t handle) const;
   bool HasLeAclHandle(uint16_t handle) const;
@@ -97,21 +97,7 @@ public:
   // if the handle is not currently used.
   LeAclConnection& GetLeAclConnection(uint16_t handle);
 
-  void SetRssi(uint16_t handle, int8_t rssi);
-  int8_t GetRssi(uint16_t handle) const;
-
-  Phy::Type GetPhyType(uint16_t handle) const;
-
-  uint16_t GetAclLinkPolicySettings(uint16_t handle) const;
-  void SetAclLinkPolicySettings(uint16_t handle, uint16_t settings);
-
   std::vector<uint16_t> GetAclHandles() const;
-
-  void ResetLinkTimer(uint16_t handle);
-  std::chrono::steady_clock::duration TimeUntilLinkNearExpiring(uint16_t handle) const;
-  bool IsLinkNearExpiring(uint16_t handle) const;
-  std::chrono::steady_clock::duration TimeUntilLinkExpired(uint16_t handle) const;
-  bool HasLinkExpired(uint16_t handle) const;
 
 private:
   std::unordered_map<uint16_t, AclConnection> acl_connections_;
