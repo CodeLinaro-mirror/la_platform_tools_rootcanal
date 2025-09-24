@@ -72,7 +72,6 @@ public:
 
   bool Disconnect(uint16_t handle, std::function<void(TaskId)> stopStream);
 
-  bool HasHandle(uint16_t handle) const;
   bool HasAclHandle(uint16_t handle) const;
   bool HasLeAclHandle(uint16_t handle) const;
   bool HasScoHandle(uint16_t handle) const;
@@ -86,7 +85,6 @@ public:
   std::optional<uint16_t> GetLeAclConnectionHandle(bluetooth::hci::Address local_address,
                                                    bluetooth::hci::Address remote_address) const;
 
-  std::optional<AddressWithType> GetAddressSafe(uint16_t handle) const;
   bluetooth::hci::Address GetScoAddress(uint16_t handle) const;
 
   // Return the AclConnection for the selected connection handle, asserts
@@ -103,6 +101,7 @@ private:
   std::unordered_map<uint16_t, AclConnection> acl_connections_;
   std::unordered_map<uint16_t, ScoConnection> sco_connections_;
 
+  bool HasHandle(uint16_t handle) const;
   uint16_t GetUnusedHandle();
   uint16_t last_handle_{kReservedHandle - 2};
 };

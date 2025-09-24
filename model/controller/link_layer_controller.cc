@@ -1970,10 +1970,18 @@ LinkLayerController::LinkLayerController(const Address& address,
           .get_address =
                   [](void* user, uint16_t handle, uint8_t (*result)[6]) {
                     auto controller = static_cast<LinkLayerController*>(user);
+                    Address address = {};
 
-                    auto address_opt = controller->connections_.GetAddressSafe(handle);
-                    Address address = address_opt.has_value() ? address_opt.value().GetAddress()
-                                                              : Address::kEmpty;
+                    if (controller->connections_.HasAclHandle(handle)) {
+                      address = controller->connections_.GetAclConnection(handle)
+                                        .GetAddress()
+                                        .GetAddress();
+                    } else if (controller->connections_.HasLeAclHandle(handle)) {
+                      address = controller->connections_.GetLeAclConnection(handle)
+                                        .GetAddress()
+                                        .GetAddress();
+                    }
+
                     std::copy(address.data(), address.data() + 6,
                               reinterpret_cast<uint8_t*>(result));
                   },
@@ -4023,6 +4031,11 @@ void LinkLayerController::HandleIso(bluetooth::hci::IsoView iso) {
     return;
   }
 
+  if (!connections_.HasLeAclHandle(acl_connection_handle)) {
+    ERROR(id_, "Invalid LE-ACL connection handle returned from ISO manager");
+    return;
+  }
+
   if (pb_flag == bluetooth::hci::IsoPacketBoundaryFlag::FIRST_FRAGMENT ||
       pb_flag == bluetooth::hci::IsoPacketBoundaryFlag::COMPLETE_SDU) {
     iso_sdu_.clear();
@@ -5383,8 +5396,7 @@ ErrorCode LinkLayerController::RoleDiscovery(uint16_t handle, bluetooth::hci::Ro
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
-  auto const& connection = connections_.GetAclConnection(handle);
-  *role = connection.GetRole();
+  *role = connections_.GetAclConnection(handle).GetRole();
   return ErrorCode::SUCCESS;
 }
 
@@ -5628,9 +5640,8 @@ ErrorCode LinkLayerController::LeConnectionUpdate(uint16_t handle, uint16_t inte
   }
 
   auto& connection = connections_.GetLeAclConnection(handle);
-  bluetooth::hci::Role role = connection.GetRole();
 
-  if (role == bluetooth::hci::Role::CENTRAL) {
+  if (connection.GetRole() == bluetooth::hci::Role::CENTRAL) {
     // As Central, it is allowed to directly send
     // LL_CONNECTION_PARAM_UPDATE_IND to update the parameters.
     SendLeLinkLayerPacket(LeConnectionParameterUpdateBuilder::Create(
@@ -5689,7 +5700,8 @@ ErrorCode LinkLayerController::LeRemoteConnectionParameterRequestNegativeReply(
 bool LinkLayerController::HasAclConnection() { return !connections_.GetAclHandles().empty(); }
 
 bool LinkLayerController::HasAclConnection(uint16_t connection_handle) {
-  return connections_.HasHandle(connection_handle);
+  return connections_.HasAclHandle(connection_handle) ||
+         connections_.HasLeAclHandle(connection_handle);
 }
 
 void LinkLayerController::HandleLeEnableEncryption(uint16_t handle, std::array<uint8_t, 8> rand,
@@ -5728,7 +5740,7 @@ ErrorCode LinkLayerController::LeLongTermKeyRequestReply(uint16_t handle,
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
-  auto& connection = connections_.GetAclConnection(handle);
+  auto& connection = connections_.GetLeAclConnection(handle);
 
   // TODO: Check keys
   if (connection.IsEncrypted()) {

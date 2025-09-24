@@ -104,12 +104,16 @@ bool AclConnectionHandler::Disconnect(uint16_t handle, std::function<void(TaskId
     sco_connections_.erase(handle);
     return true;
   }
-  if (HasHandle(handle)) {
+  if (HasAclHandle(handle)) {
     // It is the responsibility of the caller to remove SCO connections
     // with connected peer first.
     auto address = GetAclConnection(handle).GetAddress().GetAddress();
     uint16_t sco_handle = GetScoHandle(address);
     ASSERT(!HasScoHandle(sco_handle));
+    acl_connections_.erase(handle);
+    return true;
+  }
+  if (HasLeAclHandle(handle)) {
     acl_connections_.erase(handle);
     return true;
   }
@@ -140,18 +144,13 @@ std::optional<uint16_t> AclConnectionHandler::GetLeAclConnectionHandle(
 }
 
 AclConnection& AclConnectionHandler::GetAclConnection(uint16_t handle) {
-  ASSERT_LOG(HasHandle(handle), "Unknown handle %d", handle);
+  ASSERT_LOG(HasAclHandle(handle), "Unknown handle %d", handle);
   return acl_connections_.at(handle);
 }
 
 LeAclConnection& AclConnectionHandler::GetLeAclConnection(uint16_t handle) {
   ASSERT_LOG(HasLeAclHandle(handle), "Unknown handle %d", handle);
   return acl_connections_.at(handle);
-}
-
-std::optional<AddressWithType> AclConnectionHandler::GetAddressSafe(uint16_t handle) const {
-  return HasHandle(handle) ? acl_connections_.at(handle).GetAddress()
-                           : std::optional<AddressWithType>();
 }
 
 Address AclConnectionHandler::GetScoAddress(uint16_t handle) const {
