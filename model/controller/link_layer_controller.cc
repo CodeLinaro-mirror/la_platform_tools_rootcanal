@@ -37,6 +37,7 @@
 #include "model/controller/acl_connection.h"
 #include "model/controller/acl_connection_handler.h"
 #include "model/controller/controller_properties.h"
+#include "model/controller/le_acl_connection.h"
 #include "model/controller/le_advertiser.h"
 #include "model/controller/sco_connection.h"
 #include "packets/hci_packets.h"
@@ -455,8 +456,7 @@ ErrorCode LinkLayerController::LeSetPhy(uint16_t connection_handle,
   // or both PHY changes or when the Controller determines that neither PHY
   // will change immediately.
   SendLeLinkLayerPacket(model::packets::LlPhyReqBuilder::Create(
-          connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress(), tx_phys,
-          rx_phys));
+          connection.own_address.GetAddress(), connection.address.GetAddress(), tx_phys, rx_phys));
 
   connection.InitiatePhyUpdate();
   requested_tx_phys_ = tx_phys;
@@ -486,7 +486,7 @@ void LinkLayerController::IncomingLlPhyReq(LeAclConnection& connection,
   auto phy_req = model::packets::LlPhyReqView::Create(incoming);
   ASSERT(phy_req.IsValid());
 
-  if (connection.GetRole() == bluetooth::hci::Role::PERIPHERAL) {
+  if (connection.role == bluetooth::hci::Role::PERIPHERAL) {
     // Peripheral receives the request: respond with local phy preferences
     // in LL_PHY_RSP pdu.
     SendLeLinkLayerPacket(model::packets::LlPhyRspBuilder::Create(
@@ -534,7 +534,7 @@ void LinkLayerController::IncomingLlPhyRsp(LeAclConnection& connection,
                                            model::packets::LinkLayerPacketView incoming) {
   auto phy_rsp = model::packets::LlPhyRspView::Create(incoming);
   ASSERT(phy_rsp.IsValid());
-  ASSERT(connection.GetRole() == bluetooth::hci::Role::CENTRAL);
+  ASSERT(connection.role == bluetooth::hci::Role::CENTRAL);
 
   // Intersect phy preferences with local preferences.
   uint8_t tx_phys = phy_rsp.GetRxPhys() & requested_tx_phys_;
@@ -573,7 +573,7 @@ void LinkLayerController::IncomingLlPhyUpdateInd(LeAclConnection& connection,
                                                  model::packets::LinkLayerPacketView incoming) {
   auto phy_update_ind = model::packets::LlPhyUpdateIndView::Create(incoming);
   ASSERT(phy_update_ind.IsValid());
-  ASSERT(connection.GetRole() == bluetooth::hci::Role::PERIPHERAL);
+  ASSERT(connection.role == bluetooth::hci::Role::PERIPHERAL);
 
   bluetooth::hci::PhyType tx_phy = select_phy(phy_update_ind.GetPhyPToC(), connection.GetTxPhy());
   bluetooth::hci::PhyType rx_phy = select_phy(phy_update_ind.GetPhyCToP(), connection.GetRxPhy());
@@ -1973,13 +1973,10 @@ LinkLayerController::LinkLayerController(const Address& address,
                     Address address = {};
 
                     if (controller->connections_.HasAclHandle(handle)) {
-                      address = controller->connections_.GetAclConnection(handle)
-                                        .GetAddress()
-                                        .GetAddress();
+                      address = controller->connections_.GetAclConnection(handle).address;
                     } else if (controller->connections_.HasLeAclHandle(handle)) {
                       address = controller->connections_.GetLeAclConnection(handle)
-                                        .GetAddress()
-                                        .GetAddress();
+                                        .address.GetAddress();
                     }
 
                     std::copy(address.data(), address.data() + 6,
@@ -2038,8 +2035,8 @@ LinkLayerController::LinkLayerController(const Address& address,
 
                     LeAclConnection const& connection =
                             controller->connections_.GetLeAclConnection(acl_connection_handle);
-                    Address source = connection.GetOwnAddress().GetAddress();
-                    Address destination = connection.GetAddress().GetAddress();
+                    Address source = connection.own_address.GetAddress();
+                    Address destination = connection.address.GetAddress();
 
                     controller->SendLeLinkLayerPacket(model::packets::LlcpBuilder::Create(
                             source, destination, std::vector(data, data + len)));
@@ -2074,7 +2071,7 @@ ErrorCode LinkLayerController::LeReadRemoteFeaturesPage0(uint16_t connection_han
 
   auto const& connection = connections_.GetLeAclConnection(connection_handle);
   SendLeLinkLayerPacket(model::packets::LeReadRemoteFeaturesBuilder::Create(
-          connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress()));
+          connection.own_address.GetAddress(), connection.address.GetAddress()));
 
   return ErrorCode::SUCCESS;
 }
@@ -2119,8 +2116,7 @@ ErrorCode LinkLayerController::SendCommandToRemoteByHandle(OpCode opcode, pdl::p
   }
 
   auto const& connection = connections_.GetAclConnection(handle);
-  return SendCommandToRemoteByAddress(opcode, args, connection.GetOwnAddress().GetAddress(),
-                                      connection.GetAddress().GetAddress());
+  return SendCommandToRemoteByAddress(opcode, args, connection.own_address, connection.address);
 }
 
 ErrorCode LinkLayerController::SendScoToRemote(bluetooth::hci::ScoView sco_packet) {
@@ -2591,6 +2587,7 @@ void LinkLayerController::IncomingReadClockOffsetResponse(
 
 void LinkLayerController::IncomingDisconnectPacket(model::packets::LinkLayerPacketView incoming) {
   INFO(id_, "Disconnect Packet");
+
   auto disconnect = model::packets::DisconnectView::Create(incoming);
   ASSERT(disconnect.IsValid());
 
@@ -3959,9 +3956,8 @@ void LinkLayerController::HandleAcl(bluetooth::hci::AclView acl) {
     auto& connection = connections_.GetAclConnection(connection_handle);
     auto acl_payload = acl.GetPayload();
     auto acl_packet = model::packets::AclBuilder::Create(
-            connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress(),
-            static_cast<uint8_t>(pb_flag), static_cast<uint8_t>(bc_flag),
-            std::vector(acl_payload.begin(), acl_payload.end()));
+            connection.own_address, connection.address, static_cast<uint8_t>(pb_flag),
+            static_cast<uint8_t>(bc_flag), std::vector(acl_payload.begin(), acl_payload.end()));
     SendLinkLayerPacket(std::move(acl_packet));
 
   } else if (connections_.HasLeAclHandle(connection_handle)) {
@@ -3969,7 +3965,7 @@ void LinkLayerController::HandleAcl(bluetooth::hci::AclView acl) {
     auto& connection = connections_.GetLeAclConnection(connection_handle);
     auto acl_payload = acl.GetPayload();
     auto acl_packet = model::packets::AclBuilder::Create(
-            connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress(),
+            connection.own_address.GetAddress(), connection.address.GetAddress(),
             static_cast<uint8_t>(pb_flag), static_cast<uint8_t>(bc_flag),
             std::vector(acl_payload.begin(), acl_payload.end()));
     SendLeLinkLayerPacket(std::move(acl_packet));
@@ -4075,8 +4071,8 @@ void LinkLayerController::HandleIso(bluetooth::hci::IsoView iso) {
 
     auto const& connection = connections_.GetLeAclConnection(acl_connection_handle);
     SendLeLinkLayerPacket(model::packets::LeConnectedIsochronousPduBuilder::Create(
-            connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress(), cig_id,
-            cis_id, packet_sequence_number, std::move(iso_sdu_)));
+            connection.own_address.GetAddress(), connection.address.GetAddress(), cig_id, cis_id,
+            packet_sequence_number, std::move(iso_sdu_)));
   }
 }
 
@@ -5246,36 +5242,34 @@ ErrorCode LinkLayerController::Disconnect(uint16_t handle, ErrorCode host_reason
 
   if (connections_.HasAclHandle(handle)) {
     auto connection = connections_.GetAclConnection(handle);
-    INFO(id_, "Disconnecting ACL connection with {}", connection.GetAddress());
+    auto address = connection.address;
+    INFO(id_, "Disconnecting ACL connection with {}", connection.address);
 
-    uint16_t sco_handle = connections_.GetScoHandle(connection.GetAddress().GetAddress());
+    uint16_t sco_handle = connections_.GetScoHandle(connection.address);
     if (sco_handle != kReservedHandle) {
       SendLinkLayerPacket(model::packets::ScoDisconnectBuilder::Create(
-              GetAddress(), connection.GetAddress().GetAddress(),
-              static_cast<uint8_t>(host_reason)));
+              connection.own_address, connection.address, static_cast<uint8_t>(host_reason)));
 
       connections_.Disconnect(sco_handle, [this](TaskId task_id) { CancelScheduledTask(task_id); });
       SendDisconnectionCompleteEvent(sco_handle, controller_reason);
     }
 
     SendLinkLayerPacket(model::packets::DisconnectBuilder::Create(
-            GetAddress(), connection.GetAddress().GetAddress(), static_cast<uint8_t>(host_reason)));
+            connection.own_address, connection.address, static_cast<uint8_t>(host_reason)));
 
     connections_.Disconnect(handle, [this](TaskId task_id) { CancelScheduledTask(task_id); });
     SendDisconnectionCompleteEvent(handle, controller_reason);
 
-    ASSERT(link_manager_remove_link(
-            lm_.get(),
-            reinterpret_cast<uint8_t (*)[6]>(connection.GetAddress().GetAddress().data())));
+    ASSERT(link_manager_remove_link(lm_.get(), reinterpret_cast<uint8_t (*)[6]>(address.data())));
     return ErrorCode::SUCCESS;
   }
 
   if (connections_.HasLeAclHandle(handle)) {
     auto connection = connections_.GetLeAclConnection(handle);
-    INFO(id_, "Disconnecting LE-ACL connection with {}", connection.GetAddress());
+    INFO(id_, "Disconnecting LE-ACL connection with {}", connection.address);
 
     SendLeLinkLayerPacket(model::packets::DisconnectBuilder::Create(
-            connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress(),
+            connection.own_address.GetAddress(), connection.address.GetAddress(),
             static_cast<uint8_t>(host_reason)));
 
     connections_.Disconnect(handle, [this](TaskId task_id) { CancelScheduledTask(task_id); });
@@ -5292,14 +5286,14 @@ ErrorCode LinkLayerController::ReadRemoteVersionInformation(uint16_t connection_
   if (connections_.HasAclHandle(connection_handle)) {
     auto const& connection = connections_.GetAclConnection(connection_handle);
     SendLinkLayerPacket(model::packets::ReadRemoteVersionInformationBuilder::Create(
-            connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress()));
+            connection.own_address, connection.address));
     return ErrorCode::SUCCESS;
   }
 
   if (connections_.HasLeAclHandle(connection_handle)) {
     auto const& connection = connections_.GetLeAclConnection(connection_handle);
     SendLeLinkLayerPacket(model::packets::ReadRemoteVersionInformationBuilder::Create(
-            connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress()));
+            connection.own_address.GetAddress(), connection.address.GetAddress()));
     return ErrorCode::SUCCESS;
   }
 
@@ -5521,9 +5515,11 @@ ErrorCode LinkLayerController::WriteLinkPolicySettings(uint16_t handle, uint16_t
   if (!connections_.HasAclHandle(handle)) {
     return ErrorCode::UNKNOWN_CONNECTION;
   }
+
   if (settings > 7 /* Sniff + Hold + Role switch */) {
     return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
   }
+
   connections_.GetAclConnection(handle).SetLinkPolicySettings(settings);
   return ErrorCode::SUCCESS;
 }
@@ -5623,7 +5619,7 @@ void LinkLayerController::LeConnectionUpdateComplete(uint16_t handle, uint16_t i
   uint16_t interval = (interval_min + interval_max) / 2;
 
   SendLeLinkLayerPacket(LeConnectionParameterUpdateBuilder::Create(
-          connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress(),
+          connection.own_address.GetAddress(), connection.address.GetAddress(),
           static_cast<uint8_t>(ErrorCode::SUCCESS), interval, latency, supervision_timeout));
 
   if (IsLeEventUnmasked(SubeventCode::LE_CONNECTION_UPDATE_COMPLETE)) {
@@ -5641,11 +5637,11 @@ ErrorCode LinkLayerController::LeConnectionUpdate(uint16_t handle, uint16_t inte
 
   auto& connection = connections_.GetLeAclConnection(handle);
 
-  if (connection.GetRole() == bluetooth::hci::Role::CENTRAL) {
+  if (connection.role == bluetooth::hci::Role::CENTRAL) {
     // As Central, it is allowed to directly send
     // LL_CONNECTION_PARAM_UPDATE_IND to update the parameters.
     SendLeLinkLayerPacket(LeConnectionParameterUpdateBuilder::Create(
-            connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress(),
+            connection.own_address.GetAddress(), connection.address.GetAddress(),
             static_cast<uint8_t>(ErrorCode::SUCCESS), interval_max, latency, supervision_timeout));
 
     if (IsLeEventUnmasked(SubeventCode::LE_CONNECTION_UPDATE_COMPLETE)) {
@@ -5656,8 +5652,8 @@ ErrorCode LinkLayerController::LeConnectionUpdate(uint16_t handle, uint16_t inte
     // Send LL_CONNECTION_PARAM_REQ and wait for LL_CONNECTION_PARAM_RSP
     // in return.
     SendLeLinkLayerPacket(LeConnectionParameterRequestBuilder::Create(
-            connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress(),
-            interval_min, interval_max, latency, supervision_timeout));
+            connection.own_address.GetAddress(), connection.address.GetAddress(), interval_min,
+            interval_max, latency, supervision_timeout));
   }
 
   return ErrorCode::SUCCESS;
@@ -5692,7 +5688,7 @@ ErrorCode LinkLayerController::LeRemoteConnectionParameterRequestNegativeReply(
   uint16_t latency = 0;
   uint16_t timeout = 0;
   SendLeLinkLayerPacket(LeConnectionParameterUpdateBuilder::Create(
-          connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress(),
+          connection.own_address.GetAddress(), connection.address.GetAddress(),
           static_cast<uint8_t>(reason), interval, latency, timeout));
   return ErrorCode::SUCCESS;
 }
@@ -5715,8 +5711,7 @@ void LinkLayerController::HandleLeEnableEncryption(uint16_t handle, std::array<u
 
   auto const& connection = connections_.GetLeAclConnection(handle);
   SendLeLinkLayerPacket(model::packets::LeEncryptConnectionBuilder::Create(
-          connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress(), rand, ediv,
-          ltk));
+          connection.own_address.GetAddress(), connection.address.GetAddress(), rand, ediv, ltk));
 }
 
 ErrorCode LinkLayerController::LeEnableEncryption(uint16_t handle, std::array<uint8_t, 8> rand,
@@ -5760,7 +5755,7 @@ ErrorCode LinkLayerController::LeLongTermKeyRequestReply(uint16_t handle,
     }
   }
   SendLeLinkLayerPacket(model::packets::LeEncryptConnectionResponseBuilder::Create(
-          connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress(),
+          connection.own_address.GetAddress(), connection.address.GetAddress(),
           std::array<uint8_t, 8>(), uint16_t(), ltk));
 
   return ErrorCode::SUCCESS;
@@ -5774,7 +5769,7 @@ ErrorCode LinkLayerController::LeLongTermKeyRequestNegativeReply(uint16_t handle
 
   auto const& connection = connections_.GetLeAclConnection(handle);
   SendLeLinkLayerPacket(model::packets::LeEncryptConnectionResponseBuilder::Create(
-          connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress(),
+          connection.own_address.GetAddress(), connection.address.GetAddress(),
           std::array<uint8_t, 8>(), uint16_t(), std::array<uint8_t, 16>()));
   return ErrorCode::SUCCESS;
 }
@@ -5930,13 +5925,11 @@ ErrorCode LinkLayerController::AddScoConnection(uint16_t connection_handle, uint
   }
 
   auto const& connection = connections_.GetAclConnection(connection_handle);
-  Address bd_addr = connection.GetAddress().GetAddress();
-
-  if (connections_.HasPendingScoConnection(bd_addr)) {
+  if (connections_.HasPendingScoConnection(connection.address)) {
     return ErrorCode::COMMAND_DISALLOWED;
   }
 
-  INFO(id_, "Creating SCO connection with {}", bd_addr);
+  INFO(id_, "Creating SCO connection with {}", connection.address);
 
   // Save connection parameters.
   ScoConnectionParameters connection_parameters = {
@@ -5950,12 +5943,12 @@ ErrorCode LinkLayerController::AddScoConnection(uint16_t connection_handle, uint
                      (uint16_t)bluetooth::hci::SynchronousPacketTypeBits::NO_3_EV3_ALLOWED |
                      (uint16_t)bluetooth::hci::SynchronousPacketTypeBits::NO_2_EV5_ALLOWED |
                      (uint16_t)bluetooth::hci::SynchronousPacketTypeBits::NO_3_EV5_ALLOWED)};
-  connections_.CreateScoConnection(connection.GetAddress().GetAddress(), connection_parameters,
-                                   SCO_STATE_PENDING, datapath, true);
+  connections_.CreateScoConnection(connection.address, connection_parameters, SCO_STATE_PENDING,
+                                   datapath, true);
 
   // Send SCO connection request to peer.
   SendLinkLayerPacket(model::packets::ScoConnectionRequestBuilder::Create(
-          GetAddress(), bd_addr, connection_parameters.transmit_bandwidth,
+          GetAddress(), connection.address, connection_parameters.transmit_bandwidth,
           connection_parameters.receive_bandwidth, connection_parameters.max_latency,
           connection_parameters.voice_setting, connection_parameters.retransmission_effort,
           connection_parameters.packet_type, class_of_device_));
@@ -5971,28 +5964,26 @@ ErrorCode LinkLayerController::SetupSynchronousConnection(
   }
 
   auto const& connection = connections_.GetAclConnection(connection_handle);
-  Address bd_addr = connection.GetAddress().GetAddress();
-
-  if (connections_.HasPendingScoConnection(bd_addr)) {
+  if (connections_.HasPendingScoConnection(connection.address)) {
     // This command may be used to modify an exising eSCO link.
     // Skip for now. TODO: should return an event
     // HCI_Synchronous_Connection_Changed on both sides.
     return ErrorCode::COMMAND_DISALLOWED;
   }
 
-  INFO(id_, "Creating eSCO connection with {}", bd_addr);
+  INFO(id_, "Creating eSCO connection with {}", connection.address);
 
   // Save connection parameters.
   ScoConnectionParameters connection_parameters = {transmit_bandwidth,    receive_bandwidth,
                                                    max_latency,           voice_setting,
                                                    retransmission_effort, packet_types};
-  connections_.CreateScoConnection(connection.GetAddress().GetAddress(), connection_parameters,
-                                   SCO_STATE_PENDING, datapath);
+  connections_.CreateScoConnection(connection.address, connection_parameters, SCO_STATE_PENDING,
+                                   datapath);
 
   // Send eSCO connection request to peer.
   SendLinkLayerPacket(model::packets::ScoConnectionRequestBuilder::Create(
-          GetAddress(), bd_addr, transmit_bandwidth, receive_bandwidth, max_latency, voice_setting,
-          retransmission_effort, packet_types, class_of_device_));
+          GetAddress(), connection.address, transmit_bandwidth, receive_bandwidth, max_latency,
+          voice_setting, retransmission_effort, packet_types, class_of_device_));
   return ErrorCode::SUCCESS;
 }
 
@@ -6085,8 +6076,8 @@ void LinkLayerController::CheckExpiringConnection(uint16_t handle) {
   }
 
   if (connection.IsNearExpiring()) {
-    SendLinkLayerPacket(model::packets::PingRequestBuilder::Create(
-            connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress()));
+    SendLinkLayerPacket(
+            model::packets::PingRequestBuilder::Create(connection.own_address, connection.address));
     ScheduleTask(std::chrono::duration_cast<milliseconds>(connection.TimeUntilExpired()),
                  [this, handle] { CheckExpiringConnection(handle); });
     return;
