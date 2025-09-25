@@ -2573,8 +2573,7 @@ void DualModeController::LeReadRemoteFeaturesPage0(CommandView command) {
   DEBUG(id_, "<< LE Read Remote Features Page 0");
   DEBUG(id_, "   connection_handle=0x{:x}", handle);
 
-  auto status = link_layer_controller_.SendCommandToRemoteByHandle(
-          OpCode::LE_READ_REMOTE_FEATURES_PAGE_0, command_view.bytes(), handle);
+  auto status = link_layer_controller_.LeReadRemoteFeaturesPage0(handle);
 
   send_event_(bluetooth::hci::LeReadRemoteFeaturesPage0StatusBuilder::Create(status,
                                                                              kNumCommandPackets));

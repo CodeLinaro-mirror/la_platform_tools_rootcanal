@@ -82,8 +82,6 @@ public:
 
   ErrorCode SendCommandToRemoteByAddress(OpCode opcode, pdl::packet::slice args,
                                          const Address& own_address, const Address& peer_address);
-  ErrorCode SendLeCommandToRemoteByAddress(OpCode opcode, const Address& own_address,
-                                           const Address& peer_address);
   ErrorCode SendCommandToRemoteByHandle(OpCode opcode, pdl::packet::slice args, uint16_t handle);
   ErrorCode SendScoToRemote(bluetooth::hci::ScoView sco_packet);
 
@@ -327,6 +325,9 @@ public:
   ErrorCode ReadRssi(uint16_t connection_handle, int8_t* rssi);
 
   // LE Commands
+
+  // HCI LE Read Remote Features (Vol 4, Part E § 7.8.21).
+  ErrorCode LeReadRemoteFeaturesPage0(uint16_t connection_handle);
 
   // HCI LE Set Random Address command (Vol 4, Part E § 7.8.4).
   ErrorCode LeSetRandomAddress(Address random_address);
@@ -635,12 +636,18 @@ protected:
 
   void IncomingLeConnectPacket(model::packets::LinkLayerPacketView incoming);
   void IncomingLeConnectCompletePacket(model::packets::LinkLayerPacketView incoming);
-  void IncomingLeConnectionParameterRequest(model::packets::LinkLayerPacketView incoming);
-  void IncomingLeConnectionParameterUpdate(model::packets::LinkLayerPacketView incoming);
-  void IncomingLeEncryptConnection(model::packets::LinkLayerPacketView incoming);
-  void IncomingLeEncryptConnectionResponse(model::packets::LinkLayerPacketView incoming);
-  void IncomingLeReadRemoteFeatures(model::packets::LinkLayerPacketView incoming);
-  void IncomingLeReadRemoteFeaturesResponse(model::packets::LinkLayerPacketView incoming);
+  void IncomingLeConnectionParameterRequest(LeAclConnection& connection,
+                                            model::packets::LinkLayerPacketView incoming);
+  void IncomingLeConnectionParameterUpdate(LeAclConnection& connection,
+                                           model::packets::LinkLayerPacketView incoming);
+  void IncomingLeEncryptConnection(LeAclConnection& connection,
+                                   model::packets::LinkLayerPacketView incoming);
+  void IncomingLeEncryptConnectionResponse(LeAclConnection& connection,
+                                           model::packets::LinkLayerPacketView incoming);
+  void IncomingLeReadRemoteFeatures(LeAclConnection& connection,
+                                    model::packets::LinkLayerPacketView incoming);
+  void IncomingLeReadRemoteFeaturesResponse(LeAclConnection& connection,
+                                            model::packets::LinkLayerPacketView incoming);
 
   void ProcessIncomingLegacyScanRequest(AddressWithType scanning_address,
                                         AddressWithType resolved_scanning_address,
@@ -681,9 +688,10 @@ protected:
   void IncomingRoleSwitchRequest(model::packets::LinkLayerPacketView incoming);
   void IncomingRoleSwitchResponse(model::packets::LinkLayerPacketView incoming);
 
-  void IncomingLlPhyReq(model::packets::LinkLayerPacketView incoming);
-  void IncomingLlPhyRsp(model::packets::LinkLayerPacketView incoming);
-  void IncomingLlPhyUpdateInd(model::packets::LinkLayerPacketView incoming);
+  void IncomingLlPhyReq(LeAclConnection& connection, model::packets::LinkLayerPacketView incoming);
+  void IncomingLlPhyRsp(LeAclConnection& connection, model::packets::LinkLayerPacketView incoming);
+  void IncomingLlPhyUpdateInd(LeAclConnection& connection,
+                              model::packets::LinkLayerPacketView incoming);
 
 public:
   bool IsEventUnmasked(bluetooth::hci::EventCode event) const;

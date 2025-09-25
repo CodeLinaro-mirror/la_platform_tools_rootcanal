@@ -284,15 +284,20 @@ std::optional<AddressWithType> LinkLayerController::GenerateResolvablePrivateAdd
 
 // HCI Read Rssi command (Vol 4, Part E § 7.5.4).
 ErrorCode LinkLayerController::ReadRssi(uint16_t connection_handle, int8_t* rssi) {
-  // Not documented: If the connection handle is not found, the Controller
-  // shall return the error code Unknown Connection Identifier (0x02).
-  if (!connections_.HasHandle(connection_handle)) {
-    INFO(id_, "unknown connection identifier");
-    return ErrorCode::UNKNOWN_CONNECTION;
+  if (connections_.HasAclHandle(connection_handle)) {
+    *rssi = connections_.GetAclConnection(connection_handle).GetRssi();
+    return ErrorCode::SUCCESS;
   }
 
-  *rssi = connections_.GetRssi(connection_handle);
-  return ErrorCode::SUCCESS;
+  if (connections_.HasLeAclHandle(connection_handle)) {
+    *rssi = connections_.GetLeAclConnection(connection_handle).GetRssi();
+    return ErrorCode::SUCCESS;
+  }
+
+  // Not documented: If the connection handle is not found, the Controller
+  // shall return the error code Unknown Connection Identifier (0x02).
+  INFO(id_, "unknown connection identifier");
+  return ErrorCode::UNKNOWN_CONNECTION;
 }
 
 // =============================================================================
@@ -338,13 +343,12 @@ ErrorCode LinkLayerController::LeReadPhy(uint16_t connection_handle,
                                          bluetooth::hci::PhyType* tx_phy,
                                          bluetooth::hci::PhyType* rx_phy) {
   // Note: no documented status code for this case.
-  if (!connections_.HasHandle(connection_handle) ||
-      connections_.GetPhyType(connection_handle) != Phy::Type::LOW_ENERGY) {
+  if (!connections_.HasLeAclHandle(connection_handle)) {
     INFO(id_, "unknown or invalid connection handle");
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
-  AclConnection const& connection = connections_.GetAclConnection(connection_handle);
+  LeAclConnection const& connection = connections_.GetLeAclConnection(connection_handle);
   *tx_phy = connection.GetTxPhy();
   *rx_phy = connection.GetRxPhy();
   return ErrorCode::SUCCESS;
@@ -405,11 +409,12 @@ ErrorCode LinkLayerController::LeSetPhy(uint16_t connection_handle,
   uint8_t supported_phys = properties_.LeSupportedPhys();
 
   // Note: no documented status code for this case.
-  if (!connections_.HasHandle(connection_handle) ||
-      connections_.GetPhyType(connection_handle) != Phy::Type::LOW_ENERGY) {
+  if (!connections_.HasLeAclHandle(connection_handle)) {
     INFO(id_, "unknown or invalid connection handle");
     return ErrorCode::UNKNOWN_CONNECTION;
   }
+
+  auto& connection = connections_.GetLeAclConnection(connection_handle);
 
   // If the All_PHYs parameter specifies that the Host has no preference,
   // the TX_PHYs parameter shall be ignored; otherwise at least one bit shall
@@ -450,10 +455,10 @@ ErrorCode LinkLayerController::LeSetPhy(uint16_t connection_handle,
   // or both PHY changes or when the Controller determines that neither PHY
   // will change immediately.
   SendLeLinkLayerPacket(model::packets::LlPhyReqBuilder::Create(
-          connections_.GetOwnAddress(connection_handle).GetAddress(),
-          connections_.GetAddress(connection_handle).GetAddress(), tx_phys, rx_phys));
+          connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress(), tx_phys,
+          rx_phys));
 
-  connections_.GetAclConnection(connection_handle).InitiatePhyUpdate();
+  connection.InitiatePhyUpdate();
   requested_tx_phys_ = tx_phys;
   requested_rx_phys_ = rx_phys;
   return ErrorCode::SUCCESS;
@@ -476,18 +481,10 @@ static uint8_t indicate_phy(bluetooth::hci::PhyType selected, bluetooth::hci::Ph
                                                          : 0x1;
 }
 
-void LinkLayerController::IncomingLlPhyReq(model::packets::LinkLayerPacketView incoming) {
+void LinkLayerController::IncomingLlPhyReq(LeAclConnection& connection,
+                                           model::packets::LinkLayerPacketView incoming) {
   auto phy_req = model::packets::LlPhyReqView::Create(incoming);
   ASSERT(phy_req.IsValid());
-  uint16_t connection_handle = connections_.GetHandleOnlyAddress(incoming.GetSourceAddress());
-
-  if (connection_handle == kReservedHandle) {
-    INFO(id_, "@{}: Unknown connection @{}", incoming.GetDestinationAddress(),
-         incoming.GetSourceAddress());
-    return;
-  }
-
-  AclConnection& connection = connections_.GetAclConnection(connection_handle);
 
   if (connection.GetRole() == bluetooth::hci::Role::PERIPHERAL) {
     // Peripheral receives the request: respond with local phy preferences
@@ -524,7 +521,7 @@ void LinkLayerController::IncomingLlPhyReq(model::packets::LinkLayerPacketView i
     if ((phy_c_to_p != connection.GetTxPhy() || phy_p_to_c != connection.GetRxPhy()) &&
         IsLeEventUnmasked(SubeventCode::LE_PHY_UPDATE_COMPLETE)) {
       send_event_(bluetooth::hci::LePhyUpdateCompleteBuilder::Create(
-              ErrorCode::SUCCESS, connection_handle, phy_c_to_p, phy_p_to_c));
+              ErrorCode::SUCCESS, connection.handle, phy_c_to_p, phy_p_to_c));
     }
 
     // Update local state.
@@ -533,18 +530,10 @@ void LinkLayerController::IncomingLlPhyReq(model::packets::LinkLayerPacketView i
   }
 }
 
-void LinkLayerController::IncomingLlPhyRsp(model::packets::LinkLayerPacketView incoming) {
+void LinkLayerController::IncomingLlPhyRsp(LeAclConnection& connection,
+                                           model::packets::LinkLayerPacketView incoming) {
   auto phy_rsp = model::packets::LlPhyRspView::Create(incoming);
   ASSERT(phy_rsp.IsValid());
-  uint16_t connection_handle = connections_.GetHandleOnlyAddress(incoming.GetSourceAddress());
-
-  if (connection_handle == kReservedHandle) {
-    INFO(id_, "@{}: Unknown connection @{}", incoming.GetDestinationAddress(),
-         incoming.GetSourceAddress());
-    return;
-  }
-
-  AclConnection& connection = connections_.GetAclConnection(connection_handle);
   ASSERT(connection.GetRole() == bluetooth::hci::Role::CENTRAL);
 
   // Intersect phy preferences with local preferences.
@@ -571,7 +560,7 @@ void LinkLayerController::IncomingLlPhyRsp(model::packets::LinkLayerPacketView i
   // (initiator in this case).
   if (IsLeEventUnmasked(SubeventCode::LE_PHY_UPDATE_COMPLETE)) {
     send_event_(bluetooth::hci::LePhyUpdateCompleteBuilder::Create(
-            ErrorCode::SUCCESS, connection_handle, phy_c_to_p, phy_p_to_c));
+            ErrorCode::SUCCESS, connection.handle, phy_c_to_p, phy_p_to_c));
   }
 
   // Update local state.
@@ -580,18 +569,10 @@ void LinkLayerController::IncomingLlPhyRsp(model::packets::LinkLayerPacketView i
   connection.SetRxPhy(phy_p_to_c);
 }
 
-void LinkLayerController::IncomingLlPhyUpdateInd(model::packets::LinkLayerPacketView incoming) {
+void LinkLayerController::IncomingLlPhyUpdateInd(LeAclConnection& connection,
+                                                 model::packets::LinkLayerPacketView incoming) {
   auto phy_update_ind = model::packets::LlPhyUpdateIndView::Create(incoming);
   ASSERT(phy_update_ind.IsValid());
-  uint16_t connection_handle = connections_.GetHandleOnlyAddress(incoming.GetSourceAddress());
-
-  if (connection_handle == kReservedHandle) {
-    INFO(id_, "@{}: Unknown connection @{}", incoming.GetDestinationAddress(),
-         incoming.GetSourceAddress());
-    return;
-  }
-
-  AclConnection& connection = connections_.GetAclConnection(connection_handle);
   ASSERT(connection.GetRole() == bluetooth::hci::Role::PERIPHERAL);
 
   bluetooth::hci::PhyType tx_phy = select_phy(phy_update_ind.GetPhyPToC(), connection.GetTxPhy());
@@ -604,7 +585,7 @@ void LinkLayerController::IncomingLlPhyUpdateInd(model::packets::LinkLayerPacket
       (tx_phy != connection.GetTxPhy() || rx_phy != connection.GetRxPhy() ||
        connection.InitiatedPhyUpdate())) {
     send_event_(bluetooth::hci::LePhyUpdateCompleteBuilder::Create(
-            ErrorCode::SUCCESS, connection_handle, tx_phy, rx_phy));
+            ErrorCode::SUCCESS, connection.handle, tx_phy, rx_phy));
   }
 
   connection.PhyUpdateComplete();
@@ -616,8 +597,7 @@ void LinkLayerController::IncomingLlPhyUpdateInd(model::packets::LinkLayerPacket
 ErrorCode LinkLayerController::LeSetDataLength(uint16_t connection_handle, uint16_t tx_octets,
                                                uint16_t tx_time) {
   // Note: no documented status code for this case.
-  if (!connections_.HasHandle(connection_handle) ||
-      connections_.GetPhyType(connection_handle) != Phy::Type::LOW_ENERGY) {
+  if (!connections_.HasLeAclHandle(connection_handle)) {
     INFO(id_, "unknown or invalid connection handle");
     return ErrorCode::UNKNOWN_CONNECTION;
   }
@@ -2038,15 +2018,15 @@ LinkLayerController::LinkLayerController(const Address& address,
                      uintptr_t len) {
                     auto controller = static_cast<LinkLayerController*>(user);
 
-                    if (!controller->connections_.HasHandle(acl_connection_handle)) {
+                    if (!controller->connections_.HasLeAclHandle(acl_connection_handle)) {
                       ERROR("Dropping LLCP packet sent for unknown connection handle "
                             "0x{:x}",
                             acl_connection_handle);
                       return;
                     }
 
-                    AclConnection const& connection =
-                            controller->connections_.GetAclConnection(acl_connection_handle);
+                    LeAclConnection const& connection =
+                            controller->connections_.GetLeAclConnection(acl_connection_handle);
                     Address source = connection.GetOwnAddress().GetAddress();
                     Address destination = connection.GetAddress().GetAddress();
 
@@ -2076,18 +2056,14 @@ void LinkLayerController::SendLinkLayerPacket(
   });
 }
 
-ErrorCode LinkLayerController::SendLeCommandToRemoteByAddress(OpCode opcode,
-                                                              const Address& own_address,
-                                                              const Address& peer_address) {
-  switch (opcode) {
-    case (OpCode::LE_READ_REMOTE_FEATURES_PAGE_0):
-      SendLeLinkLayerPacket(
-              model::packets::LeReadRemoteFeaturesBuilder::Create(own_address, peer_address));
-      break;
-    default:
-      INFO(id_, "Dropping unhandled command 0x{:04x}", static_cast<uint16_t>(opcode));
-      return ErrorCode::UNKNOWN_HCI_COMMAND;
+ErrorCode LinkLayerController::LeReadRemoteFeaturesPage0(uint16_t connection_handle) {
+  if (!connections_.HasLeAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
   }
+
+  auto const& connection = connections_.GetLeAclConnection(connection_handle);
+  SendLeLinkLayerPacket(model::packets::LeReadRemoteFeaturesBuilder::Create(
+          connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress()));
 
   return ErrorCode::SUCCESS;
 }
@@ -2127,19 +2103,12 @@ ErrorCode LinkLayerController::SendCommandToRemoteByAddress(OpCode opcode, pdl::
 
 ErrorCode LinkLayerController::SendCommandToRemoteByHandle(OpCode opcode, pdl::packet::slice args,
                                                            uint16_t handle) {
-  if (!connections_.HasHandle(handle)) {
+  if (!connections_.HasAclHandle(handle)) {
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
-  switch (opcode) {
-    case (OpCode::LE_READ_REMOTE_FEATURES_PAGE_0):
-      return SendLeCommandToRemoteByAddress(opcode, connections_.GetOwnAddress(handle).GetAddress(),
-                                            connections_.GetAddress(handle).GetAddress());
-    default:
-      return SendCommandToRemoteByAddress(opcode, args,
-                                          connections_.GetOwnAddress(handle).GetAddress(),
-                                          connections_.GetAddress(handle).GetAddress());
-  }
+  return SendCommandToRemoteByAddress(opcode, args, connections_.GetOwnAddress(handle).GetAddress(),
+                                      connections_.GetAddress(handle).GetAddress());
 }
 
 ErrorCode LinkLayerController::SendScoToRemote(bluetooth::hci::ScoView sco_packet) {
@@ -2326,7 +2295,7 @@ void LinkLayerController::IncomingLePacket(model::packets::LinkLayerPacketView i
   }
 
   // Update link timeout for valid ACL connections
-  auto& connection = connections_.GetAclConnection(*connection_handle);
+  auto& connection = connections_.GetLeAclConnection(*connection_handle);
   connection.ResetLinkTimer();
 
   switch (incoming.GetType()) {
@@ -2343,22 +2312,22 @@ void LinkLayerController::IncomingLePacket(model::packets::LinkLayerPacketView i
       IncomingLlcpPacket(incoming);
       break;
     case model::packets::PacketType::LE_CONNECTION_PARAMETER_REQUEST:
-      IncomingLeConnectionParameterRequest(incoming);
+      IncomingLeConnectionParameterRequest(connection, incoming);
       break;
     case model::packets::PacketType::LE_CONNECTION_PARAMETER_UPDATE:
-      IncomingLeConnectionParameterUpdate(incoming);
+      IncomingLeConnectionParameterUpdate(connection, incoming);
       break;
     case model::packets::PacketType::LE_ENCRYPT_CONNECTION:
-      IncomingLeEncryptConnection(incoming);
+      IncomingLeEncryptConnection(connection, incoming);
       break;
     case model::packets::PacketType::LE_ENCRYPT_CONNECTION_RESPONSE:
-      IncomingLeEncryptConnectionResponse(incoming);
+      IncomingLeEncryptConnectionResponse(connection, incoming);
       break;
     case (model::packets::PacketType::LE_READ_REMOTE_FEATURES):
-      IncomingLeReadRemoteFeatures(incoming);
+      IncomingLeReadRemoteFeatures(connection, incoming);
       break;
     case (model::packets::PacketType::LE_READ_REMOTE_FEATURES_RESPONSE):
-      IncomingLeReadRemoteFeaturesResponse(incoming);
+      IncomingLeReadRemoteFeaturesResponse(connection, incoming);
       break;
     case model::packets::PacketType::READ_REMOTE_VERSION_INFORMATION:
       IncomingReadRemoteVersion(incoming, false);
@@ -2373,13 +2342,13 @@ void LinkLayerController::IncomingLePacket(model::packets::LinkLayerPacketView i
       // ping responses require no action
       break;
     case model::packets::PacketType::LL_PHY_REQ:
-      IncomingLlPhyReq(incoming);
+      IncomingLlPhyReq(connection, incoming);
       break;
     case model::packets::PacketType::LL_PHY_RSP:
-      IncomingLlPhyRsp(incoming);
+      IncomingLlPhyRsp(connection, incoming);
       break;
     case model::packets::PacketType::LL_PHY_UPDATE_IND:
-      IncomingLlPhyUpdateInd(incoming);
+      IncomingLlPhyUpdateInd(connection, incoming);
       break;
     default:
       WARNING(id_, "Dropping unhandled packet of type {}",
@@ -3930,35 +3899,34 @@ void LinkLayerController::HandleAcl(bluetooth::hci::AclView acl) {
           static_cast<int>(bc_flag));
   }
 
-  // ACL HCI packets received with an unknown or invalid Connection Handle are
-  // immediately acknowledged and silently dropped.
-  if (!connections_.HasHandle(connection_handle)) {
+  if (connections_.HasAclHandle(connection_handle)) {
+    // Classic ACL connection.
+    auto& connection = connections_.GetAclConnection(connection_handle);
+    auto acl_payload = acl.GetPayload();
+    auto acl_packet = model::packets::AclBuilder::Create(
+            connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress(),
+            static_cast<uint8_t>(pb_flag), static_cast<uint8_t>(bc_flag),
+            std::vector(acl_payload.begin(), acl_payload.end()));
+    SendLinkLayerPacket(std::move(acl_packet));
+
+  } else if (connections_.HasLeAclHandle(connection_handle)) {
+    // LE-ACL connection.
+    auto& connection = connections_.GetLeAclConnection(connection_handle);
+    auto acl_payload = acl.GetPayload();
+    auto acl_packet = model::packets::AclBuilder::Create(
+            connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress(),
+            static_cast<uint8_t>(pb_flag), static_cast<uint8_t>(bc_flag),
+            std::vector(acl_payload.begin(), acl_payload.end()));
+    SendLeLinkLayerPacket(std::move(acl_packet));
+
+  } else {
+    // ACL HCI packets received with an unknown or invalid Connection Handle
+    // are silently dropped.
     DEBUG("Received ACL HCI packet with invalid ACL connection handle 0x{:x}", connection_handle);
-    ScheduleTask(kNoDelayMs, [this, connection_handle]() {
-      send_event_(bluetooth::hci::NumberOfCompletedPacketsBuilder::Create(
-              {bluetooth::hci::CompletedPackets(connection_handle, 1)}));
-    });
-    return;
   }
 
-  AddressWithType source = connections_.GetOwnAddress(connection_handle);
-  AddressWithType destination = connections_.GetAddress(connection_handle);
-  Phy::Type phy = connections_.GetPhyType(connection_handle);
-
-  auto acl_payload = acl.GetPayload();
-  auto acl_packet = model::packets::AclBuilder::Create(
-          source.GetAddress(), destination.GetAddress(), static_cast<uint8_t>(pb_flag),
-          static_cast<uint8_t>(bc_flag), std::vector(acl_payload.begin(), acl_payload.end()));
-
-  switch (phy) {
-    case Phy::Type::BR_EDR:
-      SendLinkLayerPacket(std::move(acl_packet));
-      break;
-    case Phy::Type::LOW_ENERGY:
-      SendLeLinkLayerPacket(std::move(acl_packet));
-      break;
-  }
-
+  // Send immediate acknowledgment for the ACL packet.
+  // We don't really have a transmission queue in the controller.
   ScheduleTask(kNoDelayMs, [this, connection_handle]() {
     send_event_(bluetooth::hci::NumberOfCompletedPacketsBuilder::Create(
             {bluetooth::hci::CompletedPackets(connection_handle, 1)}));
@@ -4384,20 +4352,14 @@ void LinkLayerController::IncomingLeConnectCompletePacket(
 }
 
 void LinkLayerController::IncomingLeConnectionParameterRequest(
-        model::packets::LinkLayerPacketView incoming) {
+        LeAclConnection& connection, model::packets::LinkLayerPacketView incoming) {
   auto request = model::packets::LeConnectionParameterRequestView::Create(incoming);
   ASSERT(request.IsValid());
-  Address peer = incoming.GetSourceAddress();
-  uint16_t handle = connections_.GetHandleOnlyAddress(peer);
-  if (handle == kReservedHandle) {
-    INFO(id_, "@{}: Unknown connection @{}", incoming.GetDestinationAddress(), peer);
-    return;
-  }
 
   if (IsLeEventUnmasked(SubeventCode::LE_REMOTE_CONNECTION_PARAMETER_REQUEST)) {
     send_event_(bluetooth::hci::LeRemoteConnectionParameterRequestBuilder::Create(
-            handle, request.GetIntervalMin(), request.GetIntervalMax(), request.GetLatency(),
-            request.GetTimeout()));
+            connection.handle, request.GetIntervalMin(), request.GetIntervalMax(),
+            request.GetLatency(), request.GetTimeout()));
   } else {
     // If the request is being indicated to the Host and the event to the Host
     // is masked, then the Link Layer shall issue an LL_REJECT_EXT_IND PDU with
@@ -4409,56 +4371,37 @@ void LinkLayerController::IncomingLeConnectionParameterRequest(
 }
 
 void LinkLayerController::IncomingLeConnectionParameterUpdate(
-        model::packets::LinkLayerPacketView incoming) {
+        LeAclConnection& connection, model::packets::LinkLayerPacketView incoming) {
   auto update = model::packets::LeConnectionParameterUpdateView::Create(incoming);
   ASSERT(update.IsValid());
-  Address peer = incoming.GetSourceAddress();
-  uint16_t handle = connections_.GetHandleOnlyAddress(peer);
-  if (handle == kReservedHandle) {
-    INFO(id_, "@{}: Unknown connection @{}", incoming.GetDestinationAddress(), peer);
-    return;
-  }
+
   if (IsLeEventUnmasked(SubeventCode::LE_CONNECTION_UPDATE_COMPLETE)) {
     send_event_(bluetooth::hci::LeConnectionUpdateCompleteBuilder::Create(
-            static_cast<ErrorCode>(update.GetStatus()), handle, update.GetInterval(),
+            static_cast<ErrorCode>(update.GetStatus()), connection.handle, update.GetInterval(),
             update.GetLatency(), update.GetTimeout()));
   }
 }
 
 void LinkLayerController::IncomingLeEncryptConnection(
-        model::packets::LinkLayerPacketView incoming) {
+        LeAclConnection& connection, model::packets::LinkLayerPacketView incoming) {
   INFO(id_, "IncomingLeEncryptConnection");
 
-  Address peer = incoming.GetSourceAddress();
-  uint16_t handle = connections_.GetHandleOnlyAddress(peer);
-  if (handle == kReservedHandle) {
-    INFO(id_, "@{}: Unknown connection @{}", incoming.GetDestinationAddress(), peer);
-    return;
-  }
   auto le_encrypt = model::packets::LeEncryptConnectionView::Create(incoming);
   ASSERT(le_encrypt.IsValid());
 
   // TODO: Save keys to check
 
   if (IsEventUnmasked(EventCode::LE_META_EVENT)) {
-    send_event_(bluetooth::hci::LeLongTermKeyRequestBuilder::Create(handle, le_encrypt.GetRand(),
-                                                                    le_encrypt.GetEdiv()));
+    send_event_(bluetooth::hci::LeLongTermKeyRequestBuilder::Create(
+            connection.handle, le_encrypt.GetRand(), le_encrypt.GetEdiv()));
   }
 }
 
 void LinkLayerController::IncomingLeEncryptConnectionResponse(
-        model::packets::LinkLayerPacketView incoming) {
+        LeAclConnection& connection, model::packets::LinkLayerPacketView incoming) {
   INFO(id_, "IncomingLeEncryptConnectionResponse");
   // TODO: Check keys
 
-  uint16_t handle = connections_.GetHandleOnlyAddress(incoming.GetSourceAddress());
-  if (handle == kReservedHandle) {
-    INFO(id_, "@{}: Unknown connection @{}", incoming.GetDestinationAddress(),
-         incoming.GetSourceAddress());
-    return;
-  }
-
-  auto& connection = connections_.GetAclConnection(handle);
   ErrorCode status = ErrorCode::SUCCESS;
   auto response = model::packets::LeEncryptConnectionResponseView::Create(incoming);
   ASSERT(response.IsValid());
@@ -4472,51 +4415,40 @@ void LinkLayerController::IncomingLeEncryptConnectionResponse(
 
   if (connection.IsEncrypted()) {
     if (IsEventUnmasked(EventCode::ENCRYPTION_KEY_REFRESH_COMPLETE)) {
-      send_event_(bluetooth::hci::EncryptionKeyRefreshCompleteBuilder::Create(status, handle));
+      send_event_(bluetooth::hci::EncryptionKeyRefreshCompleteBuilder::Create(status,
+                                                                              connection.handle));
     }
   } else if (success) {
     connection.Encrypt();
     if (IsEventUnmasked(EventCode::ENCRYPTION_CHANGE)) {
       send_event_(bluetooth::hci::EncryptionChangeBuilder::Create(
-              status, handle, bluetooth::hci::EncryptionEnabled::ON));
+              status, connection.handle, bluetooth::hci::EncryptionEnabled::ON));
     }
   } else {
     if (IsEventUnmasked(EventCode::ENCRYPTION_CHANGE)) {
       send_event_(bluetooth::hci::EncryptionChangeBuilder::Create(
-              status, handle, bluetooth::hci::EncryptionEnabled::OFF));
+              status, connection.handle, bluetooth::hci::EncryptionEnabled::OFF));
     }
   }
 }
 
 void LinkLayerController::IncomingLeReadRemoteFeatures(
-        model::packets::LinkLayerPacketView incoming) {
-  uint16_t handle = connections_.GetHandleOnlyAddress(incoming.GetSourceAddress());
+        LeAclConnection& /*connection*/, model::packets::LinkLayerPacketView incoming) {
   ErrorCode status = ErrorCode::SUCCESS;
-  if (handle == kReservedHandle) {
-    WARNING(id_, "@{}: Unknown connection @{}", incoming.GetDestinationAddress(),
-            incoming.GetSourceAddress());
-  }
   SendLeLinkLayerPacket(model::packets::LeReadRemoteFeaturesResponseBuilder::Create(
           incoming.GetDestinationAddress(), incoming.GetSourceAddress(), GetLeSupportedFeatures(),
           static_cast<uint8_t>(status)));
 }
 
 void LinkLayerController::IncomingLeReadRemoteFeaturesResponse(
-        model::packets::LinkLayerPacketView incoming) {
-  uint16_t handle = connections_.GetHandleOnlyAddress(incoming.GetSourceAddress());
-  ErrorCode status = ErrorCode::SUCCESS;
+        LeAclConnection& connection, model::packets::LinkLayerPacketView incoming) {
   auto response = model::packets::LeReadRemoteFeaturesResponseView::Create(incoming);
   ASSERT(response.IsValid());
-  if (handle == kReservedHandle) {
-    INFO(id_, "@{}: Unknown connection @{}", incoming.GetDestinationAddress(),
-         incoming.GetSourceAddress());
-    status = ErrorCode::UNKNOWN_CONNECTION;
-  } else {
-    status = static_cast<ErrorCode>(response.GetStatus());
-  }
+  ErrorCode status = static_cast<ErrorCode>(response.GetStatus());
+
   if (IsEventUnmasked(EventCode::LE_META_EVENT)) {
     send_event_(bluetooth::hci::LeReadRemoteFeaturesPage0CompleteBuilder::Create(
-            status, handle, response.GetFeatures()));
+            status, connection.handle, response.GetFeatures()));
   }
 }
 
@@ -5248,67 +5180,70 @@ ErrorCode LinkLayerController::Disconnect(uint16_t handle, ErrorCode host_reason
     return ErrorCode::SUCCESS;
   }
 
-  if (!connections_.HasHandle(handle)) {
-    return ErrorCode::UNKNOWN_CONNECTION;
-  }
+  if (connections_.HasAclHandle(handle)) {
+    auto connection = connections_.GetAclConnection(handle);
+    INFO(id_, "Disconnecting ACL connection with {}", connection.GetAddress());
 
-  const AddressWithType remote = connections_.GetAddress(handle);
-  auto is_br_edr = connections_.GetPhyType(handle) == Phy::Type::BR_EDR;
-
-  if (is_br_edr) {
-    INFO(id_, "Disconnecting ACL connection with {}", remote);
-
-    uint16_t sco_handle = connections_.GetScoHandle(remote.GetAddress());
+    uint16_t sco_handle = connections_.GetScoHandle(connection.GetAddress().GetAddress());
     if (sco_handle != kReservedHandle) {
       SendLinkLayerPacket(model::packets::ScoDisconnectBuilder::Create(
-              GetAddress(), remote.GetAddress(), static_cast<uint8_t>(host_reason)));
+              GetAddress(), connection.GetAddress().GetAddress(),
+              static_cast<uint8_t>(host_reason)));
 
       connections_.Disconnect(sco_handle, [this](TaskId task_id) { CancelScheduledTask(task_id); });
       SendDisconnectionCompleteEvent(sco_handle, controller_reason);
     }
 
     SendLinkLayerPacket(model::packets::DisconnectBuilder::Create(
-            GetAddress(), remote.GetAddress(), static_cast<uint8_t>(host_reason)));
-  } else {
-    INFO(id_, "Disconnecting LE connection with {}", remote);
+            GetAddress(), connection.GetAddress().GetAddress(), static_cast<uint8_t>(host_reason)));
+
+    connections_.Disconnect(handle, [this](TaskId task_id) { CancelScheduledTask(task_id); });
+    SendDisconnectionCompleteEvent(handle, controller_reason);
+
+    ASSERT(link_manager_remove_link(
+            lm_.get(),
+            reinterpret_cast<uint8_t (*)[6]>(connection.GetAddress().GetAddress().data())));
+    return ErrorCode::SUCCESS;
+  }
+
+  if (connections_.HasLeAclHandle(handle)) {
+    auto connection = connections_.GetLeAclConnection(handle);
+    INFO(id_, "Disconnecting LE-ACL connection with {}", connection.GetAddress());
 
     SendLeLinkLayerPacket(model::packets::DisconnectBuilder::Create(
-            connections_.GetOwnAddress(handle).GetAddress(), remote.GetAddress(),
+            connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress(),
             static_cast<uint8_t>(host_reason)));
+
+    connections_.Disconnect(handle, [this](TaskId task_id) { CancelScheduledTask(task_id); });
+    SendDisconnectionCompleteEvent(handle, controller_reason);
+
+    ASSERT(link_layer_remove_link(ll_.get(), handle, static_cast<uint8_t>(controller_reason)));
+    return ErrorCode::SUCCESS;
   }
 
-  connections_.Disconnect(handle, [this](TaskId task_id) { CancelScheduledTask(task_id); });
-  SendDisconnectionCompleteEvent(handle, controller_reason);
-  if (is_br_edr) {
-    ASSERT(link_manager_remove_link(lm_.get(),
-                                    reinterpret_cast<uint8_t (*)[6]>(remote.GetAddress().data())));
-  } else {
-    ASSERT(link_layer_remove_link(ll_.get(), handle, static_cast<uint8_t>(controller_reason)));
-  }
-  return ErrorCode::SUCCESS;
+  return ErrorCode::UNKNOWN_CONNECTION;
 }
 
 ErrorCode LinkLayerController::ReadRemoteVersionInformation(uint16_t connection_handle) {
-  if (!connections_.HasHandle(connection_handle)) {
-    return ErrorCode::UNKNOWN_CONNECTION;
-  }
-
-  auto const& connection = connections_.GetAclConnection(connection_handle);
-  auto is_br_edr = connection.GetPhyType() == Phy::Type::BR_EDR;
-
-  if (is_br_edr) {
+  if (connections_.HasAclHandle(connection_handle)) {
+    auto const& connection = connections_.GetAclConnection(connection_handle);
     SendLinkLayerPacket(model::packets::ReadRemoteVersionInformationBuilder::Create(
             connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress()));
-  } else {
-    SendLeLinkLayerPacket(model::packets::ReadRemoteVersionInformationBuilder::Create(
-            connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress()));
+    return ErrorCode::SUCCESS;
   }
 
-  return ErrorCode::SUCCESS;
+  if (connections_.HasLeAclHandle(connection_handle)) {
+    auto const& connection = connections_.GetLeAclConnection(connection_handle);
+    SendLeLinkLayerPacket(model::packets::ReadRemoteVersionInformationBuilder::Create(
+            connection.GetOwnAddress().GetAddress(), connection.GetAddress().GetAddress()));
+    return ErrorCode::SUCCESS;
+  }
+
+  return ErrorCode::UNKNOWN_CONNECTION;
 }
 
 ErrorCode LinkLayerController::ChangeConnectionPacketType(uint16_t handle, uint16_t types) {
-  if (!connections_.HasHandle(handle)) {
+  if (!connections_.HasAclHandle(handle)) {
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
@@ -5324,7 +5259,7 @@ ErrorCode LinkLayerController::ChangeConnectionPacketType(uint16_t handle, uint1
 
 // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
 ErrorCode LinkLayerController::ChangeConnectionLinkKey(uint16_t handle) {
-  if (!connections_.HasHandle(handle)) {
+  if (!connections_.HasAclHandle(handle)) {
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
@@ -5340,7 +5275,7 @@ ErrorCode LinkLayerController::CentralLinkKey(uint8_t /* key_flag */) {
 
 ErrorCode LinkLayerController::HoldMode(uint16_t handle, uint16_t hold_mode_max_interval,
                                         uint16_t hold_mode_min_interval) {
-  if (!connections_.HasHandle(handle)) {
+  if (!connections_.HasAclHandle(handle)) {
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
@@ -5355,7 +5290,7 @@ ErrorCode LinkLayerController::HoldMode(uint16_t handle, uint16_t hold_mode_max_
 ErrorCode LinkLayerController::SniffMode(uint16_t handle, uint16_t sniff_max_interval,
                                          uint16_t sniff_min_interval, uint16_t sniff_attempt,
                                          uint16_t sniff_timeout) {
-  if (!connections_.HasHandle(handle)) {
+  if (!connections_.HasAclHandle(handle)) {
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
@@ -5369,7 +5304,7 @@ ErrorCode LinkLayerController::SniffMode(uint16_t handle, uint16_t sniff_max_int
 }
 
 ErrorCode LinkLayerController::ExitSniffMode(uint16_t handle) {
-  if (!connections_.HasHandle(handle)) {
+  if (!connections_.HasAclHandle(handle)) {
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
@@ -5380,7 +5315,7 @@ ErrorCode LinkLayerController::ExitSniffMode(uint16_t handle) {
 ErrorCode LinkLayerController::QosSetup(uint16_t handle, uint8_t service_type,
                                         uint32_t /* token_rate */, uint32_t /* peak_bandwidth */,
                                         uint32_t /* latency */, uint32_t /* delay_variation */) {
-  if (!connections_.HasHandle(handle)) {
+  if (!connections_.HasAclHandle(handle)) {
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
@@ -5393,7 +5328,7 @@ ErrorCode LinkLayerController::QosSetup(uint16_t handle, uint8_t service_type,
 }
 
 ErrorCode LinkLayerController::RoleDiscovery(uint16_t handle, bluetooth::hci::Role* role) {
-  if (!connections_.HasHandle(handle)) {
+  if (!connections_.HasAclHandle(handle)) {
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
@@ -5511,7 +5446,7 @@ void LinkLayerController::IncomingRoleSwitchResponse(model::packets::LinkLayerPa
 }
 
 ErrorCode LinkLayerController::ReadLinkPolicySettings(uint16_t handle, uint16_t* settings) {
-  if (!connections_.HasHandle(handle)) {
+  if (!connections_.HasAclHandle(handle)) {
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
@@ -5520,7 +5455,7 @@ ErrorCode LinkLayerController::ReadLinkPolicySettings(uint16_t handle, uint16_t*
 }
 
 ErrorCode LinkLayerController::WriteLinkPolicySettings(uint16_t handle, uint16_t settings) {
-  if (!connections_.HasHandle(handle)) {
+  if (!connections_.HasAclHandle(handle)) {
     return ErrorCode::UNKNOWN_CONNECTION;
   }
   if (settings > 7 /* Sniff + Hold + Role switch */) {
@@ -5584,7 +5519,7 @@ ErrorCode LinkLayerController::FlowSpecification(uint16_t handle, uint8_t flow_d
                                                  uint32_t /* token_bucket_size */,
                                                  uint32_t /* peak_bandwidth */,
                                                  uint32_t /* access_latency */) {
-  if (!connections_.HasHandle(handle)) {
+  if (!connections_.HasAclHandle(handle)) {
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
@@ -5598,7 +5533,7 @@ ErrorCode LinkLayerController::FlowSpecification(uint16_t handle, uint8_t flow_d
 
 ErrorCode LinkLayerController::WriteLinkSupervisionTimeout(uint16_t handle,
                                                            uint16_t /* timeout */) {
-  if (!connections_.HasHandle(handle)) {
+  if (!connections_.HasAclHandle(handle)) {
     return ErrorCode::UNKNOWN_CONNECTION;
   }
   return ErrorCode::SUCCESS;
@@ -5608,7 +5543,7 @@ void LinkLayerController::LeConnectionUpdateComplete(uint16_t handle, uint16_t i
                                                      uint16_t interval_max, uint16_t latency,
                                                      uint16_t supervision_timeout) {
   ErrorCode status = ErrorCode::SUCCESS;
-  if (!connections_.HasHandle(handle)) {
+  if (!connections_.HasLeAclHandle(handle)) {
     status = ErrorCode::UNKNOWN_CONNECTION;
   }
 
@@ -5636,11 +5571,11 @@ void LinkLayerController::LeConnectionUpdateComplete(uint16_t handle, uint16_t i
 ErrorCode LinkLayerController::LeConnectionUpdate(uint16_t handle, uint16_t interval_min,
                                                   uint16_t interval_max, uint16_t latency,
                                                   uint16_t supervision_timeout) {
-  if (!connections_.HasHandle(handle)) {
+  if (!connections_.HasLeAclHandle(handle)) {
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
-  auto& connection = connections_.GetAclConnection(handle);
+  auto& connection = connections_.GetLeAclConnection(handle);
   bluetooth::hci::Role role = connection.GetRole();
 
   if (role == bluetooth::hci::Role::CENTRAL) {
@@ -5668,7 +5603,7 @@ ErrorCode LinkLayerController::LeConnectionUpdate(uint16_t handle, uint16_t inte
 ErrorCode LinkLayerController::LeRemoteConnectionParameterRequestReply(
         uint16_t connection_handle, uint16_t interval_min, uint16_t interval_max, uint16_t timeout,
         uint16_t latency, uint16_t minimum_ce_length, uint16_t maximum_ce_length) {
-  if (!connections_.HasHandle(connection_handle)) {
+  if (!connections_.HasLeAclHandle(connection_handle)) {
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
@@ -5685,7 +5620,7 @@ ErrorCode LinkLayerController::LeRemoteConnectionParameterRequestReply(
 
 ErrorCode LinkLayerController::LeRemoteConnectionParameterRequestNegativeReply(
         uint16_t connection_handle, bluetooth::hci::ErrorCode reason) {
-  if (!connections_.HasHandle(connection_handle)) {
+  if (!connections_.HasLeAclHandle(connection_handle)) {
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
@@ -5710,7 +5645,7 @@ void LinkLayerController::HandleLeEnableEncryption(uint16_t handle, std::array<u
                                                    std::array<uint8_t, kLtkSize> ltk) {
   // TODO: Check keys
   // TODO: Block ACL traffic or at least guard against it
-  if (!connections_.HasHandle(handle)) {
+  if (!connections_.HasLeAclHandle(handle)) {
     return;
   }
   SendLeLinkLayerPacket(model::packets::LeEncryptConnectionBuilder::Create(
@@ -5721,7 +5656,7 @@ void LinkLayerController::HandleLeEnableEncryption(uint16_t handle, std::array<u
 ErrorCode LinkLayerController::LeEnableEncryption(uint16_t handle, std::array<uint8_t, 8> rand,
                                                   uint16_t ediv,
                                                   std::array<uint8_t, kLtkSize> ltk) {
-  if (!connections_.HasHandle(handle)) {
+  if (!connections_.HasLeAclHandle(handle)) {
     INFO(id_, "Unknown handle 0x{:04x}", handle);
     return ErrorCode::UNKNOWN_CONNECTION;
   }
@@ -5734,7 +5669,7 @@ ErrorCode LinkLayerController::LeEnableEncryption(uint16_t handle, std::array<ui
 
 ErrorCode LinkLayerController::LeLongTermKeyRequestReply(uint16_t handle,
                                                          std::array<uint8_t, kLtkSize> ltk) {
-  if (!connections_.HasHandle(handle)) {
+  if (!connections_.HasLeAclHandle(handle)) {
     INFO(id_, "Unknown handle {:04x}", handle);
     return ErrorCode::UNKNOWN_CONNECTION;
   }
@@ -5766,7 +5701,7 @@ ErrorCode LinkLayerController::LeLongTermKeyRequestReply(uint16_t handle,
 }
 
 ErrorCode LinkLayerController::LeLongTermKeyRequestNegativeReply(uint16_t handle) {
-  if (!connections_.HasHandle(handle)) {
+  if (!connections_.HasLeAclHandle(handle)) {
     INFO(id_, "Unknown handle {:04x}", handle);
     return ErrorCode::UNKNOWN_CONNECTION;
   }
@@ -5779,6 +5714,8 @@ ErrorCode LinkLayerController::LeLongTermKeyRequestNegativeReply(uint16_t handle
 }
 
 void LinkLayerController::Reset() {
+  connections_.Reset([this](TaskId task_id) { CancelScheduledTask(task_id); });
+
   host_supported_features_ = 0;
   le_host_support_ = false;
   secure_simple_pairing_host_support_ = false;
@@ -5810,7 +5747,6 @@ void LinkLayerController::Reset() {
   le_suggested_max_tx_time_ = 0x0148;
   resolvable_private_address_timeout_ = std::chrono::seconds(0x0384);
   page_scan_repetition_mode_ = PageScanRepetitionMode::R0;
-  connections_ = AclConnectionHandler();
   oob_id_ = 1;
   key_id_ = 1;
   le_periodic_advertiser_list_.clear();
@@ -5839,6 +5775,7 @@ void LinkLayerController::Reset() {
   current_iac_lap_list_.emplace_back(general_iac);
 
   page_ = {};
+  page_scan_ = {};
 
   if (inquiry_timer_task_id_ != kInvalidTaskId) {
     CancelScheduledTask(inquiry_timer_task_id_);
@@ -5922,7 +5859,7 @@ void LinkLayerController::SetPageTimeout(uint16_t page_timeout) { page_timeout_ 
 
 ErrorCode LinkLayerController::AddScoConnection(uint16_t connection_handle, uint16_t packet_type,
                                                 ScoDatapath datapath) {
-  if (!connections_.HasHandle(connection_handle)) {
+  if (!connections_.HasAclHandle(connection_handle)) {
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
@@ -5961,7 +5898,7 @@ ErrorCode LinkLayerController::SetupSynchronousConnection(
         uint16_t connection_handle, uint32_t transmit_bandwidth, uint32_t receive_bandwidth,
         uint16_t max_latency, uint16_t voice_setting, uint8_t retransmission_effort,
         uint16_t packet_types, ScoDatapath datapath) {
-  if (!connections_.HasHandle(connection_handle)) {
+  if (!connections_.HasAclHandle(connection_handle)) {
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
