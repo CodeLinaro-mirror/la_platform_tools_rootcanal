@@ -23,10 +23,11 @@
 #include "phy.h"
 
 namespace rootcanal {
-AclConnection::AclConnection(AddressWithType address, AddressWithType own_address,
+AclConnection::AclConnection(uint16_t handle, AddressWithType address, AddressWithType own_address,
                              AddressWithType resolved_address, Phy::Type phy_type,
                              bluetooth::hci::Role role)
-    : address_(address),
+    : handle(handle),
+      address_(address),
       own_address_(own_address),
       resolved_address_(resolved_address),
       type_(phy_type),
