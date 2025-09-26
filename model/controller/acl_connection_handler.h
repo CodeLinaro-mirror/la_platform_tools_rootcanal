@@ -94,7 +94,9 @@ public:
   // if the handle is not currently used.
   LeAclConnection& GetLeAclConnection(uint16_t handle);
 
+  std::vector<uint16_t> GetScoHandles() const;
   std::vector<uint16_t> GetAclHandles() const;
+  std::vector<uint16_t> GetLeAclHandles() const;
 
 private:
   std::unordered_map<uint16_t, AclConnection> acl_connections_;

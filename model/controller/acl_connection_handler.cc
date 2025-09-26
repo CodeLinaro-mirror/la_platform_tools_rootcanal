@@ -249,15 +249,28 @@ ScoLinkParameters AclConnectionHandler::GetScoLinkParameters(bluetooth::hci::Add
   return {};
 }
 
+std::vector<uint16_t> AclConnectionHandler::GetScoHandles() const {
+  std::vector<uint16_t> handles;
+  for (auto const& [handle, _] : sco_connections_) {
+    handles.push_back(handle);
+  }
+  return handles;
+}
+
 std::vector<uint16_t> AclConnectionHandler::GetAclHandles() const {
-  std::vector<uint16_t> keys;
-  for (auto const& [key, val] : acl_connections_) {
-    keys.push_back(key);
+  std::vector<uint16_t> handles;
+  for (auto const& [handle, _] : acl_connections_) {
+    handles.push_back(handle);
   }
-  for (auto const& [key, val] : le_acl_connections_) {
-    keys.push_back(key);
+  return handles;
+}
+
+std::vector<uint16_t> AclConnectionHandler::GetLeAclHandles() const {
+  std::vector<uint16_t> handles;
+  for (auto const& [handle, _] : le_acl_connections_) {
+    handles.push_back(handle);
   }
-  return keys;
+  return handles;
 }
 
 }  // namespace rootcanal
