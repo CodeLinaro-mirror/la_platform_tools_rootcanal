@@ -2613,14 +2613,17 @@ void LinkLayerController::IncomingLeDisconnectPacket(LeAclConnection& connection
   auto disconnect = model::packets::DisconnectView::Create(incoming);
   ASSERT(disconnect.IsValid());
 
-  ASSERT_LOG(connections_.Disconnect(connection.handle,
+  // /!\ The connection reference becomes invalid after it is removed from the
+  //     connection handler.
+  uint16_t connection_handle = connection.handle;
+  ASSERT_LOG(connections_.Disconnect(connection_handle,
                                      [this](TaskId task_id) { CancelScheduledTask(task_id); }),
-             "GetHandle() returned invalid handle 0x{:x}", connection.handle);
+             "GetHandle() returned invalid handle 0x{:x}", connection_handle);
 
   uint8_t reason = disconnect.GetReason();
   // Will optionally notify CIS disconnections.
-  ASSERT(link_layer_remove_link(ll_.get(), connection.handle, reason));
-  SendDisconnectionCompleteEvent(connection.handle, ErrorCode(reason));
+  ASSERT(link_layer_remove_link(ll_.get(), connection_handle, reason));
+  SendDisconnectionCompleteEvent(connection_handle, ErrorCode(reason));
 }
 
 void LinkLayerController::IncomingInquiryPacket(model::packets::LinkLayerPacketView incoming,
