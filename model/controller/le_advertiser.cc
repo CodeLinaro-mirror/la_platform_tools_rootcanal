@@ -1196,9 +1196,9 @@ uint16_t ExtendedAdvertiser::GetMaxAdvertisingDataLength(
     // length is 254. Extended payload header fields eat into the
     // available space.
     max_advertising_data_length = 254;
-    max_advertising_data_length -= 6;                         // AdvA
-    max_advertising_data_length -= 2;                         // ADI
-    max_advertising_data_length -= 6 * properties.directed_;  // TargetA
+    max_advertising_data_length -= 6;                                 // AdvA
+    max_advertising_data_length -= 2;                                 // ADI
+    max_advertising_data_length -= 6 * properties.directed_;          // TargetA
     max_advertising_data_length -= 1 * properties.include_tx_power_;  // TxPower
     // TODO(pedantic): configure the ACAD field in order to leave the least
     // amount of AdvData space to the user (191).
