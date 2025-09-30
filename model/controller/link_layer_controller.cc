@@ -4089,7 +4089,12 @@ uint16_t LinkLayerController::HandleLeConnection(
 
   INFO(id_, "Creating LE connection with peer {}|{} and local address {}", address,
        resolved_address, own_address);
-  uint16_t handle = connections_.CreateLeConnection(address, resolved_address, own_address, role);
+  uint16_t handle = connections_.CreateLeConnection(
+          address, resolved_address, own_address, role,
+          LeAclConnectionParameters{.conn_interval = connection_interval,
+                                    .conn_subrate_factor = 1,
+                                    .conn_peripheral_latency = connection_latency,
+                                    .conn_supervision_timeout = supervision_timeout});
   if (handle == kReservedHandle) {
     WARNING(id_, "No pending connection for connection from {}", address);
     return kReservedHandle;

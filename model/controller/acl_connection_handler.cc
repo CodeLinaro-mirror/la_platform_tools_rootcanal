@@ -82,9 +82,11 @@ uint16_t AclConnectionHandler::CreateConnection(Address addr, Address own_addr) 
 uint16_t AclConnectionHandler::CreateLeConnection(AddressWithType addr,
                                                   AddressWithType resolved_peer,
                                                   AddressWithType own_addr,
-                                                  bluetooth::hci::Role role) {
+                                                  bluetooth::hci::Role role,
+                                                  LeAclConnectionParameters connection_parameters) {
   uint16_t handle = GetUnusedHandle();
-  le_acl_connections_.emplace(handle, LeAclConnection{handle, addr, own_addr, resolved_peer, role});
+  le_acl_connections_.emplace(handle, LeAclConnection{handle, addr, own_addr, resolved_peer, role,
+                                                      connection_parameters});
   return handle;
 }
 
