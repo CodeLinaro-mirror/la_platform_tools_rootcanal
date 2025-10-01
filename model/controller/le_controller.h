@@ -151,8 +151,6 @@ public:
   void LeScanning();
   void LeSynchronization();
 
-  void LeConnectionUpdateComplete(uint16_t handle, uint16_t interval_min, uint16_t interval_max,
-                                  uint16_t latency, uint16_t supervision_timeout);
   ErrorCode LeConnectionUpdate(uint16_t handle, uint16_t interval_min, uint16_t interval_max,
                                uint16_t latency, uint16_t supervision_timeout);
   ErrorCode LeRemoteConnectionParameterRequestReply(uint16_t connection_handle,
