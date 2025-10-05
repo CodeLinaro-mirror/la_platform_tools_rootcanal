@@ -67,7 +67,8 @@ public:
   uint16_t CreateConnection(bluetooth::hci::Address addr, bluetooth::hci::Address own_addr);
   uint16_t CreateLeConnection(bluetooth::hci::AddressWithType addr,
                               bluetooth::hci::AddressWithType resolved_addr,
-                              bluetooth::hci::AddressWithType own_addr, bluetooth::hci::Role role);
+                              bluetooth::hci::AddressWithType own_addr, bluetooth::hci::Role role,
+                              LeAclConnectionParameters connection_parameters);
 
   bool Disconnect(uint16_t handle, std::function<void(TaskId)> stopStream);
 
@@ -94,7 +95,9 @@ public:
   // if the handle is not currently used.
   LeAclConnection& GetLeAclConnection(uint16_t handle);
 
+  std::vector<uint16_t> GetScoHandles() const;
   std::vector<uint16_t> GetAclHandles() const;
+  std::vector<uint16_t> GetLeAclHandles() const;
 
 private:
   std::unordered_map<uint16_t, AclConnection> acl_connections_;

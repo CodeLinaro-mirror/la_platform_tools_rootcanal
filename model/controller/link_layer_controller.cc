@@ -639,7 +639,7 @@ ErrorCode LinkLayerController::LeSetHostFeature(uint8_t bit_number, uint8_t bit_
   // If the Host issues this command while the Controller has a connection to
   // another device, the Controller shall return the error code
   // Command Disallowed (0x0C).
-  if (HasAclConnection()) {
+  if (!connections_.GetLeAclHandles().empty()) {
     return ErrorCode::COMMAND_DISALLOWED;
   }
 
@@ -2613,14 +2613,17 @@ void LinkLayerController::IncomingLeDisconnectPacket(LeAclConnection& connection
   auto disconnect = model::packets::DisconnectView::Create(incoming);
   ASSERT(disconnect.IsValid());
 
-  ASSERT_LOG(connections_.Disconnect(connection.handle,
+  // /!\ The connection reference becomes invalid after it is removed from the
+  //     connection handler.
+  uint16_t connection_handle = connection.handle;
+  ASSERT_LOG(connections_.Disconnect(connection_handle,
                                      [this](TaskId task_id) { CancelScheduledTask(task_id); }),
-             "GetHandle() returned invalid handle 0x{:x}", connection.handle);
+             "GetHandle() returned invalid handle 0x{:x}", connection_handle);
 
   uint8_t reason = disconnect.GetReason();
   // Will optionally notify CIS disconnections.
-  ASSERT(link_layer_remove_link(ll_.get(), connection.handle, reason));
-  SendDisconnectionCompleteEvent(connection.handle, ErrorCode(reason));
+  ASSERT(link_layer_remove_link(ll_.get(), connection_handle, reason));
+  SendDisconnectionCompleteEvent(connection_handle, ErrorCode(reason));
 }
 
 void LinkLayerController::IncomingInquiryPacket(model::packets::LinkLayerPacketView incoming,
@@ -4086,7 +4089,12 @@ uint16_t LinkLayerController::HandleLeConnection(
 
   INFO(id_, "Creating LE connection with peer {}|{} and local address {}", address,
        resolved_address, own_address);
-  uint16_t handle = connections_.CreateLeConnection(address, resolved_address, own_address, role);
+  uint16_t handle = connections_.CreateLeConnection(
+          address, resolved_address, own_address, role,
+          LeAclConnectionParameters{.conn_interval = connection_interval,
+                                    .conn_subrate_factor = 1,
+                                    .conn_peripheral_latency = connection_latency,
+                                    .conn_supervision_timeout = supervision_timeout});
   if (handle == kReservedHandle) {
     WARNING(id_, "No pending connection for connection from {}", address);
     return kReservedHandle;
@@ -4971,10 +4979,7 @@ void LinkLayerController::Tick() {
 }
 
 void LinkLayerController::Close() {
-  for (auto handle : connections_.GetAclHandles()) {
-    Disconnect(handle, ErrorCode::REMOTE_DEVICE_TERMINATED_CONNECTION_POWER_OFF,
-               ErrorCode::REMOTE_DEVICE_TERMINATED_CONNECTION_POWER_OFF);
-  }
+  DisconnectAll(ErrorCode::REMOTE_DEVICE_TERMINATED_CONNECTION_POWER_OFF);
 }
 
 void LinkLayerController::RegisterEventChannel(
@@ -5693,11 +5698,12 @@ ErrorCode LinkLayerController::LeRemoteConnectionParameterRequestNegativeReply(
   return ErrorCode::SUCCESS;
 }
 
-bool LinkLayerController::HasAclConnection() { return !connections_.GetAclHandles().empty(); }
-
 bool LinkLayerController::HasAclConnection(uint16_t connection_handle) {
-  return connections_.HasAclHandle(connection_handle) ||
-         connections_.HasLeAclHandle(connection_handle);
+  return connections_.HasAclHandle(connection_handle);
+}
+
+bool LinkLayerController::HasLeAclConnection(uint16_t connection_handle) {
+  return connections_.HasLeAclHandle(connection_handle);
 }
 
 void LinkLayerController::HandleLeEnableEncryption(uint16_t handle, std::array<uint8_t, 8> rand,
@@ -5774,7 +5780,33 @@ ErrorCode LinkLayerController::LeLongTermKeyRequestNegativeReply(uint16_t handle
   return ErrorCode::SUCCESS;
 }
 
+void LinkLayerController::DisconnectAll(ErrorCode reason) {
+  for (auto connection_handle : connections_.GetScoHandles()) {
+    SendLinkLayerPacket(model::packets::ScoDisconnectBuilder::Create(
+            GetAddress(), connections_.GetScoAddress(connection_handle),
+            static_cast<uint8_t>(reason)));
+  }
+  for (auto connection_handle : connections_.GetAclHandles()) {
+    auto const& connection = connections_.GetAclConnection(connection_handle);
+    SendLinkLayerPacket(model::packets::DisconnectBuilder::Create(
+            connection.own_address, connection.address, static_cast<uint8_t>(reason)));
+  }
+  for (auto connection_handle : connections_.GetLeAclHandles()) {
+    auto const& connection = connections_.GetLeAclConnection(connection_handle);
+    SendLeLinkLayerPacket(model::packets::DisconnectBuilder::Create(
+            connection.own_address.GetAddress(), connection.address.GetAddress(),
+            static_cast<uint8_t>(reason)));
+  }
+}
+
 void LinkLayerController::Reset() {
+  // Explicitly Disconnect all existing links on reset.
+  // No Disconnection Complete event should be generated from the link
+  // disconnections, as only the HCI Command Complete event is expected for the
+  // HCI Reset command.
+  DisconnectAll(ErrorCode::REMOTE_USER_TERMINATED_CONNECTION);
+
+  // DisconnectAll does not close the local connection contexts.
   connections_.Reset([this](TaskId task_id) { CancelScheduledTask(task_id); });
 
   host_supported_features_ = 0;

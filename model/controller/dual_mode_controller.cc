@@ -1726,7 +1726,7 @@ void DualModeController::LeRequestPeerSca(CommandView command) {
   // return the error code Unsupported Remote Feature (0x1A).
   // TODO
 
-  if (link_layer_controller_.HasAclConnection(connection_handle)) {
+  if (link_layer_controller_.HasLeAclConnection(connection_handle)) {
     send_event_(bluetooth::hci::LeRequestPeerScaStatusBuilder::Create(ErrorCode::SUCCESS,
                                                                       kNumCommandPackets));
     send_event_(bluetooth::hci::LeRequestPeerScaCompleteBuilder::Create(
