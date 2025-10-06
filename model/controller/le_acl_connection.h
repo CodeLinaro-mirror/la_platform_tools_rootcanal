@@ -26,6 +26,34 @@ namespace rootcanal {
 
 using bluetooth::hci::AddressWithType;
 
+/// Link specification.
+/// Records the configuration of the LE-ACL connection.
+///
+/// Volume 6 Part B § 4.5.1. Connection events.
+/// The timing of connection events is determined by the following parameters:
+/// connection interval (connInterval), subrate base event (connSubrateBaseEvent),
+/// subrate factor (connSubrateFactor), continuation number (connContinuationNumber),
+/// and Peripheral latency (connPeripheralLatency).
+struct LeAclConnectionParameters {
+  // The connInterval shall be a multiple of 1.25 ms in the range 7.5 ms to 4.0 s.
+  uint16_t conn_interval{};
+  uint16_t conn_subrate_factor{1};
+  uint16_t conn_continuation_number{0};
+
+  // The connPeripheralLatency parameter defines the number of consecutive subrated
+  // connection events that the Peripheral is not required to listen for the Central.
+  // connPeripheralLatency shall be an integer such that
+  // connSubrateFactor × (connPeripheralLatency + 1) is less than or equal to 500 and
+  // connInterval × connSubrateFactor × (connPeripheralLatency + 1) is less than half
+  // connSupervisionTimeout.
+  uint16_t conn_peripheral_latency{0};
+
+  // Volume 6 Part B § 4.5.2. Supervision timeout.
+  // Supervision timeout for the LE Link. The connSupervisionTimeout shall be a
+  // multiple of 10 ms.
+  uint16_t conn_supervision_timeout{};
+};
+
 // Model the LE connection of a device to the controller.
 class LeAclConnection final {
 public:
@@ -35,8 +63,11 @@ public:
   const AddressWithType resolved_address;
   const bluetooth::hci::Role role;
 
+  LeAclConnectionParameters parameters;
+
   LeAclConnection(uint16_t handle, AddressWithType address, AddressWithType own_address,
-                  AddressWithType resolved_address, bluetooth::hci::Role role);
+                  AddressWithType resolved_address, bluetooth::hci::Role role,
+                  LeAclConnectionParameters parameters);
   ~LeAclConnection() = default;
 
   void Encrypt();

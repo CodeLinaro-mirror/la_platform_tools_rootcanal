@@ -149,8 +149,11 @@ public:
   void IncomingLePacket(model::packets::LinkLayerPacketView incoming, int8_t rssi);
 
   void Tick();
-
   void Close();
+
+  /// Send disconnection events for all connected links, with the provided
+  /// reason. Does not remove the local connection contexts.
+  void DisconnectAll(ErrorCode reason);
 
   // Set the callbacks for sending packets to the HCI.
   void RegisterEventChannel(
@@ -311,10 +314,9 @@ public:
                                         uint16_t packet_types);
   ErrorCode RejectSynchronousConnection(Address bd_addr, uint16_t reason);
 
-  // Returns true if any ACL connection exists.
-  bool HasAclConnection();
   // Returns true if the specified ACL connection handle is valid.
   bool HasAclConnection(uint16_t connection_handle);
+  bool HasLeAclConnection(uint16_t connection_handle);
 
   void HandleAcl(bluetooth::hci::AclView acl);
   void HandleIso(bluetooth::hci::IsoView iso);
