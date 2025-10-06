@@ -2022,7 +2022,7 @@ void DualModeController::Disconnect(CommandView command) {
   DEBUG(id_, "<< Disconnect");
   DEBUG(id_, "   connection_handle=0x{:x}", connection_handle);
 
-  if (connection_handle >= kCisHandleRangeStart && connection_handle < kCisHandleRangeEnd) {
+  if (IsCisConnectionHandle(connection_handle)) {
     link_layer_controller_.ForwardToLl(command);
   } else {
     auto status = link_layer_controller_.Disconnect(connection_handle,

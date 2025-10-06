@@ -17,7 +17,6 @@ class Test(ControllerTest):
     async def test(self):
         # Test parameters.
         controller = self.controller
-        acl_connection_handle = 0xefe
         peer_address = Address('11:22:33:44:55:66')
 
         controller.send_cmd(hci.WriteScanEnable(scan_enable=hci.ScanEnable.PAGE_SCAN_ONLY))
@@ -65,7 +64,7 @@ class Test(ControllerTest):
 
         await self.expect_evt(
             hci.ConnectionComplete(status=ErrorCode.SUCCESS,
-                                   connection_handle=acl_connection_handle,
+                                   connection_handle=self.Any,
                                    bd_addr=peer_address,
                                    link_type=hci.LinkType.ACL,
                                    encryption_enabled=hci.Enable.DISABLED))

@@ -26,16 +26,12 @@
 #include "hci/address.h"
 #include "hci/address_with_type.h"
 #include "model/controller/acl_connection.h"
+#include "model/controller/connection_handle.h"
 #include "model/controller/le_acl_connection.h"
 #include "model/controller/sco_connection.h"
 #include "packets/hci_packets.h"
-#include "phy.h"
 
 namespace rootcanal {
-
-static constexpr uint16_t kReservedHandle = 0xF00;
-static constexpr uint16_t kCisHandleRangeStart = 0xE00;
-static constexpr uint16_t kCisHandleRangeEnd = 0xEFE;
 
 class AclConnectionHandler {
 public:
@@ -107,8 +103,9 @@ private:
   std::unordered_map<uint16_t, LeAclConnection> le_acl_connections_;
   std::unordered_map<uint16_t, ScoConnection> sco_connections_;
 
-  uint16_t GetUnusedHandle();
-  uint16_t last_handle_{kReservedHandle - 2};
+  uint16_t last_acl_handle_{ConnectionHandle::kAclRangeStart};
+  uint16_t last_sco_handle_{ConnectionHandle::kScoRangeStart};
+  uint16_t last_le_acl_handle_{ConnectionHandle::kLeAclRangeStart};
 };
 
 }  // namespace rootcanal
