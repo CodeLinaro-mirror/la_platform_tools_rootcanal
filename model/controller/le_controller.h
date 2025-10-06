@@ -60,7 +60,7 @@ AddressWithType PeerDeviceAddress(Address address, PeerAddressType peer_address_
 // address.
 AddressWithType PeerIdentityAddress(Address address, PeerAddressType peer_address_type);
 
-class LinkLayerController {
+class LeController {
 public:
   static constexpr size_t kIrkSize = 16;
   static constexpr size_t kLtkSize = 16;
@@ -71,14 +71,13 @@ public:
   const uint32_t id_;
 
   // Generate a resolvable private address using the specified IRK.
-  static Address generate_rpa(std::array<uint8_t, LinkLayerController::kIrkSize> irk);
+  static Address generate_rpa(std::array<uint8_t, LeController::kIrkSize> irk);
 
   // Return true if the input IRK is all 0s.
-  static bool irk_is_zero(std::array<uint8_t, LinkLayerController::kIrkSize> irk);
+  static bool irk_is_zero(std::array<uint8_t, LeController::kIrkSize> irk);
 
-  LinkLayerController(const Address& address, const ControllerProperties& properties,
-                      uint32_t id = 0);
-  ~LinkLayerController();
+  LeController(const Address& address, const ControllerProperties& properties, uint32_t id = 0);
+  ~LeController();
 
   ErrorCode SendCommandToRemoteByAddress(OpCode opcode, pdl::packet::slice args,
                                          const Address& own_address, const Address& peer_address);
