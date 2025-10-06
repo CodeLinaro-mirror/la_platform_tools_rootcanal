@@ -99,8 +99,8 @@ bool AclConnectionHandler::Disconnect(uint16_t handle, std::function<void(TaskId
   if (HasAclHandle(handle)) {
     // It is the responsibility of the caller to remove SCO connections
     // with connected peer first.
-    uint16_t sco_handle = GetScoHandle(acl_connections_.at(handle).address);
-    ASSERT(!HasScoHandle(sco_handle));
+    auto sco_handle = GetScoConnectionHandle(acl_connections_.at(handle).address);
+    ASSERT(!sco_handle.has_value());
     acl_connections_.erase(handle);
     return true;
   }
@@ -126,6 +126,16 @@ std::optional<uint16_t> AclConnectionHandler::GetLeAclConnectionHandle(
   for (auto const& [handle, connection] : le_acl_connections_) {
     if (connection.address.GetAddress() == remote_address &&
         connection.own_address.GetAddress() == local_address) {
+      return handle;
+    }
+  }
+  return {};
+}
+
+std::optional<uint16_t> AclConnectionHandler::GetScoConnectionHandle(
+        bluetooth::hci::Address addr) const {
+  for (auto const& [handle, connection] : sco_connections_) {
+    if (connection.GetAddress() == addr) {
       return handle;
     }
   }
@@ -221,15 +231,6 @@ bool AclConnectionHandler::AcceptPendingScoConnection(bluetooth::hci::Address ad
     }
   }
   return false;
-}
-
-uint16_t AclConnectionHandler::GetScoHandle(bluetooth::hci::Address addr) const {
-  for (const auto& pair : sco_connections_) {
-    if (std::get<ScoConnection>(pair).GetAddress() == addr) {
-      return std::get<0>(pair);
-    }
-  }
-  return kReservedHandle;
 }
 
 ScoConnectionParameters AclConnectionHandler::GetScoConnectionParameters(

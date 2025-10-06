@@ -60,7 +60,6 @@ public:
   bool AcceptPendingScoConnection(bluetooth::hci::Address addr,
                                   ScoConnectionParameters const& parameters,
                                   std::function<TaskId()> startStream);
-  uint16_t GetScoHandle(bluetooth::hci::Address addr) const;
   ScoConnectionParameters GetScoConnectionParameters(bluetooth::hci::Address addr) const;
   ScoLinkParameters GetScoLinkParameters(bluetooth::hci::Address addr) const;
 
@@ -84,6 +83,10 @@ public:
   // local and remote addresses.
   std::optional<uint16_t> GetLeAclConnectionHandle(bluetooth::hci::Address local_address,
                                                    bluetooth::hci::Address remote_address) const;
+
+  // Return the connection handle for a classic SCO connection identified
+  // with the peer address \p bd_addr.
+  std::optional<uint16_t> GetScoConnectionHandle(bluetooth::hci::Address bd_addr) const;
 
   bluetooth::hci::Address GetScoAddress(uint16_t handle) const;
 

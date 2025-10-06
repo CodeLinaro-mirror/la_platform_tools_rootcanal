@@ -1964,7 +1964,7 @@ LinkLayerController::LinkLayerController(const Address& address,
                     // Returns the connection handle but only for established
                     // BR-EDR connections.
                     return controller->connections_.GetAclConnectionHandle(Address(*address))
-                            .value_or(kReservedHandle);
+                            .value_or(-1);
                   },
 
           .get_address =
@@ -2420,8 +2420,8 @@ void LinkLayerController::IncomingLeAclPacket(LeAclConnection& connection,
 
 void LinkLayerController::IncomingScoPacket(model::packets::LinkLayerPacketView incoming) {
   Address source = incoming.GetSourceAddress();
-  uint16_t sco_handle = connections_.GetScoHandle(source);
-  if (!connections_.HasScoHandle(sco_handle)) {
+  auto sco_handle = connections_.GetScoConnectionHandle(source);
+  if (!sco_handle.has_value()) {
     INFO(id_, "Spurious SCO packet from {}", source);
     return;
   }
@@ -2435,7 +2435,7 @@ void LinkLayerController::IncomingScoPacket(model::packets::LinkLayerPacketView 
        incoming.GetSourceAddress(), incoming.GetDestinationAddress());
 
   send_sco_(bluetooth::hci::ScoBuilder::Create(
-          sco_handle, bluetooth::hci::PacketStatusFlag::CORRECTLY_RECEIVED, sco_data_bytes));
+          *sco_handle, bluetooth::hci::PacketStatusFlag::CORRECTLY_RECEIVED, sco_data_bytes));
 }
 
 void LinkLayerController::IncomingRemoteNameRequest(model::packets::LinkLayerPacketView incoming) {
@@ -3806,7 +3806,13 @@ void LinkLayerController::IncomingScoConnectionResponse(
   auto response = model::packets::ScoConnectionResponseView::Create(incoming);
   ASSERT(response.IsValid());
   auto status = ErrorCode(response.GetStatus());
+  auto sco_connection_handle = connections_.GetScoConnectionHandle(address);
   bool is_legacy = connections_.IsLegacyScoConnection(address);
+
+  if (!sco_connection_handle.has_value()) {
+    INFO(id_, "Received spurious eSCO connection response from {}", address);
+    return;
+  }
 
   INFO(id_, "Received eSCO connection response with status 0x{:02x} from {}",
        static_cast<unsigned>(status), incoming.GetSourceAddress());
@@ -3828,11 +3834,11 @@ void LinkLayerController::IncomingScoConnectionResponse(
 
     if (is_legacy) {
       send_event_(bluetooth::hci::ConnectionCompleteBuilder::Create(
-              ErrorCode::SUCCESS, connections_.GetScoHandle(address), address,
-              bluetooth::hci::LinkType::SCO, bluetooth::hci::Enable::DISABLED));
+              ErrorCode::SUCCESS, *sco_connection_handle, address, bluetooth::hci::LinkType::SCO,
+              bluetooth::hci::Enable::DISABLED));
     } else {
       send_event_(bluetooth::hci::SynchronousConnectionCompleteBuilder::Create(
-              ErrorCode::SUCCESS, connections_.GetScoHandle(address), address,
+              ErrorCode::SUCCESS, *sco_connection_handle, address,
               extended ? bluetooth::hci::ScoLinkType::ESCO : bluetooth::hci::ScoLinkType::SCO,
               extended ? response.GetTransmissionInterval() : 0,
               extended ? response.GetRetransmissionWindow() : 0,
@@ -3862,16 +3868,16 @@ void LinkLayerController::IncomingScoDisconnect(model::packets::LinkLayerPacketV
   auto request = model::packets::ScoDisconnectView::Create(incoming);
   ASSERT(request.IsValid());
   auto reason = request.GetReason();
-  uint16_t handle = connections_.GetScoHandle(address);
+  auto handle = connections_.GetScoConnectionHandle(address);
 
   INFO(id_,
        "Received eSCO disconnection request with"
        " reason 0x{:02x} from {}",
        static_cast<unsigned>(reason), incoming.GetSourceAddress());
 
-  if (handle != kReservedHandle) {
-    connections_.Disconnect(handle, [this](TaskId task_id) { CancelScheduledTask(task_id); });
-    SendDisconnectionCompleteEvent(handle, ErrorCode(reason));
+  if (handle.has_value()) {
+    connections_.Disconnect(*handle, [this](TaskId task_id) { CancelScheduledTask(task_id); });
+    SendDisconnectionCompleteEvent(*handle, ErrorCode(reason));
   }
 }
 
@@ -4020,7 +4026,7 @@ void LinkLayerController::HandleIso(bluetooth::hci::IsoView iso) {
 
   uint8_t cig_id = 0;
   uint8_t cis_id = 0;
-  uint16_t acl_connection_handle = kReservedHandle;
+  uint16_t acl_connection_handle = -1;
   uint16_t packet_sequence_number = 0;
   uint16_t max_sdu_length = 0;
 
@@ -4095,10 +4101,6 @@ uint16_t LinkLayerController::HandleLeConnection(
                                     .conn_subrate_factor = 1,
                                     .conn_peripheral_latency = connection_latency,
                                     .conn_supervision_timeout = supervision_timeout});
-  if (handle == kReservedHandle) {
-    WARNING(id_, "No pending connection for connection from {}", address);
-    return kReservedHandle;
-  }
 
   if (IsLeEventUnmasked(SubeventCode::LE_ENHANCED_CONNECTION_COMPLETE_V1)) {
     AddressWithType peer_resolved_address = resolved_address;
@@ -4938,7 +4940,6 @@ void LinkLayerController::IncomingPageResponsePacket(model::packets::LinkLayerPa
   INFO(id_, "Received Page Response packet from {}", bd_addr);
 
   uint16_t connection_handle = connections_.CreateConnection(bd_addr, GetAddress());
-  ASSERT(connection_handle != kReservedHandle);
 
   bluetooth::hci::Role role = page_->allow_role_switch && response.GetTryRoleSwitch()
                                       ? bluetooth::hci::Role::PERIPHERAL
@@ -5048,7 +5049,7 @@ ErrorCode LinkLayerController::AcceptConnectionRequest(const Address& bd_addr,
   // connection requests.
   if (connections_.HasPendingScoConnection(bd_addr)) {
     ErrorCode status = ErrorCode::SUCCESS;
-    uint16_t sco_handle = 0;
+    uint16_t sco_handle = *connections_.GetScoConnectionHandle(bd_addr);
     ScoLinkParameters link_parameters = {};
     ScoConnectionParameters connection_parameters =
             connections_.GetScoConnectionParameters(bd_addr);
@@ -5058,8 +5059,8 @@ ErrorCode LinkLayerController::AcceptConnectionRequest(const Address& bd_addr,
         })) {
       connections_.CancelPendingScoConnection(bd_addr);
       status = ErrorCode::SCO_INTERVAL_REJECTED;  // TODO: proper status code
+      sco_handle = 0;
     } else {
-      sco_handle = connections_.GetScoHandle(bd_addr);
       link_parameters = connections_.GetScoLinkParameters(bd_addr);
     }
 
@@ -5087,10 +5088,6 @@ ErrorCode LinkLayerController::AcceptConnectionRequest(const Address& bd_addr,
 
 void LinkLayerController::MakePeripheralConnection(const Address& bd_addr, bool try_role_switch) {
   uint16_t connection_handle = connections_.CreateConnection(bd_addr, GetAddress());
-  if (connection_handle == kReservedHandle) {
-    INFO(id_, "CreateConnection failed");
-    return;
-  }
 
   bluetooth::hci::Role role = try_role_switch && page_scan_->allow_role_switch
                                       ? bluetooth::hci::Role::CENTRAL
@@ -5250,13 +5247,14 @@ ErrorCode LinkLayerController::Disconnect(uint16_t handle, ErrorCode host_reason
     auto address = connection.address;
     INFO(id_, "Disconnecting ACL connection with {}", connection.address);
 
-    uint16_t sco_handle = connections_.GetScoHandle(connection.address);
-    if (sco_handle != kReservedHandle) {
+    auto sco_handle = connections_.GetScoConnectionHandle(connection.address);
+    if (sco_handle.has_value()) {
       SendLinkLayerPacket(model::packets::ScoDisconnectBuilder::Create(
               connection.own_address, connection.address, static_cast<uint8_t>(host_reason)));
 
-      connections_.Disconnect(sco_handle, [this](TaskId task_id) { CancelScheduledTask(task_id); });
-      SendDisconnectionCompleteEvent(sco_handle, controller_reason);
+      connections_.Disconnect(*sco_handle,
+                              [this](TaskId task_id) { CancelScheduledTask(task_id); });
+      SendDisconnectionCompleteEvent(*sco_handle, controller_reason);
     }
 
     SendLinkLayerPacket(model::packets::DisconnectBuilder::Create(
@@ -5414,7 +5412,7 @@ ErrorCode LinkLayerController::SwitchRole(Address bd_addr, bluetooth::hci::Role 
   // If there is an (e)SCO connection between the local device and the device
   // identified by the BD_ADDR parameter, an attempt to perform a role switch
   // shall be rejected by the local device.
-  if (connections_.GetScoHandle(bd_addr) != kReservedHandle) {
+  if (connections_.GetScoConnectionHandle(bd_addr).has_value()) {
     INFO(id_,
          "role switch rejected because an Sco link is opened with"
          " the target device");
@@ -6031,7 +6029,7 @@ ErrorCode LinkLayerController::AcceptSynchronousConnection(
   }
 
   ErrorCode status = ErrorCode::SUCCESS;
-  uint16_t sco_handle = 0;
+  uint16_t sco_handle = *connections_.GetScoConnectionHandle(bd_addr);
   ScoLinkParameters link_parameters = {};
   ScoConnectionParameters connection_parameters = {transmit_bandwidth,    receive_bandwidth,
                                                    max_latency,           voice_setting,
@@ -6042,8 +6040,8 @@ ErrorCode LinkLayerController::AcceptSynchronousConnection(
       })) {
     connections_.CancelPendingScoConnection(bd_addr);
     status = ErrorCode::STATUS_UNKNOWN;  // TODO: proper status code
+    sco_handle = 0;
   } else {
-    sco_handle = connections_.GetScoHandle(bd_addr);
     link_parameters = connections_.GetScoLinkParameters(bd_addr);
   }
 
@@ -6127,9 +6125,11 @@ void LinkLayerController::IncomingPingRequest(model::packets::LinkLayerPacketVie
 }
 
 TaskId LinkLayerController::StartScoStream(Address address) {
-  auto sco_builder =
-          bluetooth::hci::ScoBuilder::Create(connections_.GetScoHandle(address),
-                                             PacketStatusFlag::CORRECTLY_RECEIVED, {0, 0, 0, 0, 0});
+  auto sco_handle = connections_.GetScoConnectionHandle(address);
+  ASSERT(sco_handle.has_value());
+
+  auto sco_builder = bluetooth::hci::ScoBuilder::Create(
+          *sco_handle, PacketStatusFlag::CORRECTLY_RECEIVED, {0, 0, 0, 0, 0});
 
   auto sco_bytes = sco_builder->SerializeToBytes();
   auto sco_view = bluetooth::hci::ScoView::Create(
