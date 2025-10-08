@@ -39,7 +39,7 @@ using ::bluetooth::hci::AddressWithType;
 template <typename C>
 static uint16_t GetUnusedHandle(std::unordered_map<uint16_t, C> const& connections,
                                 uint16_t range_start, uint16_t range_end, uint16_t& last) {
-  while (connections.contains(last)) {
+  while (connections.find(last) != connections.end()) {
     if (++last > range_end) {
       last = range_start;
     }
