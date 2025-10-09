@@ -143,9 +143,7 @@ private:
 public:
   const Address& GetAddress() const;
 
-  void IncomingPacket(model::packets::LinkLayerPacketView incoming, Phy::Type phy, int8_t rssi);
-  void IncomingBrEdrPacket(model::packets::LinkLayerPacketView incoming, int8_t rssi);
-  void IncomingLePacket(model::packets::LinkLayerPacketView incoming, int8_t rssi);
+  void IncomingPacket(model::packets::LinkLayerPacketView incoming, int8_t rssi);
 
   void Tick();
   void Close();

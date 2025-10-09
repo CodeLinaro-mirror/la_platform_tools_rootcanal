@@ -77,10 +77,10 @@ void DualModeController::ReceiveLinkLayerPacket(model::packets::LinkLayerPacketV
                                                 Phy::Type type, int8_t rssi) {
   switch (type) {
     case Phy::Type::BR_EDR:
-      bredr_controller_.IncomingPacket(incoming, type, rssi);
+      bredr_controller_.IncomingPacket(incoming, rssi);
       break;
     case Phy::Type::LOW_ENERGY:
-      le_controller_.IncomingPacket(incoming, type, rssi);
+      le_controller_.IncomingPacket(incoming, rssi);
       break;
   }
 }
