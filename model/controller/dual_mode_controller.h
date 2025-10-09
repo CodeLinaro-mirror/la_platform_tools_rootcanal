@@ -550,7 +550,8 @@ protected:
   ControllerProperties properties_;
 
   // Link Layer state.
-  LinkLayerController link_layer_controller_{address_, properties_, id_};
+  LinkLayerController bredr_controller_{address_, properties_, id_};
+  LinkLayerController le_controller_{address_, properties_, id_};
 
 private:
   // Send a HCI_Command_Complete event for the specified op_code with
