@@ -676,9 +676,8 @@ protected:
   void IncomingReadRemoteSupportedFeaturesResponse(model::packets::LinkLayerPacketView incoming);
   void IncomingReadRemoteExtendedFeatures(model::packets::LinkLayerPacketView incoming);
   void IncomingReadRemoteExtendedFeaturesResponse(model::packets::LinkLayerPacketView incoming);
-  void IncomingReadRemoteVersion(model::packets::LinkLayerPacketView incoming, bool is_br_edr);
-  void IncomingReadRemoteVersionResponse(model::packets::LinkLayerPacketView incoming,
-                                         bool is_br_edr);
+  void IncomingReadRemoteVersion(model::packets::LinkLayerPacketView incoming);
+  void IncomingReadRemoteVersionResponse(model::packets::LinkLayerPacketView incoming);
   void IncomingReadClockOffset(model::packets::LinkLayerPacketView incoming);
   void IncomingReadClockOffsetResponse(model::packets::LinkLayerPacketView incoming);
   void IncomingRemoteNameRequest(model::packets::LinkLayerPacketView incoming);

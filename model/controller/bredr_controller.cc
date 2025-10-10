@@ -272,11 +272,6 @@ ErrorCode BrEdrController::ReadRssi(uint16_t connection_handle, int8_t* rssi) {
     return ErrorCode::SUCCESS;
   }
 
-  if (connections_.HasLeAclHandle(connection_handle)) {
-    *rssi = connections_.GetLeAclConnection(connection_handle).GetRssi();
-    return ErrorCode::SUCCESS;
-  }
-
   // Not documented: If the connection handle is not found, the Controller
   // shall return the error code Unknown Connection Identifier (0x02).
   INFO(id_, "unknown connection identifier");
@@ -2190,10 +2185,10 @@ void BrEdrController::IncomingPacket(model::packets::LinkLayerPacketView incomin
       IncomingReadRemoteExtendedFeaturesResponse(incoming);
       break;
     case model::packets::PacketType::READ_REMOTE_VERSION_INFORMATION:
-      IncomingReadRemoteVersion(incoming, true);
+      IncomingReadRemoteVersion(incoming);
       break;
     case model::packets::PacketType::READ_REMOTE_VERSION_INFORMATION_RESPONSE:
-      IncomingReadRemoteVersionResponse(incoming, true);
+      IncomingReadRemoteVersionResponse(incoming);
       break;
     case model::packets::PacketType::READ_CLOCK_OFFSET:
       IncomingReadClockOffset(incoming);
@@ -2393,30 +2388,20 @@ void BrEdrController::IncomingReadRemoteExtendedFeaturesResponse(
   }
 }
 
-void BrEdrController::IncomingReadRemoteVersion(model::packets::LinkLayerPacketView incoming,
-                                                bool is_br_edr) {
-  if (is_br_edr) {
-    SendLinkLayerPacket(model::packets::ReadRemoteVersionInformationResponseBuilder::Create(
-            incoming.GetDestinationAddress(), incoming.GetSourceAddress(),
-            static_cast<uint8_t>(properties_.lmp_version),
-            static_cast<uint16_t>(properties_.lmp_subversion), properties_.company_identifier));
-  } else {
-    SendLeLinkLayerPacket(model::packets::ReadRemoteVersionInformationResponseBuilder::Create(
-            incoming.GetDestinationAddress(), incoming.GetSourceAddress(),
-            static_cast<uint8_t>(properties_.lmp_version),
-            static_cast<uint16_t>(properties_.lmp_subversion), properties_.company_identifier));
-  }
+void BrEdrController::IncomingReadRemoteVersion(model::packets::LinkLayerPacketView incoming) {
+  SendLinkLayerPacket(model::packets::ReadRemoteVersionInformationResponseBuilder::Create(
+          incoming.GetDestinationAddress(), incoming.GetSourceAddress(),
+          static_cast<uint8_t>(properties_.lmp_version),
+          static_cast<uint16_t>(properties_.lmp_subversion), properties_.company_identifier));
 }
 
 void BrEdrController::IncomingReadRemoteVersionResponse(
-        model::packets::LinkLayerPacketView incoming, bool is_br_edr) {
+        model::packets::LinkLayerPacketView incoming) {
   auto view = model::packets::ReadRemoteVersionInformationResponseView::Create(incoming);
   ASSERT(view.IsValid());
   Address source = incoming.GetSourceAddress();
-  Address destination = incoming.GetDestinationAddress();
 
-  auto handle = is_br_edr ? connections_.GetAclConnectionHandle(source)
-                          : connections_.GetLeAclConnectionHandle(destination, source);
+  auto handle = connections_.GetAclConnectionHandle(source);
 
   if (!handle.has_value()) {
     INFO(id_, "Discarding response from a disconnected device {}", source);
@@ -3832,16 +3817,6 @@ void BrEdrController::HandleAcl(bluetooth::hci::AclView acl) {
             static_cast<uint8_t>(bc_flag), std::vector(acl_payload.begin(), acl_payload.end()));
     SendLinkLayerPacket(std::move(acl_packet));
 
-  } else if (connections_.HasLeAclHandle(connection_handle)) {
-    // LE-ACL connection.
-    auto& connection = connections_.GetLeAclConnection(connection_handle);
-    auto acl_payload = acl.GetPayload();
-    auto acl_packet = model::packets::AclBuilder::Create(
-            connection.own_address.GetAddress(), connection.address.GetAddress(),
-            static_cast<uint8_t>(pb_flag), static_cast<uint8_t>(bc_flag),
-            std::vector(acl_payload.begin(), acl_payload.end()));
-    SendLeLinkLayerPacket(std::move(acl_packet));
-
   } else {
     // ACL HCI packets received with an unknown or invalid Connection Handle
     // are silently dropped.
@@ -5129,21 +5104,6 @@ ErrorCode BrEdrController::Disconnect(uint16_t handle, ErrorCode host_reason,
     return ErrorCode::SUCCESS;
   }
 
-  if (connections_.HasLeAclHandle(handle)) {
-    auto connection = connections_.GetLeAclConnection(handle);
-    INFO(id_, "Disconnecting LE-ACL connection with {}", connection.address);
-
-    SendLeLinkLayerPacket(model::packets::DisconnectBuilder::Create(
-            connection.own_address.GetAddress(), connection.address.GetAddress(),
-            static_cast<uint8_t>(host_reason)));
-
-    connections_.Disconnect(handle, [this](TaskId task_id) { CancelScheduledTask(task_id); });
-    SendDisconnectionCompleteEvent(handle, controller_reason);
-
-    ASSERT(link_layer_remove_link(ll_.get(), handle, static_cast<uint8_t>(controller_reason)));
-    return ErrorCode::SUCCESS;
-  }
-
   return ErrorCode::UNKNOWN_CONNECTION;
 }
 
@@ -5152,13 +5112,6 @@ ErrorCode BrEdrController::ReadRemoteVersionInformation(uint16_t connection_hand
     auto const& connection = connections_.GetAclConnection(connection_handle);
     SendLinkLayerPacket(model::packets::ReadRemoteVersionInformationBuilder::Create(
             connection.own_address, connection.address));
-    return ErrorCode::SUCCESS;
-  }
-
-  if (connections_.HasLeAclHandle(connection_handle)) {
-    auto const& connection = connections_.GetLeAclConnection(connection_handle);
-    SendLeLinkLayerPacket(model::packets::ReadRemoteVersionInformationBuilder::Create(
-            connection.own_address.GetAddress(), connection.address.GetAddress()));
     return ErrorCode::SUCCESS;
   }
 
