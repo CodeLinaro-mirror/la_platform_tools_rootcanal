@@ -2118,22 +2118,8 @@ ErrorCode BrEdrController::SendScoToRemote(bluetooth::hci::ScoView sco_packet) {
   return ErrorCode::SUCCESS;
 }
 
-void BrEdrController::IncomingPacket(model::packets::LinkLayerPacketView incoming, Phy::Type phy,
-                                     int8_t rssi) {
+void BrEdrController::IncomingPacket(model::packets::LinkLayerPacketView incoming, int8_t rssi) {
   ASSERT(incoming.IsValid());
-
-  switch (phy) {
-    case Phy::Type::BR_EDR:
-      IncomingBrEdrPacket(incoming, rssi);
-      break;
-    case Phy::Type::LOW_ENERGY:
-      IncomingLePacket(incoming, rssi);
-      break;
-  }
-}
-
-void BrEdrController::IncomingBrEdrPacket(model::packets::LinkLayerPacketView incoming,
-                                          int8_t rssi) {
   auto destination_address = incoming.GetDestinationAddress();
   auto source_address = incoming.GetSourceAddress();
 
@@ -2235,104 +2221,6 @@ void BrEdrController::IncomingBrEdrPacket(model::packets::LinkLayerPacketView in
       break;
     case model::packets::PacketType::ROLE_SWITCH_RESPONSE:
       IncomingRoleSwitchResponse(incoming);
-      break;
-    default:
-      WARNING(id_, "Dropping unhandled packet of type {}",
-              model::packets::PacketTypeText(incoming.GetType()));
-  }
-}
-
-void BrEdrController::IncomingLePacket(model::packets::LinkLayerPacketView incoming, int8_t rssi) {
-  auto destination_address = incoming.GetDestinationAddress();
-  auto source_address = incoming.GetSourceAddress();
-
-  // Handle connection-less packet types.
-  // Whether the packet needs to be handled by this controller instance is decided
-  // by the current controller state.
-  switch (incoming.GetType()) {
-    case model::packets::PacketType::LE_SCAN:
-      return IncomingLeScanPacket(incoming);
-    case model::packets::PacketType::LE_SCAN_RESPONSE:
-      return IncomingLeScanResponsePacket(incoming, rssi);
-    case model::packets::PacketType::LE_LEGACY_ADVERTISING_PDU:
-      return IncomingLeLegacyAdvertisingPdu(incoming, rssi);
-    case model::packets::PacketType::LE_EXTENDED_ADVERTISING_PDU:
-      return IncomingLeExtendedAdvertisingPdu(incoming, rssi);
-    case model::packets::PacketType::LE_PERIODIC_ADVERTISING_PDU:
-      return IncomingLePeriodicAdvertisingPdu(incoming, rssi);
-    case model::packets::PacketType::LE_CONNECT:
-      return IncomingLeConnectPacket(incoming);
-    case model::packets::PacketType::LE_CONNECT_COMPLETE:
-      return IncomingLeConnectCompletePacket(incoming);
-    default:
-      break;
-  }
-
-  // Verify the existence of an LE-ACL connection with the proper source and
-  // destination addresses.
-  auto connection_handle =
-          connections_.GetLeAclConnectionHandle(destination_address, source_address);
-  if (!connection_handle.has_value()) {
-    DEBUG(id_, "[LL] {} | Dropping {} packet not addressed to me {}->{}", address_,
-          PacketTypeText(incoming.GetType()), source_address, destination_address);
-    return;
-  }
-
-  // Update link timeout for valid ACL connections
-  auto& connection = connections_.GetLeAclConnection(*connection_handle);
-  connection.ResetLinkTimer();
-
-  switch (incoming.GetType()) {
-    case model::packets::PacketType::ACL:
-      IncomingLeAclPacket(connection, incoming, rssi);
-      break;
-    case model::packets::PacketType::LE_CONNECTED_ISOCHRONOUS_PDU:
-      IncomingLeConnectedIsochronousPdu(incoming);
-      break;
-    case model::packets::PacketType::DISCONNECT:
-      IncomingLeDisconnectPacket(connection, incoming);
-      break;
-    case model::packets::PacketType::LLCP:
-      IncomingLlcpPacket(incoming);
-      break;
-    case model::packets::PacketType::LE_CONNECTION_PARAMETER_REQUEST:
-      IncomingLeConnectionParameterRequest(connection, incoming);
-      break;
-    case model::packets::PacketType::LE_CONNECTION_PARAMETER_UPDATE:
-      IncomingLeConnectionParameterUpdate(connection, incoming);
-      break;
-    case model::packets::PacketType::LE_ENCRYPT_CONNECTION:
-      IncomingLeEncryptConnection(connection, incoming);
-      break;
-    case model::packets::PacketType::LE_ENCRYPT_CONNECTION_RESPONSE:
-      IncomingLeEncryptConnectionResponse(connection, incoming);
-      break;
-    case (model::packets::PacketType::LE_READ_REMOTE_FEATURES):
-      IncomingLeReadRemoteFeatures(connection, incoming);
-      break;
-    case (model::packets::PacketType::LE_READ_REMOTE_FEATURES_RESPONSE):
-      IncomingLeReadRemoteFeaturesResponse(connection, incoming);
-      break;
-    case model::packets::PacketType::READ_REMOTE_VERSION_INFORMATION:
-      IncomingReadRemoteVersion(incoming, false);
-      break;
-    case model::packets::PacketType::READ_REMOTE_VERSION_INFORMATION_RESPONSE:
-      IncomingReadRemoteVersionResponse(incoming, false);
-      break;
-    case model::packets::PacketType::PING_REQUEST:
-      IncomingPingRequest(incoming);
-      break;
-    case model::packets::PacketType::PING_RESPONSE:
-      // ping responses require no action
-      break;
-    case model::packets::PacketType::LL_PHY_REQ:
-      IncomingLlPhyReq(connection, incoming);
-      break;
-    case model::packets::PacketType::LL_PHY_RSP:
-      IncomingLlPhyRsp(connection, incoming);
-      break;
-    case model::packets::PacketType::LL_PHY_UPDATE_IND:
-      IncomingLlPhyUpdateInd(connection, incoming);
       break;
     default:
       WARNING(id_, "Dropping unhandled packet of type {}",
