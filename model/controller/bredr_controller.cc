@@ -515,6 +515,257 @@ ErrorCode BrEdrController::RejectSynchronousConnection(Address bd_addr, uint16_t
   return ErrorCode::SUCCESS;
 }
 
+// HCI Enhanced Setup Synchronous Connection (Vol 4, Part E § 7.1.45).
+ErrorCode BrEdrController::EnhancedSetupSynchronousConnection(
+        uint16_t connection_handle, uint32_t transmit_bandwidth, uint32_t receive_bandwidth,
+        bluetooth::hci::ScoCodingFormat transmit_coding_format,
+        bluetooth::hci::ScoCodingFormat receive_coding_format,
+        uint16_t /*transmit_codec_frame_size*/, uint16_t /*receive_codec_frame_size*/,
+        uint32_t input_bandwidth, uint32_t output_bandwidth,
+        bluetooth::hci::ScoCodingFormat input_coding_format,
+        bluetooth::hci::ScoCodingFormat output_coding_format, uint16_t /*input_coded_data_size*/,
+        uint16_t /*output_coded_data_size*/,
+        bluetooth::hci::ScoPcmDataFormat /*input_pcm_data_format*/,
+        bluetooth::hci::ScoPcmDataFormat /*output_pcm_data_format*/,
+        uint8_t /*input_pcm_sample_payload_msb_position*/,
+        uint8_t /*output_pcm_sample_payload_msb_position*/,
+        bluetooth::hci::ScoDataPath input_data_path, bluetooth::hci::ScoDataPath output_data_path,
+        uint8_t /*input_transport_unit_size*/, uint8_t /*output_transport_unit_size*/,
+        uint16_t max_latency, uint16_t packet_type,
+        bluetooth::hci::RetransmissionEffort retransmission_effort) {
+  // The Host shall set the Transmit_Coding_Format and Receive_Coding_Formats
+  // to be equal.
+  if (transmit_coding_format.coding_format_ != receive_coding_format.coding_format_ ||
+      transmit_coding_format.company_id_ != receive_coding_format.company_id_ ||
+      transmit_coding_format.vendor_specific_codec_id_ !=
+              receive_coding_format.vendor_specific_codec_id_) {
+    INFO(id_,
+         "EnhancedSetupSynchronousConnection: rejected Transmit_Coding_Format "
+         "({}) and Receive_Coding_Format ({}) as they are not equal",
+         transmit_coding_format.ToString(), receive_coding_format.ToString());
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  // The Host shall either set the Input_Bandwidth and Output_Bandwidth
+  // to be equal, or shall set one of them to be zero and the other non-zero.
+  if (input_bandwidth != output_bandwidth && input_bandwidth != 0 && output_bandwidth != 0) {
+    INFO(id_,
+         "EnhancedSetupSynchronousConnection: rejected Input_Bandwidth ({})"
+         " and Output_Bandwidth ({}) as they are not equal and different from 0",
+         input_bandwidth, output_bandwidth);
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  // The Host shall set the Input_Coding_Format and Output_Coding_Format
+  // to be equal.
+  if (input_coding_format.coding_format_ != output_coding_format.coding_format_ ||
+      input_coding_format.company_id_ != output_coding_format.company_id_ ||
+      input_coding_format.vendor_specific_codec_id_ !=
+              output_coding_format.vendor_specific_codec_id_) {
+    INFO(id_,
+         "EnhancedSetupSynchronousConnection: rejected Input_Coding_Format ({})"
+         " and Output_Coding_Format ({}) as they are not equal",
+         input_coding_format.ToString(), output_coding_format.ToString());
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  // Root-Canal does not implement audio data transport paths other than the
+  // default HCI transport - other transports will receive spoofed data
+  ScoDatapath datapath = ScoDatapath::NORMAL;
+  if (input_data_path != bluetooth::hci::ScoDataPath::HCI ||
+      output_data_path != bluetooth::hci::ScoDataPath::HCI) {
+    WARNING(id_,
+            "EnhancedSetupSynchronousConnection: Input_Data_Path ({})"
+            " and/or Output_Data_Path ({}) are not over HCI, so data will be "
+            "spoofed",
+            static_cast<unsigned>(input_data_path), static_cast<unsigned>(output_data_path));
+    datapath = ScoDatapath::SPOOFED;
+  }
+
+  // Either both the Transmit_Coding_Format and Input_Coding_Format shall be
+  // “transparent” or neither shall be. If both are “transparent”, the
+  // Transmit_Bandwidth and the Input_Bandwidth shall be the same and the
+  // Controller shall not modify the data sent to the remote device.
+  if (transmit_coding_format.coding_format_ == bluetooth::hci::ScoCodingFormatValues::TRANSPARENT &&
+      input_coding_format.coding_format_ == bluetooth::hci::ScoCodingFormatValues::TRANSPARENT &&
+      transmit_bandwidth != input_bandwidth) {
+    INFO(id_,
+         "EnhancedSetupSynchronousConnection: rejected Transmit_Bandwidth ({})"
+         " and Input_Bandwidth ({}) as they are not equal",
+         transmit_bandwidth, input_bandwidth);
+    INFO(id_,
+         "EnhancedSetupSynchronousConnection: the Transmit_Bandwidth and "
+         "Input_Bandwidth shall be equal when both Transmit_Coding_Format "
+         "and Input_Coding_Format are 'transparent'");
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+  if ((transmit_coding_format.coding_format_ ==
+       bluetooth::hci::ScoCodingFormatValues::TRANSPARENT) !=
+      (input_coding_format.coding_format_ == bluetooth::hci::ScoCodingFormatValues::TRANSPARENT)) {
+    INFO(id_,
+         "EnhancedSetupSynchronousConnection: rejected Transmit_Coding_Format "
+         "({}) and Input_Coding_Format ({}) as they are incompatible",
+         transmit_coding_format.ToString(), input_coding_format.ToString());
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  // Either both the Receive_Coding_Format and Output_Coding_Format shall
+  // be “transparent” or neither shall be. If both are “transparent”, the
+  // Receive_Bandwidth and the Output_Bandwidth shall be the same and the
+  // Controller shall not modify the data sent to the Host.
+  if (receive_coding_format.coding_format_ == bluetooth::hci::ScoCodingFormatValues::TRANSPARENT &&
+      output_coding_format.coding_format_ == bluetooth::hci::ScoCodingFormatValues::TRANSPARENT &&
+      receive_bandwidth != output_bandwidth) {
+    INFO(id_,
+         "EnhancedSetupSynchronousConnection: rejected Receive_Bandwidth ({})"
+         " and Output_Bandwidth ({}) as they are not equal",
+         receive_bandwidth, output_bandwidth);
+    INFO(id_,
+         "EnhancedSetupSynchronousConnection: the Receive_Bandwidth and "
+         "Output_Bandwidth shall be equal when both Receive_Coding_Format "
+         "and Output_Coding_Format are 'transparent'");
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+  if ((receive_coding_format.coding_format_ ==
+       bluetooth::hci::ScoCodingFormatValues::TRANSPARENT) !=
+      (output_coding_format.coding_format_ == bluetooth::hci::ScoCodingFormatValues::TRANSPARENT)) {
+    INFO(id_,
+         "EnhancedSetupSynchronousConnection: rejected Receive_Coding_Format "
+         "({}) and Output_Coding_Format ({}) as they are incompatible",
+         receive_coding_format.ToString(), output_coding_format.ToString());
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  return SetupSynchronousConnection(
+          connection_handle, transmit_bandwidth, receive_bandwidth, max_latency, GetVoiceSetting(),
+          static_cast<uint8_t>(retransmission_effort), packet_type, datapath);
+}
+
+// HCI Enhanced Accept Synchronous Connection (Vol 4, Part E § 7.1.46).
+ErrorCode BrEdrController::EnhancedAcceptSynchronousConnection(
+        Address bd_addr, uint32_t transmit_bandwidth, uint32_t receive_bandwidth,
+        bluetooth::hci::ScoCodingFormat transmit_coding_format,
+        bluetooth::hci::ScoCodingFormat receive_coding_format,
+        uint16_t /*transmit_codec_frame_size*/, uint16_t /*receive_codec_frame_size*/,
+        uint32_t input_bandwidth, uint32_t output_bandwidth,
+        bluetooth::hci::ScoCodingFormat input_coding_format,
+        bluetooth::hci::ScoCodingFormat output_coding_format, uint16_t /*input_coded_data_size*/,
+        uint16_t /*output_coded_data_size*/,
+        bluetooth::hci::ScoPcmDataFormat /*input_pcm_data_format*/,
+        bluetooth::hci::ScoPcmDataFormat /*output_pcm_data_format*/,
+        uint8_t /*input_pcm_sample_payload_msb_position*/,
+        uint8_t /*output_pcm_sample_payload_msb_position*/,
+        bluetooth::hci::ScoDataPath input_data_path, bluetooth::hci::ScoDataPath output_data_path,
+        uint8_t /*input_transport_unit_size*/, uint8_t /*output_transport_unit_size*/,
+        uint16_t max_latency, uint16_t packet_type,
+        bluetooth::hci::RetransmissionEffort retransmission_effort) {
+  // The Host shall set the Transmit_Coding_Format and Receive_Coding_Formats
+  // to be equal.
+  if (transmit_coding_format.coding_format_ != receive_coding_format.coding_format_ ||
+      transmit_coding_format.company_id_ != receive_coding_format.company_id_ ||
+      transmit_coding_format.vendor_specific_codec_id_ !=
+              receive_coding_format.vendor_specific_codec_id_) {
+    INFO(id_,
+         "EnhancedAcceptSynchronousConnection: rejected Transmit_Coding_Format "
+         "({})"
+         " and Receive_Coding_Format ({}) as they are not equal",
+         transmit_coding_format.ToString(), receive_coding_format.ToString());
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  // The Host shall either set the Input_Bandwidth and Output_Bandwidth
+  // to be equal, or shall set one of them to be zero and the other non-zero.
+  if (input_bandwidth != output_bandwidth && input_bandwidth != 0 && output_bandwidth != 0) {
+    INFO(id_,
+         "EnhancedAcceptSynchronousConnection: rejected Input_Bandwidth ({})"
+         " and Output_Bandwidth ({}) as they are not equal and different from 0",
+         input_bandwidth, output_bandwidth);
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  // The Host shall set the Input_Coding_Format and Output_Coding_Format
+  // to be equal.
+  if (input_coding_format.coding_format_ != output_coding_format.coding_format_ ||
+      input_coding_format.company_id_ != output_coding_format.company_id_ ||
+      input_coding_format.vendor_specific_codec_id_ !=
+              output_coding_format.vendor_specific_codec_id_) {
+    INFO(id_,
+         "EnhancedAcceptSynchronousConnection: rejected Input_Coding_Format ({})"
+         " and Output_Coding_Format ({}) as they are not equal",
+         input_coding_format.ToString(), output_coding_format.ToString());
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  // Root-Canal does not implement audio data transport paths other than the
+  // default HCI transport.
+  if (input_data_path != bluetooth::hci::ScoDataPath::HCI ||
+      output_data_path != bluetooth::hci::ScoDataPath::HCI) {
+    INFO(id_,
+         "EnhancedSetupSynchronousConnection: Input_Data_Path ({})"
+         " and/or Output_Data_Path ({}) are not over HCI, so data will be "
+         "spoofed",
+         static_cast<unsigned>(input_data_path), static_cast<unsigned>(output_data_path));
+  }
+
+  // Either both the Transmit_Coding_Format and Input_Coding_Format shall be
+  // “transparent” or neither shall be. If both are “transparent”, the
+  // Transmit_Bandwidth and the Input_Bandwidth shall be the same and the
+  // Controller shall not modify the data sent to the remote device.
+  if (transmit_coding_format.coding_format_ == bluetooth::hci::ScoCodingFormatValues::TRANSPARENT &&
+      input_coding_format.coding_format_ == bluetooth::hci::ScoCodingFormatValues::TRANSPARENT &&
+      transmit_bandwidth != input_bandwidth) {
+    INFO(id_,
+         "EnhancedSetupSynchronousConnection: rejected Transmit_Bandwidth ({})"
+         " and Input_Bandwidth ({}) as they are not equal",
+         transmit_bandwidth, input_bandwidth);
+    INFO(id_,
+         "EnhancedSetupSynchronousConnection: the Transmit_Bandwidth and "
+         "Input_Bandwidth shall be equal when both Transmit_Coding_Format "
+         "and Input_Coding_Format are 'transparent'");
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+  if ((transmit_coding_format.coding_format_ ==
+       bluetooth::hci::ScoCodingFormatValues::TRANSPARENT) !=
+      (input_coding_format.coding_format_ == bluetooth::hci::ScoCodingFormatValues::TRANSPARENT)) {
+    INFO(id_,
+         "EnhancedSetupSynchronousConnection: rejected Transmit_Coding_Format "
+         "({}) and Input_Coding_Format ({}) as they are incompatible",
+         transmit_coding_format.ToString(), input_coding_format.ToString());
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  // Either both the Receive_Coding_Format and Output_Coding_Format shall
+  // be “transparent” or neither shall be. If both are “transparent”, the
+  // Receive_Bandwidth and the Output_Bandwidth shall be the same and the
+  // Controller shall not modify the data sent to the Host.
+  if (receive_coding_format.coding_format_ == bluetooth::hci::ScoCodingFormatValues::TRANSPARENT &&
+      output_coding_format.coding_format_ == bluetooth::hci::ScoCodingFormatValues::TRANSPARENT &&
+      receive_bandwidth != output_bandwidth) {
+    INFO(id_,
+         "EnhancedSetupSynchronousConnection: rejected Receive_Bandwidth ({})"
+         " and Output_Bandwidth ({}) as they are not equal",
+         receive_bandwidth, output_bandwidth);
+    INFO(id_,
+         "EnhancedSetupSynchronousConnection: the Receive_Bandwidth and "
+         "Output_Bandwidth shall be equal when both Receive_Coding_Format "
+         "and Output_Coding_Format are 'transparent'");
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+  if ((receive_coding_format.coding_format_ ==
+       bluetooth::hci::ScoCodingFormatValues::TRANSPARENT) !=
+      (output_coding_format.coding_format_ == bluetooth::hci::ScoCodingFormatValues::TRANSPARENT)) {
+    INFO(id_,
+         "EnhancedSetupSynchronousConnection: rejected Receive_Coding_Format "
+         "({}) and Output_Coding_Format ({}) as they are incompatible",
+         receive_coding_format.ToString(), output_coding_format.ToString());
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  return AcceptSynchronousConnection(bd_addr, transmit_bandwidth, receive_bandwidth, max_latency,
+                                     GetVoiceSetting(), static_cast<uint8_t>(retransmission_effort),
+                                     packet_type);
+}
+
 // =============================================================================
 //  BR/EDR Commands
 // =============================================================================

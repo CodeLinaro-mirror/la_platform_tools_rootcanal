@@ -100,6 +100,36 @@ public:
                                         uint16_t voice_setting, uint8_t retransmission_effort,
                                         uint16_t packet_types);
   ErrorCode RejectSynchronousConnection(Address bd_addr, uint16_t reason);
+  ErrorCode EnhancedSetupSynchronousConnection(
+          uint16_t connection_handle, uint32_t transmit_bandwidth, uint32_t receive_bandwidth,
+          bluetooth::hci::ScoCodingFormat transmit_coding_format,
+          bluetooth::hci::ScoCodingFormat receive_coding_format, uint16_t transmit_codec_frame_size,
+          uint16_t receive_codec_frame_size, uint32_t input_bandwidth, uint32_t output_bandwidth,
+          bluetooth::hci::ScoCodingFormat input_coding_format,
+          bluetooth::hci::ScoCodingFormat output_coding_format, uint16_t input_coded_data_size,
+          uint16_t output_coded_data_size, bluetooth::hci::ScoPcmDataFormat input_pcm_data_format,
+          bluetooth::hci::ScoPcmDataFormat output_pcm_data_format,
+          uint8_t input_pcm_sample_payload_msb_position,
+          uint8_t output_pcm_sample_payload_msb_position,
+          bluetooth::hci::ScoDataPath input_data_path, bluetooth::hci::ScoDataPath output_data_path,
+          uint8_t input_transport_unit_size, uint8_t output_transport_unit_size,
+          uint16_t max_latency, uint16_t packet_type,
+          bluetooth::hci::RetransmissionEffort retransmission_effort);
+  ErrorCode EnhancedAcceptSynchronousConnection(
+          Address bd_addr, uint32_t transmit_bandwidth, uint32_t receive_bandwidth,
+          bluetooth::hci::ScoCodingFormat transmit_coding_format,
+          bluetooth::hci::ScoCodingFormat receive_coding_format, uint16_t transmit_codec_frame_size,
+          uint16_t receive_codec_frame_size, uint32_t input_bandwidth, uint32_t output_bandwidth,
+          bluetooth::hci::ScoCodingFormat input_coding_format,
+          bluetooth::hci::ScoCodingFormat output_coding_format, uint16_t input_coded_data_size,
+          uint16_t output_coded_data_size, bluetooth::hci::ScoPcmDataFormat input_pcm_data_format,
+          bluetooth::hci::ScoPcmDataFormat output_pcm_data_format,
+          uint8_t input_pcm_sample_payload_msb_position,
+          uint8_t output_pcm_sample_payload_msb_position,
+          bluetooth::hci::ScoDataPath input_data_path, bluetooth::hci::ScoDataPath output_data_path,
+          uint8_t input_transport_unit_size, uint8_t output_transport_unit_size,
+          uint16_t max_latency, uint16_t packet_type,
+          bluetooth::hci::RetransmissionEffort retransmission_effort);
 
   // Internal task scheduler.
   // This scheduler is driven by the tick function only,

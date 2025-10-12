@@ -611,265 +611,50 @@ void DualModeController::AcceptSynchronousConnection(CommandView command) {
 
 void DualModeController::EnhancedSetupSynchronousConnection(CommandView command) {
   auto command_view = bluetooth::hci::EnhancedSetupSynchronousConnectionView::Create(command);
-  auto status = ErrorCode::SUCCESS;
   CHECK_PACKET_VIEW(command_view);
 
   DEBUG(id_, "<< Enhanced Setup Synchronous Connection");
   DEBUG(id_, "   connection_handle=0x{:x}", command_view.GetConnectionHandle());
   DEBUG(id_, "   packet_type=0x{:x}", command_view.GetPacketType());
 
-  // The Host shall set the Transmit_Coding_Format and Receive_Coding_Formats
-  // to be equal.
-  auto transmit_coding_format = command_view.GetTransmitCodingFormat();
-  auto receive_coding_format = command_view.GetReceiveCodingFormat();
-  if (transmit_coding_format.coding_format_ != receive_coding_format.coding_format_ ||
-      transmit_coding_format.company_id_ != receive_coding_format.company_id_ ||
-      transmit_coding_format.vendor_specific_codec_id_ !=
-              receive_coding_format.vendor_specific_codec_id_) {
-    INFO(id_,
-         "EnhancedSetupSynchronousConnection: rejected Transmit_Coding_Format "
-         "({}) and Receive_Coding_Format ({}) as they are not equal",
-         transmit_coding_format.ToString(), receive_coding_format.ToString());
-    status = ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
-  }
-
-  // The Host shall either set the Input_Bandwidth and Output_Bandwidth
-  // to be equal, or shall set one of them to be zero and the other non-zero.
-  auto input_bandwidth = command_view.GetInputBandwidth();
-  auto output_bandwidth = command_view.GetOutputBandwidth();
-  if (input_bandwidth != output_bandwidth && input_bandwidth != 0 && output_bandwidth != 0) {
-    INFO(id_,
-         "EnhancedSetupSynchronousConnection: rejected Input_Bandwidth ({})"
-         " and Output_Bandwidth ({}) as they are not equal and different from 0",
-         input_bandwidth, output_bandwidth);
-    status = ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
-  }
-
-  // The Host shall set the Input_Coding_Format and Output_Coding_Format
-  // to be equal.
-  auto input_coding_format = command_view.GetInputCodingFormat();
-  auto output_coding_format = command_view.GetOutputCodingFormat();
-  if (input_coding_format.coding_format_ != output_coding_format.coding_format_ ||
-      input_coding_format.company_id_ != output_coding_format.company_id_ ||
-      input_coding_format.vendor_specific_codec_id_ !=
-              output_coding_format.vendor_specific_codec_id_) {
-    INFO(id_,
-         "EnhancedSetupSynchronousConnection: rejected Input_Coding_Format ({})"
-         " and Output_Coding_Format ({}) as they are not equal",
-         input_coding_format.ToString(), output_coding_format.ToString());
-    status = ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
-  }
-
-  // Root-Canal does not implement audio data transport paths other than the
-  // default HCI transport - other transports will receive spoofed data
-  ScoDatapath datapath = ScoDatapath::NORMAL;
-  if (command_view.GetInputDataPath() != bluetooth::hci::ScoDataPath::HCI ||
-      command_view.GetOutputDataPath() != bluetooth::hci::ScoDataPath::HCI) {
-    WARNING(id_,
-            "EnhancedSetupSynchronousConnection: Input_Data_Path ({})"
-            " and/or Output_Data_Path ({}) are not over HCI, so data will be "
-            "spoofed",
-            static_cast<unsigned>(command_view.GetInputDataPath()),
-            static_cast<unsigned>(command_view.GetOutputDataPath()));
-    datapath = ScoDatapath::SPOOFED;
-  }
-
-  // Either both the Transmit_Coding_Format and Input_Coding_Format shall be
-  // “transparent” or neither shall be. If both are “transparent”, the
-  // Transmit_Bandwidth and the Input_Bandwidth shall be the same and the
-  // Controller shall not modify the data sent to the remote device.
-  auto transmit_bandwidth = command_view.GetTransmitBandwidth();
-  auto receive_bandwidth = command_view.GetReceiveBandwidth();
-  if (transmit_coding_format.coding_format_ == bluetooth::hci::ScoCodingFormatValues::TRANSPARENT &&
-      input_coding_format.coding_format_ == bluetooth::hci::ScoCodingFormatValues::TRANSPARENT &&
-      transmit_bandwidth != input_bandwidth) {
-    INFO(id_,
-         "EnhancedSetupSynchronousConnection: rejected Transmit_Bandwidth ({})"
-         " and Input_Bandwidth ({}) as they are not equal",
-         transmit_bandwidth, input_bandwidth);
-    INFO(id_,
-         "EnhancedSetupSynchronousConnection: the Transmit_Bandwidth and "
-         "Input_Bandwidth shall be equal when both Transmit_Coding_Format "
-         "and Input_Coding_Format are 'transparent'");
-    status = ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
-  }
-  if ((transmit_coding_format.coding_format_ ==
-       bluetooth::hci::ScoCodingFormatValues::TRANSPARENT) !=
-      (input_coding_format.coding_format_ == bluetooth::hci::ScoCodingFormatValues::TRANSPARENT)) {
-    INFO(id_,
-         "EnhancedSetupSynchronousConnection: rejected Transmit_Coding_Format "
-         "({}) and Input_Coding_Format ({}) as they are incompatible",
-         transmit_coding_format.ToString(), input_coding_format.ToString());
-    status = ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
-  }
-
-  // Either both the Receive_Coding_Format and Output_Coding_Format shall
-  // be “transparent” or neither shall be. If both are “transparent”, the
-  // Receive_Bandwidth and the Output_Bandwidth shall be the same and the
-  // Controller shall not modify the data sent to the Host.
-  if (receive_coding_format.coding_format_ == bluetooth::hci::ScoCodingFormatValues::TRANSPARENT &&
-      output_coding_format.coding_format_ == bluetooth::hci::ScoCodingFormatValues::TRANSPARENT &&
-      receive_bandwidth != output_bandwidth) {
-    INFO(id_,
-         "EnhancedSetupSynchronousConnection: rejected Receive_Bandwidth ({})"
-         " and Output_Bandwidth ({}) as they are not equal",
-         receive_bandwidth, output_bandwidth);
-    INFO(id_,
-         "EnhancedSetupSynchronousConnection: the Receive_Bandwidth and "
-         "Output_Bandwidth shall be equal when both Receive_Coding_Format "
-         "and Output_Coding_Format are 'transparent'");
-    status = ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
-  }
-  if ((receive_coding_format.coding_format_ ==
-       bluetooth::hci::ScoCodingFormatValues::TRANSPARENT) !=
-      (output_coding_format.coding_format_ == bluetooth::hci::ScoCodingFormatValues::TRANSPARENT)) {
-    INFO(id_,
-         "EnhancedSetupSynchronousConnection: rejected Receive_Coding_Format "
-         "({}) and Output_Coding_Format ({}) as they are incompatible",
-         receive_coding_format.ToString(), output_coding_format.ToString());
-    status = ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
-  }
-
-  if (status == ErrorCode::SUCCESS) {
-    status = bredr_controller_.SetupSynchronousConnection(
-            command_view.GetConnectionHandle(), transmit_bandwidth, receive_bandwidth,
-            command_view.GetMaxLatency(), bredr_controller_.GetVoiceSetting(),
-            static_cast<uint8_t>(command_view.GetRetransmissionEffort()),
-            command_view.GetPacketType(), datapath);
-  }
-
+  auto status = bredr_controller_.EnhancedSetupSynchronousConnection(
+          command_view.GetConnectionHandle(), command_view.GetTransmitBandwidth(),
+          command_view.GetReceiveBandwidth(), command_view.GetTransmitCodingFormat(),
+          command_view.GetReceiveCodingFormat(), command_view.GetTransmitCodecFrameSize(),
+          command_view.GetReceiveCodecFrameSize(), command_view.GetInputBandwidth(),
+          command_view.GetOutputBandwidth(), command_view.GetInputCodingFormat(),
+          command_view.GetOutputCodingFormat(), command_view.GetInputCodedDataSize(),
+          command_view.GetOutputCodedDataSize(), command_view.GetInputPcmDataFormat(),
+          command_view.GetOutputPcmDataFormat(), command_view.GetInputPcmSamplePayloadMsbPosition(),
+          command_view.GetOutputPcmSamplePayloadMsbPosition(), command_view.GetInputDataPath(),
+          command_view.GetOutputDataPath(), command_view.GetInputTransportUnitSize(),
+          command_view.GetOutputTransportUnitSize(), command_view.GetMaxLatency(),
+          command_view.GetPacketType(), command_view.GetRetransmissionEffort());
   send_event_(bluetooth::hci::EnhancedSetupSynchronousConnectionStatusBuilder::Create(
           status, kNumCommandPackets));
 }
 
 void DualModeController::EnhancedAcceptSynchronousConnection(CommandView command) {
   auto command_view = bluetooth::hci::EnhancedAcceptSynchronousConnectionView::Create(command);
-  auto status = ErrorCode::SUCCESS;
   CHECK_PACKET_VIEW(command_view);
 
   DEBUG(id_, "<< Enhanced Accept Synchronous Connection");
   DEBUG(id_, "   bd_addr={}", command_view.GetBdAddr());
   DEBUG(id_, "   packet_type=0x{:x}", command_view.GetPacketType());
 
-  // The Host shall set the Transmit_Coding_Format and Receive_Coding_Formats
-  // to be equal.
-  auto transmit_coding_format = command_view.GetTransmitCodingFormat();
-  auto receive_coding_format = command_view.GetReceiveCodingFormat();
-  if (transmit_coding_format.coding_format_ != receive_coding_format.coding_format_ ||
-      transmit_coding_format.company_id_ != receive_coding_format.company_id_ ||
-      transmit_coding_format.vendor_specific_codec_id_ !=
-              receive_coding_format.vendor_specific_codec_id_) {
-    INFO(id_,
-         "EnhancedAcceptSynchronousConnection: rejected Transmit_Coding_Format "
-         "({})"
-         " and Receive_Coding_Format ({}) as they are not equal",
-         transmit_coding_format.ToString(), receive_coding_format.ToString());
-    status = ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
-  }
-
-  // The Host shall either set the Input_Bandwidth and Output_Bandwidth
-  // to be equal, or shall set one of them to be zero and the other non-zero.
-  auto input_bandwidth = command_view.GetInputBandwidth();
-  auto output_bandwidth = command_view.GetOutputBandwidth();
-  if (input_bandwidth != output_bandwidth && input_bandwidth != 0 && output_bandwidth != 0) {
-    INFO(id_,
-         "EnhancedAcceptSynchronousConnection: rejected Input_Bandwidth ({})"
-         " and Output_Bandwidth ({}) as they are not equal and different from 0",
-         input_bandwidth, output_bandwidth);
-    status = ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
-  }
-
-  // The Host shall set the Input_Coding_Format and Output_Coding_Format
-  // to be equal.
-  auto input_coding_format = command_view.GetInputCodingFormat();
-  auto output_coding_format = command_view.GetOutputCodingFormat();
-  if (input_coding_format.coding_format_ != output_coding_format.coding_format_ ||
-      input_coding_format.company_id_ != output_coding_format.company_id_ ||
-      input_coding_format.vendor_specific_codec_id_ !=
-              output_coding_format.vendor_specific_codec_id_) {
-    INFO(id_,
-         "EnhancedAcceptSynchronousConnection: rejected Input_Coding_Format ({})"
-         " and Output_Coding_Format ({}) as they are not equal",
-         input_coding_format.ToString(), output_coding_format.ToString());
-    status = ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
-  }
-
-  // Root-Canal does not implement audio data transport paths other than the
-  // default HCI transport.
-  if (command_view.GetInputDataPath() != bluetooth::hci::ScoDataPath::HCI ||
-      command_view.GetOutputDataPath() != bluetooth::hci::ScoDataPath::HCI) {
-    INFO(id_,
-         "EnhancedSetupSynchronousConnection: Input_Data_Path ({})"
-         " and/or Output_Data_Path ({}) are not over HCI, so data will be "
-         "spoofed",
-         static_cast<unsigned>(command_view.GetInputDataPath()),
-         static_cast<unsigned>(command_view.GetOutputDataPath()));
-  }
-
-  // Either both the Transmit_Coding_Format and Input_Coding_Format shall be
-  // “transparent” or neither shall be. If both are “transparent”, the
-  // Transmit_Bandwidth and the Input_Bandwidth shall be the same and the
-  // Controller shall not modify the data sent to the remote device.
-  auto transmit_bandwidth = command_view.GetTransmitBandwidth();
-  auto receive_bandwidth = command_view.GetReceiveBandwidth();
-  if (transmit_coding_format.coding_format_ == bluetooth::hci::ScoCodingFormatValues::TRANSPARENT &&
-      input_coding_format.coding_format_ == bluetooth::hci::ScoCodingFormatValues::TRANSPARENT &&
-      transmit_bandwidth != input_bandwidth) {
-    INFO(id_,
-         "EnhancedSetupSynchronousConnection: rejected Transmit_Bandwidth ({})"
-         " and Input_Bandwidth ({}) as they are not equal",
-         transmit_bandwidth, input_bandwidth);
-    INFO(id_,
-         "EnhancedSetupSynchronousConnection: the Transmit_Bandwidth and "
-         "Input_Bandwidth shall be equal when both Transmit_Coding_Format "
-         "and Input_Coding_Format are 'transparent'");
-    status = ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
-  }
-  if ((transmit_coding_format.coding_format_ ==
-       bluetooth::hci::ScoCodingFormatValues::TRANSPARENT) !=
-      (input_coding_format.coding_format_ == bluetooth::hci::ScoCodingFormatValues::TRANSPARENT)) {
-    INFO(id_,
-         "EnhancedSetupSynchronousConnection: rejected Transmit_Coding_Format "
-         "({}) and Input_Coding_Format ({}) as they are incompatible",
-         transmit_coding_format.ToString(), input_coding_format.ToString());
-    status = ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
-  }
-
-  // Either both the Receive_Coding_Format and Output_Coding_Format shall
-  // be “transparent” or neither shall be. If both are “transparent”, the
-  // Receive_Bandwidth and the Output_Bandwidth shall be the same and the
-  // Controller shall not modify the data sent to the Host.
-  if (receive_coding_format.coding_format_ == bluetooth::hci::ScoCodingFormatValues::TRANSPARENT &&
-      output_coding_format.coding_format_ == bluetooth::hci::ScoCodingFormatValues::TRANSPARENT &&
-      receive_bandwidth != output_bandwidth) {
-    INFO(id_,
-         "EnhancedSetupSynchronousConnection: rejected Receive_Bandwidth ({})"
-         " and Output_Bandwidth ({}) as they are not equal",
-         receive_bandwidth, output_bandwidth);
-    INFO(id_,
-         "EnhancedSetupSynchronousConnection: the Receive_Bandwidth and "
-         "Output_Bandwidth shall be equal when both Receive_Coding_Format "
-         "and Output_Coding_Format are 'transparent'");
-    status = ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
-  }
-  if ((receive_coding_format.coding_format_ ==
-       bluetooth::hci::ScoCodingFormatValues::TRANSPARENT) !=
-      (output_coding_format.coding_format_ == bluetooth::hci::ScoCodingFormatValues::TRANSPARENT)) {
-    INFO(id_,
-         "EnhancedSetupSynchronousConnection: rejected Receive_Coding_Format "
-         "({}) and Output_Coding_Format ({}) as they are incompatible",
-         receive_coding_format.ToString(), output_coding_format.ToString());
-    status = ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
-  }
-
-  if (status == ErrorCode::SUCCESS) {
-    status = bredr_controller_.AcceptSynchronousConnection(
-            command_view.GetBdAddr(), transmit_bandwidth, receive_bandwidth,
-            command_view.GetMaxLatency(), bredr_controller_.GetVoiceSetting(),
-            static_cast<uint8_t>(command_view.GetRetransmissionEffort()),
-            command_view.GetPacketType());
-  }
-
+  auto status = bredr_controller_.EnhancedAcceptSynchronousConnection(
+          command_view.GetBdAddr(), command_view.GetTransmitBandwidth(),
+          command_view.GetReceiveBandwidth(), command_view.GetTransmitCodingFormat(),
+          command_view.GetReceiveCodingFormat(), command_view.GetTransmitCodecFrameSize(),
+          command_view.GetReceiveCodecFrameSize(), command_view.GetInputBandwidth(),
+          command_view.GetOutputBandwidth(), command_view.GetInputCodingFormat(),
+          command_view.GetOutputCodingFormat(), command_view.GetInputCodedDataSize(),
+          command_view.GetOutputCodedDataSize(), command_view.GetInputPcmDataFormat(),
+          command_view.GetOutputPcmDataFormat(), command_view.GetInputPcmSamplePayloadMsbPosition(),
+          command_view.GetOutputPcmSamplePayloadMsbPosition(), command_view.GetInputDataPath(),
+          command_view.GetOutputDataPath(), command_view.GetInputTransportUnitSize(),
+          command_view.GetOutputTransportUnitSize(), command_view.GetMaxLatency(),
+          command_view.GetPacketType(), command_view.GetRetransmissionEffort());
   send_event_(bluetooth::hci::EnhancedAcceptSynchronousConnectionStatusBuilder::Create(
           status, kNumCommandPackets));
 }
