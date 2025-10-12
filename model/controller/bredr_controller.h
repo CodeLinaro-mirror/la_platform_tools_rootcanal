@@ -46,18 +46,13 @@
 namespace rootcanal {
 
 using ::bluetooth::hci::Address;
-using ::bluetooth::hci::AddressType;
 using ::bluetooth::hci::AuthenticationEnable;
 using ::bluetooth::hci::ErrorCode;
-using ::bluetooth::hci::FilterAcceptListAddressType;
 using ::bluetooth::hci::OpCode;
 using ::bluetooth::hci::PageScanRepetitionMode;
-using rootcanal::apcf::ApcfScanner;
 
 class BrEdrController {
 public:
-  static constexpr size_t kIrkSize = 16;
-  static constexpr size_t kLtkSize = 16;
   static constexpr size_t kLocalNameSize = 248;
   static constexpr size_t kExtendedInquiryResponseSize = 240;
 
@@ -76,6 +71,11 @@ public:
 
   std::vector<bluetooth::hci::Lap> const& ReadCurrentIacLap() const;
   void WriteCurrentIacLap(std::vector<bluetooth::hci::Lap> iac_lap);
+
+  // Link Control commands (Vol 4, Part E § 7.1).
+
+  ErrorCode Inquiry(uint32_t lap, uint8_t inquiry_length, uint8_t num_responses);
+  ErrorCode InquiryCancel();
 
   ErrorCode AcceptConnectionRequest(const Address& addr, bool try_role_switch);
   void MakePeripheralConnection(const Address& addr, bool try_role_switch);
@@ -155,14 +155,10 @@ public:
 
   void Reset();
   void Paging();
+  void Inquiry();
 
-  void StartInquiry(std::chrono::milliseconds timeout);
-  void InquiryCancel();
   void InquiryTimeout();
   void SetInquiryMode(uint8_t mode);
-  void SetInquiryLAP(uint64_t lap);
-  void SetInquiryMaxResponses(uint8_t max);
-  void Inquiry();
 
   bool GetInquiryScanEnable() const { return inquiry_scan_enable_; }
   void SetInquiryScanEnable(bool enable);
