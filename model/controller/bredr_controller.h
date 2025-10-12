@@ -131,9 +131,21 @@ public:
           uint16_t max_latency, uint16_t packet_type,
           bluetooth::hci::RetransmissionEffort retransmission_effort);
 
+  // Link Policy commands (Vol 4, Part E § 7.2).
+
+  ErrorCode HoldMode(uint16_t connection_handle, uint16_t hold_mode_max_interval,
+                     uint16_t hold_mode_min_interval);
+  ErrorCode SniffMode(uint16_t connection_handle, uint16_t sniff_max_interval,
+                      uint16_t sniff_min_interval, uint16_t sniff_attempt, uint16_t sniff_timeout);
+  ErrorCode ExitSniffMode(uint16_t connection_handle);
+  ErrorCode QosSetup(uint16_t connection_handle, uint8_t service_type, uint32_t token_rate,
+                     uint32_t peak_bandwidth, uint32_t latency, uint32_t delay_variation);
+
   // Internal task scheduler.
+  //
   // This scheduler is driven by the tick function only,
   // hence the precision of the scheduler is within a tick period.
+
   class Task;
   using TaskId = uint32_t;
   using TaskCallback = std::function<void(void)>;
@@ -203,13 +215,6 @@ public:
   void SetPageTimeout(uint16_t page_timeout);
 
   ErrorCode CentralLinkKey(uint8_t key_flag);
-  ErrorCode HoldMode(uint16_t handle, uint16_t hold_mode_max_interval,
-                     uint16_t hold_mode_min_interval);
-  ErrorCode SniffMode(uint16_t handle, uint16_t sniff_max_interval, uint16_t sniff_min_interval,
-                      uint16_t sniff_attempt, uint16_t sniff_timeout);
-  ErrorCode ExitSniffMode(uint16_t handle);
-  ErrorCode QosSetup(uint16_t handle, uint8_t service_type, uint32_t token_rate,
-                     uint32_t peak_bandwidth, uint32_t latency, uint32_t delay_variation);
   ErrorCode RoleDiscovery(uint16_t handle, bluetooth::hci::Role* role);
   ErrorCode SwitchRole(Address bd_addr, bluetooth::hci::Role role);
   ErrorCode ReadLinkPolicySettings(uint16_t handle, uint16_t* settings);

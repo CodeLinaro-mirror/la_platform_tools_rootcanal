@@ -767,6 +767,68 @@ ErrorCode BrEdrController::EnhancedAcceptSynchronousConnection(
 }
 
 // =============================================================================
+//  Link Policy commands (Vol 4, Part E § 7.2)
+// =============================================================================
+
+// HCI Hold Mode command (Vol 4, Part E § 7.2.1).
+ErrorCode BrEdrController::HoldMode(uint16_t connection_handle, uint16_t hold_mode_max_interval,
+                                    uint16_t hold_mode_min_interval) {
+  if (!connections_.HasAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  if (hold_mode_max_interval < hold_mode_min_interval) {
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  // TODO: implement real logic
+  return ErrorCode::COMMAND_DISALLOWED;
+}
+
+// HCI Sniff Mode command (Vol 4, Part E § 7.2.2).
+ErrorCode BrEdrController::SniffMode(uint16_t connection_handle, uint16_t sniff_max_interval,
+                                     uint16_t sniff_min_interval, uint16_t sniff_attempt,
+                                     uint16_t sniff_timeout) {
+  if (!connections_.HasAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  if (sniff_max_interval < sniff_min_interval || sniff_attempt < 0x0001 || sniff_attempt > 0x7FFF ||
+      sniff_timeout > 0x7FFF) {
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  // TODO: implement real logic
+  return ErrorCode::COMMAND_DISALLOWED;
+}
+
+// HCI Exit Sniff Mode command (Vol 4, Part E § 7.2.3).
+ErrorCode BrEdrController::ExitSniffMode(uint16_t connection_handle) {
+  if (!connections_.HasAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  // TODO: implement real logic
+  return ErrorCode::COMMAND_DISALLOWED;
+}
+
+// HCI QoS Setup command (Vol 4, Part E § 7.2.6).
+ErrorCode BrEdrController::QosSetup(uint16_t connection_handle, uint8_t service_type,
+                                    uint32_t /* token_rate */, uint32_t /* peak_bandwidth */,
+                                    uint32_t /* latency */, uint32_t /* delay_variation */) {
+  if (!connections_.HasAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  if (service_type > 0x02) {
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  // TODO: implement real logic
+  return ErrorCode::COMMAND_DISALLOWED;
+}
+
+// =============================================================================
 //  BR/EDR Commands
 // =============================================================================
 
@@ -1756,60 +1818,6 @@ void BrEdrController::SendDisconnectionCompleteEvent(uint16_t handle, ErrorCode 
 
 // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
 ErrorCode BrEdrController::CentralLinkKey(uint8_t /* key_flag */) {
-  // TODO: implement real logic
-  return ErrorCode::COMMAND_DISALLOWED;
-}
-
-ErrorCode BrEdrController::HoldMode(uint16_t handle, uint16_t hold_mode_max_interval,
-                                    uint16_t hold_mode_min_interval) {
-  if (!connections_.HasAclHandle(handle)) {
-    return ErrorCode::UNKNOWN_CONNECTION;
-  }
-
-  if (hold_mode_max_interval < hold_mode_min_interval) {
-    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
-  }
-
-  // TODO: implement real logic
-  return ErrorCode::COMMAND_DISALLOWED;
-}
-
-ErrorCode BrEdrController::SniffMode(uint16_t handle, uint16_t sniff_max_interval,
-                                     uint16_t sniff_min_interval, uint16_t sniff_attempt,
-                                     uint16_t sniff_timeout) {
-  if (!connections_.HasAclHandle(handle)) {
-    return ErrorCode::UNKNOWN_CONNECTION;
-  }
-
-  if (sniff_max_interval < sniff_min_interval || sniff_attempt < 0x0001 || sniff_attempt > 0x7FFF ||
-      sniff_timeout > 0x7FFF) {
-    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
-  }
-
-  // TODO: implement real logic
-  return ErrorCode::COMMAND_DISALLOWED;
-}
-
-ErrorCode BrEdrController::ExitSniffMode(uint16_t handle) {
-  if (!connections_.HasAclHandle(handle)) {
-    return ErrorCode::UNKNOWN_CONNECTION;
-  }
-
-  // TODO: implement real logic
-  return ErrorCode::COMMAND_DISALLOWED;
-}
-
-ErrorCode BrEdrController::QosSetup(uint16_t handle, uint8_t service_type,
-                                    uint32_t /* token_rate */, uint32_t /* peak_bandwidth */,
-                                    uint32_t /* latency */, uint32_t /* delay_variation */) {
-  if (!connections_.HasAclHandle(handle)) {
-    return ErrorCode::UNKNOWN_CONNECTION;
-  }
-
-  if (service_type > 0x02) {
-    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
-  }
-
   // TODO: implement real logic
   return ErrorCode::COMMAND_DISALLOWED;
 }
