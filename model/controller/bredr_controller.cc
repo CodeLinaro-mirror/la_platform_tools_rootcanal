@@ -99,6 +99,183 @@ ErrorCode BrEdrController::InquiryCancel() {
   return ErrorCode::SUCCESS;
 }
 
+// HCI Create Connection (Vol 4, Part E § 7.1.5).
+ErrorCode BrEdrController::CreateConnection(Address bd_addr, uint16_t /* packet_type */,
+                                            uint8_t /* page_scan_repetition_mode */,
+                                            uint16_t /* clock_offset */,
+                                            uint8_t allow_role_switch) {
+  // RootCanal only accepts one pending outgoing connection at any time.
+  if (page_.has_value()) {
+    INFO(id_, "Create Connection command is already pending");
+    return ErrorCode::COMMAND_DISALLOWED;
+  }
+
+  // Reject the command if a connection already exists
+  // for the selected peer address.
+  if (connections_.GetAclConnectionHandle(bd_addr).has_value()) {
+    INFO(id_, "Connection with {} already exists", bd_addr);
+    return ErrorCode::CONNECTION_ALREADY_EXISTS;
+  }
+
+  // Reject the command if a pending connection already exists
+  // for the selected peer address.
+  if (page_scan_.has_value() && page_scan_->bd_addr == bd_addr) {
+    INFO(id_, "Connection with {} is already being established", bd_addr);
+    return ErrorCode::CONNECTION_ALREADY_EXISTS;
+  }
+
+  auto now = std::chrono::steady_clock::now();
+  page_ = Page{
+          .bd_addr = bd_addr,
+          .allow_role_switch = allow_role_switch,
+          .next_page_event = now + kPageInterval,
+          .page_timeout = now + slots(page_timeout_),
+  };
+
+  return ErrorCode::SUCCESS;
+}
+
+// HCI Disconnect (Vol 4, Part E § 7.1.6).
+// \p host_reason is taken from the Disconnect command, and sent over
+// to the remote as disconnect error. \p controller_reason is the code
+// used in the DisconnectionComplete event.
+ErrorCode BrEdrController::Disconnect(uint16_t handle, ErrorCode host_reason,
+                                      ErrorCode controller_reason) {
+  if (connections_.HasScoHandle(handle)) {
+    const Address remote = connections_.GetScoAddress(handle);
+    INFO(id_, "Disconnecting eSCO connection with {}", remote);
+
+    SendLinkLayerPacket(model::packets::ScoDisconnectBuilder::Create(
+            GetAddress(), remote, static_cast<uint8_t>(host_reason)));
+
+    connections_.Disconnect(handle, [this](TaskId task_id) { CancelScheduledTask(task_id); });
+    SendDisconnectionCompleteEvent(handle, controller_reason);
+    return ErrorCode::SUCCESS;
+  }
+
+  if (connections_.HasAclHandle(handle)) {
+    auto connection = connections_.GetAclConnection(handle);
+    auto address = connection.address;
+    INFO(id_, "Disconnecting ACL connection with {}", connection.address);
+
+    auto sco_handle = connections_.GetScoConnectionHandle(connection.address);
+    if (sco_handle.has_value()) {
+      SendLinkLayerPacket(model::packets::ScoDisconnectBuilder::Create(
+              connection.own_address, connection.address, static_cast<uint8_t>(host_reason)));
+
+      connections_.Disconnect(*sco_handle,
+                              [this](TaskId task_id) { CancelScheduledTask(task_id); });
+      SendDisconnectionCompleteEvent(*sco_handle, controller_reason);
+    }
+
+    SendLinkLayerPacket(model::packets::DisconnectBuilder::Create(
+            connection.own_address, connection.address, static_cast<uint8_t>(host_reason)));
+
+    connections_.Disconnect(handle, [this](TaskId task_id) { CancelScheduledTask(task_id); });
+    SendDisconnectionCompleteEvent(handle, controller_reason);
+
+    ASSERT(link_manager_remove_link(lm_.get(), reinterpret_cast<uint8_t (*)[6]>(address.data())));
+    return ErrorCode::SUCCESS;
+  }
+
+  return ErrorCode::UNKNOWN_CONNECTION;
+}
+
+// HCI Create Connection Cancel (Vol 4, Part E § 7.1.7).
+ErrorCode BrEdrController::CreateConnectionCancel(Address bd_addr) {
+  // If the HCI_Create_Connection_Cancel command is sent to the Controller
+  // without a preceding HCI_Create_Connection command to the same device,
+  // the BR/EDR Controller shall return an HCI_Command_Complete event with
+  // the error code Unknown Connection Identifier (0x02)
+  if (!page_.has_value() || page_->bd_addr != bd_addr) {
+    INFO(id_, "no pending connection to {}", bd_addr.ToString());
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  // The HCI_Connection_Complete event for the corresponding HCI_Create_-
+  // Connection command shall always be sent. The HCI_Connection_Complete
+  // event shall be sent after the HCI_Command_Complete event for the
+  // HCI_Create_Connection_Cancel command. If the cancellation was successful,
+  // the HCI_Connection_Complete event will be generated with the error code
+  // Unknown Connection Identifier (0x02).
+  if (IsEventUnmasked(EventCode::CONNECTION_COMPLETE)) {
+    ScheduleTask(kNoDelayMs, [this, bd_addr]() {
+      send_event_(bluetooth::hci::ConnectionCompleteBuilder::Create(
+              ErrorCode::UNKNOWN_CONNECTION, 0, bd_addr, bluetooth::hci::LinkType::ACL,
+              bluetooth::hci::Enable::DISABLED));
+    });
+  }
+
+  page_ = {};
+  return ErrorCode::SUCCESS;
+}
+
+// HCI Accept Connection Request (Vol 4, Part E § 7.1.8).
+ErrorCode BrEdrController::AcceptConnectionRequest(Address bd_addr, bool try_role_switch) {
+  if (page_scan_.has_value() && page_scan_->bd_addr == bd_addr) {
+    INFO(id_, "Accepting connection request from {}", bd_addr);
+    ScheduleTask(kNoDelayMs, [this, bd_addr, try_role_switch]() {
+      INFO(id_, "Accepted connection from {}", bd_addr);
+      MakePeripheralConnection(bd_addr, try_role_switch);
+    });
+
+    return ErrorCode::SUCCESS;
+  }
+
+  // The HCI command Accept Connection may be used to accept incoming SCO
+  // connection requests.
+  if (connections_.HasPendingScoConnection(bd_addr)) {
+    ErrorCode status = ErrorCode::SUCCESS;
+    uint16_t sco_handle = *connections_.GetScoConnectionHandle(bd_addr);
+    ScoLinkParameters link_parameters = {};
+    ScoConnectionParameters connection_parameters =
+            connections_.GetScoConnectionParameters(bd_addr);
+
+    if (!connections_.AcceptPendingScoConnection(bd_addr, connection_parameters, [this, bd_addr] {
+          return BrEdrController::StartScoStream(bd_addr);
+        })) {
+      connections_.CancelPendingScoConnection(bd_addr);
+      status = ErrorCode::SCO_INTERVAL_REJECTED;  // TODO: proper status code
+      sco_handle = 0;
+    } else {
+      link_parameters = connections_.GetScoLinkParameters(bd_addr);
+    }
+
+    // Send eSCO connection response to peer.
+    SendLinkLayerPacket(model::packets::ScoConnectionResponseBuilder::Create(
+            GetAddress(), bd_addr, (uint8_t)status, link_parameters.transmission_interval,
+            link_parameters.retransmission_window, link_parameters.rx_packet_length,
+            link_parameters.tx_packet_length, link_parameters.air_mode, link_parameters.extended));
+
+    // Schedule HCI Connection Complete event.
+    if (IsEventUnmasked(EventCode::CONNECTION_COMPLETE)) {
+      ScheduleTask(kNoDelayMs, [this, status, sco_handle, bd_addr]() {
+        send_event_(bluetooth::hci::ConnectionCompleteBuilder::Create(
+                ErrorCode(status), sco_handle, bd_addr, bluetooth::hci::LinkType::SCO,
+                bluetooth::hci::Enable::DISABLED));
+      });
+    }
+
+    return ErrorCode::SUCCESS;
+  }
+
+  INFO(id_, "No pending connection for {}", bd_addr);
+  return ErrorCode::UNKNOWN_CONNECTION;
+}
+
+// HCI Accept Connection Request (Vol 4, Part E § 7.1.9).
+ErrorCode BrEdrController::RejectConnectionRequest(Address bd_addr, uint8_t reason) {
+  if (!page_scan_.has_value() || page_scan_->bd_addr != bd_addr) {
+    INFO(id_, "No pending connection for {}", bd_addr);
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  ScheduleTask(kNoDelayMs,
+               [this, bd_addr, reason]() { RejectPeripheralConnection(bd_addr, reason); });
+
+  return ErrorCode::SUCCESS;
+}
+
 // =============================================================================
 //  BR/EDR Commands
 // =============================================================================
@@ -1062,58 +1239,6 @@ void BrEdrController::WriteCurrentIacLap(std::vector<bluetooth::hci::Lap> iac_la
   }
 }
 
-ErrorCode BrEdrController::AcceptConnectionRequest(const Address& bd_addr, bool try_role_switch) {
-  if (page_scan_.has_value() && page_scan_->bd_addr == bd_addr) {
-    INFO(id_, "Accepting connection request from {}", bd_addr);
-    ScheduleTask(kNoDelayMs, [this, bd_addr, try_role_switch]() {
-      INFO(id_, "Accepted connection from {}", bd_addr);
-      MakePeripheralConnection(bd_addr, try_role_switch);
-    });
-
-    return ErrorCode::SUCCESS;
-  }
-
-  // The HCI command Accept Connection may be used to accept incoming SCO
-  // connection requests.
-  if (connections_.HasPendingScoConnection(bd_addr)) {
-    ErrorCode status = ErrorCode::SUCCESS;
-    uint16_t sco_handle = *connections_.GetScoConnectionHandle(bd_addr);
-    ScoLinkParameters link_parameters = {};
-    ScoConnectionParameters connection_parameters =
-            connections_.GetScoConnectionParameters(bd_addr);
-
-    if (!connections_.AcceptPendingScoConnection(bd_addr, connection_parameters, [this, bd_addr] {
-          return BrEdrController::StartScoStream(bd_addr);
-        })) {
-      connections_.CancelPendingScoConnection(bd_addr);
-      status = ErrorCode::SCO_INTERVAL_REJECTED;  // TODO: proper status code
-      sco_handle = 0;
-    } else {
-      link_parameters = connections_.GetScoLinkParameters(bd_addr);
-    }
-
-    // Send eSCO connection response to peer.
-    SendLinkLayerPacket(model::packets::ScoConnectionResponseBuilder::Create(
-            GetAddress(), bd_addr, (uint8_t)status, link_parameters.transmission_interval,
-            link_parameters.retransmission_window, link_parameters.rx_packet_length,
-            link_parameters.tx_packet_length, link_parameters.air_mode, link_parameters.extended));
-
-    // Schedule HCI Connection Complete event.
-    if (IsEventUnmasked(EventCode::CONNECTION_COMPLETE)) {
-      ScheduleTask(kNoDelayMs, [this, status, sco_handle, bd_addr]() {
-        send_event_(bluetooth::hci::ConnectionCompleteBuilder::Create(
-                ErrorCode(status), sco_handle, bd_addr, bluetooth::hci::LinkType::SCO,
-                bluetooth::hci::Enable::DISABLED));
-      });
-    }
-
-    return ErrorCode::SUCCESS;
-  }
-
-  INFO(id_, "No pending connection for {}", bd_addr);
-  return ErrorCode::UNKNOWN_CONNECTION;
-}
-
 void BrEdrController::MakePeripheralConnection(const Address& bd_addr, bool try_role_switch) {
   uint16_t connection_handle = connections_.CreateConnection(bd_addr, GetAddress());
 
@@ -1162,17 +1287,6 @@ void BrEdrController::MakePeripheralConnection(const Address& bd_addr, bool try_
           model::packets::PageResponseBuilder::Create(GetAddress(), bd_addr, try_role_switch));
 }
 
-ErrorCode BrEdrController::RejectConnectionRequest(const Address& addr, uint8_t reason) {
-  if (!page_scan_.has_value() || page_scan_->bd_addr != addr) {
-    INFO(id_, "No pending connection for {}", addr);
-    return ErrorCode::UNKNOWN_CONNECTION;
-  }
-
-  ScheduleTask(kNoDelayMs, [this, addr, reason]() { RejectPeripheralConnection(addr, reason); });
-
-  return ErrorCode::SUCCESS;
-}
-
 void BrEdrController::RejectPeripheralConnection(const Address& addr, uint8_t reason) {
   INFO(id_, "Sending page reject to {} (reason 0x{:02x})", addr, reason);
   SendLinkLayerPacket(model::packets::PageRejectBuilder::Create(GetAddress(), addr, reason));
@@ -1184,69 +1298,6 @@ void BrEdrController::RejectPeripheralConnection(const Address& addr, uint8_t re
   }
 }
 
-ErrorCode BrEdrController::CreateConnection(const Address& bd_addr, uint16_t /* packet_type */,
-                                            uint8_t /* page_scan_mode */,
-                                            uint16_t /* clock_offset */,
-                                            uint8_t allow_role_switch) {
-  // RootCanal only accepts one pending outgoing connection at any time.
-  if (page_.has_value()) {
-    INFO(id_, "Create Connection command is already pending");
-    return ErrorCode::COMMAND_DISALLOWED;
-  }
-
-  // Reject the command if a connection already exists
-  // for the selected peer address.
-  if (connections_.GetAclConnectionHandle(bd_addr).has_value()) {
-    INFO(id_, "Connection with {} already exists", bd_addr);
-    return ErrorCode::CONNECTION_ALREADY_EXISTS;
-  }
-
-  // Reject the command if a pending connection already exists
-  // for the selected peer address.
-  if (page_scan_.has_value() && page_scan_->bd_addr == bd_addr) {
-    INFO(id_, "Connection with {} is already being established", bd_addr);
-    return ErrorCode::CONNECTION_ALREADY_EXISTS;
-  }
-
-  auto now = std::chrono::steady_clock::now();
-  page_ = Page{
-          .bd_addr = bd_addr,
-          .allow_role_switch = allow_role_switch,
-          .next_page_event = now + kPageInterval,
-          .page_timeout = now + slots(page_timeout_),
-  };
-
-  return ErrorCode::SUCCESS;
-}
-
-ErrorCode BrEdrController::CreateConnectionCancel(const Address& bd_addr) {
-  // If the HCI_Create_Connection_Cancel command is sent to the Controller
-  // without a preceding HCI_Create_Connection command to the same device,
-  // the BR/EDR Controller shall return an HCI_Command_Complete event with
-  // the error code Unknown Connection Identifier (0x02)
-  if (!page_.has_value() || page_->bd_addr != bd_addr) {
-    INFO(id_, "no pending connection to {}", bd_addr.ToString());
-    return ErrorCode::UNKNOWN_CONNECTION;
-  }
-
-  // The HCI_Connection_Complete event for the corresponding HCI_Create_-
-  // Connection command shall always be sent. The HCI_Connection_Complete
-  // event shall be sent after the HCI_Command_Complete event for the
-  // HCI_Create_Connection_Cancel command. If the cancellation was successful,
-  // the HCI_Connection_Complete event will be generated with the error code
-  // Unknown Connection Identifier (0x02).
-  if (IsEventUnmasked(EventCode::CONNECTION_COMPLETE)) {
-    ScheduleTask(kNoDelayMs, [this, bd_addr]() {
-      send_event_(bluetooth::hci::ConnectionCompleteBuilder::Create(
-              ErrorCode::UNKNOWN_CONNECTION, 0, bd_addr, bluetooth::hci::LinkType::ACL,
-              bluetooth::hci::Enable::DISABLED));
-    });
-  }
-
-  page_ = {};
-  return ErrorCode::SUCCESS;
-}
-
 void BrEdrController::SendDisconnectionCompleteEvent(uint16_t handle, ErrorCode reason) {
   if (IsEventUnmasked(EventCode::DISCONNECTION_COMPLETE)) {
     ScheduleTask(kNoDelayMs, [this, handle, reason]() {
@@ -1254,48 +1305,6 @@ void BrEdrController::SendDisconnectionCompleteEvent(uint16_t handle, ErrorCode 
                                                                        reason));
     });
   }
-}
-
-ErrorCode BrEdrController::Disconnect(uint16_t handle, ErrorCode host_reason,
-                                      ErrorCode controller_reason) {
-  if (connections_.HasScoHandle(handle)) {
-    const Address remote = connections_.GetScoAddress(handle);
-    INFO(id_, "Disconnecting eSCO connection with {}", remote);
-
-    SendLinkLayerPacket(model::packets::ScoDisconnectBuilder::Create(
-            GetAddress(), remote, static_cast<uint8_t>(host_reason)));
-
-    connections_.Disconnect(handle, [this](TaskId task_id) { CancelScheduledTask(task_id); });
-    SendDisconnectionCompleteEvent(handle, controller_reason);
-    return ErrorCode::SUCCESS;
-  }
-
-  if (connections_.HasAclHandle(handle)) {
-    auto connection = connections_.GetAclConnection(handle);
-    auto address = connection.address;
-    INFO(id_, "Disconnecting ACL connection with {}", connection.address);
-
-    auto sco_handle = connections_.GetScoConnectionHandle(connection.address);
-    if (sco_handle.has_value()) {
-      SendLinkLayerPacket(model::packets::ScoDisconnectBuilder::Create(
-              connection.own_address, connection.address, static_cast<uint8_t>(host_reason)));
-
-      connections_.Disconnect(*sco_handle,
-                              [this](TaskId task_id) { CancelScheduledTask(task_id); });
-      SendDisconnectionCompleteEvent(*sco_handle, controller_reason);
-    }
-
-    SendLinkLayerPacket(model::packets::DisconnectBuilder::Create(
-            connection.own_address, connection.address, static_cast<uint8_t>(host_reason)));
-
-    connections_.Disconnect(handle, [this](TaskId task_id) { CancelScheduledTask(task_id); });
-    SendDisconnectionCompleteEvent(handle, controller_reason);
-
-    ASSERT(link_manager_remove_link(lm_.get(), reinterpret_cast<uint8_t (*)[6]>(address.data())));
-    return ErrorCode::SUCCESS;
-  }
-
-  return ErrorCode::UNKNOWN_CONNECTION;
 }
 
 ErrorCode BrEdrController::ReadRemoteVersionInformation(uint16_t connection_handle) {

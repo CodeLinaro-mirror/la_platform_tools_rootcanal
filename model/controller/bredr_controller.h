@@ -76,26 +76,15 @@ public:
 
   ErrorCode Inquiry(uint32_t lap, uint8_t inquiry_length, uint8_t num_responses);
   ErrorCode InquiryCancel();
-
-  ErrorCode AcceptConnectionRequest(const Address& addr, bool try_role_switch);
-  void MakePeripheralConnection(const Address& addr, bool try_role_switch);
-  ErrorCode RejectConnectionRequest(const Address& addr, uint8_t reason);
-  void RejectPeripheralConnection(const Address& addr, uint8_t reason);
-
-  // HCI command Create Connection (Vol 4, Part E § 7.1.5).
-  ErrorCode CreateConnection(const Address& bd_addr, uint16_t packet_type, uint8_t page_scan_mode,
-                             uint16_t clock_offset, uint8_t allow_role_switch);
-
-  // HCI command Disconnect (Vol 4, Part E § 7.1.6).
-  // \p host_reason is taken from the Disconnect command, and sent over
-  // to the remote as disconnect error. \p controller_reason is the code
-  // used in the DisconnectionComplete event.
+  ErrorCode CreateConnection(Address bd_addr, uint16_t packet_type,
+                             uint8_t page_scan_repetition_mode, uint16_t clock_offset,
+                             uint8_t allow_role_switch);
   ErrorCode Disconnect(
-          uint16_t handle, ErrorCode host_reason,
+          uint16_t connection_handle, ErrorCode host_reason,
           ErrorCode controller_reason = ErrorCode::CONNECTION_TERMINATED_BY_LOCAL_HOST);
-
-  // HCI command Create Connection Cancel (Vol 4, Part E § 7.1.7).
-  ErrorCode CreateConnectionCancel(const Address& bd_addr);
+  ErrorCode CreateConnectionCancel(Address bd_addr);
+  ErrorCode AcceptConnectionRequest(Address bd_addr, bool try_role_switch);
+  ErrorCode RejectConnectionRequest(Address bd_addr, uint8_t reason);
 
   // HCI command Read Remote Version Information (Vol 4, Part E § 7.1.23).
   ErrorCode ReadRemoteVersionInformation(uint16_t connection_handle);
@@ -126,6 +115,8 @@ public:
 
 private:
   void SendDisconnectionCompleteEvent(uint16_t handle, ErrorCode reason);
+  void MakePeripheralConnection(const Address& addr, bool try_role_switch);
+  void RejectPeripheralConnection(const Address& addr, uint8_t reason);
 
 public:
   const Address& GetAddress() const;
