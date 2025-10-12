@@ -565,8 +565,8 @@ void DualModeController::AddScoConnection(CommandView command) {
   DEBUG(id_, "   connection_handle=0x{:x}", command_view.GetConnectionHandle());
   DEBUG(id_, "   packet_type=0x{:x}", command_view.GetPacketType());
 
-  auto status = bredr_controller_.AddScoConnection(
-          command_view.GetConnectionHandle(), command_view.GetPacketType(), ScoDatapath::NORMAL);
+  auto status = bredr_controller_.AddScoConnection(command_view.GetConnectionHandle(),
+                                                   command_view.GetPacketType());
 
   send_event_(bluetooth::hci::AddScoConnectionStatusBuilder::Create(status, kNumCommandPackets));
 }

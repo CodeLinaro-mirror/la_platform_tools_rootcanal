@@ -362,6 +362,159 @@ ErrorCode BrEdrController::ReadClockOffset(uint16_t connection_handle) {
   return ErrorCode::SUCCESS;
 }
 
+// HCI Add SCO Connection.
+// Deprecated in the Core specification v1.2, removed in v4.2.
+// Support is provided to satisfy PTS tester requirements.
+ErrorCode BrEdrController::AddScoConnection(uint16_t connection_handle, uint16_t packet_type) {
+  if (!connections_.HasAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  auto const& connection = connections_.GetAclConnection(connection_handle);
+  if (connections_.HasPendingScoConnection(connection.address)) {
+    return ErrorCode::COMMAND_DISALLOWED;
+  }
+
+  INFO(id_, "Creating SCO connection with {}", connection.address);
+
+  // Save connection parameters.
+  ScoConnectionParameters connection_parameters = {
+          8000,
+          8000,
+          0xffff,
+          0x60 /* 16bit CVSD */,
+          (uint8_t)bluetooth::hci::RetransmissionEffort::NO_RETRANSMISSION,
+          (uint16_t)((uint16_t)((packet_type >> 5) & 0x7U) |
+                     (uint16_t)bluetooth::hci::SynchronousPacketTypeBits::NO_2_EV3_ALLOWED |
+                     (uint16_t)bluetooth::hci::SynchronousPacketTypeBits::NO_3_EV3_ALLOWED |
+                     (uint16_t)bluetooth::hci::SynchronousPacketTypeBits::NO_2_EV5_ALLOWED |
+                     (uint16_t)bluetooth::hci::SynchronousPacketTypeBits::NO_3_EV5_ALLOWED)};
+  connections_.CreateScoConnection(connection.address, connection_parameters, SCO_STATE_PENDING,
+                                   ScoDatapath::NORMAL, true);
+
+  // Send SCO connection request to peer.
+  SendLinkLayerPacket(model::packets::ScoConnectionRequestBuilder::Create(
+          GetAddress(), connection.address, connection_parameters.transmit_bandwidth,
+          connection_parameters.receive_bandwidth, connection_parameters.max_latency,
+          connection_parameters.voice_setting, connection_parameters.retransmission_effort,
+          connection_parameters.packet_type, class_of_device_));
+  return ErrorCode::SUCCESS;
+}
+
+// HCI Setup Synchronous Connection (Vol 4, Part E § 7.1.26).
+ErrorCode BrEdrController::SetupSynchronousConnection(uint16_t connection_handle,
+                                                      uint32_t transmit_bandwidth,
+                                                      uint32_t receive_bandwidth,
+                                                      uint16_t max_latency, uint16_t voice_setting,
+                                                      uint8_t retransmission_effort,
+                                                      uint16_t packet_types, ScoDatapath datapath) {
+  if (!connections_.HasAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  auto const& connection = connections_.GetAclConnection(connection_handle);
+  if (connections_.HasPendingScoConnection(connection.address)) {
+    // This command may be used to modify an exising eSCO link.
+    // Skip for now. TODO: should return an event
+    // HCI_Synchronous_Connection_Changed on both sides.
+    return ErrorCode::COMMAND_DISALLOWED;
+  }
+
+  INFO(id_, "Creating eSCO connection with {}", connection.address);
+
+  // Save connection parameters.
+  ScoConnectionParameters connection_parameters = {transmit_bandwidth,    receive_bandwidth,
+                                                   max_latency,           voice_setting,
+                                                   retransmission_effort, packet_types};
+  connections_.CreateScoConnection(connection.address, connection_parameters, SCO_STATE_PENDING,
+                                   datapath);
+
+  // Send eSCO connection request to peer.
+  SendLinkLayerPacket(model::packets::ScoConnectionRequestBuilder::Create(
+          GetAddress(), connection.address, transmit_bandwidth, receive_bandwidth, max_latency,
+          voice_setting, retransmission_effort, packet_types, class_of_device_));
+  return ErrorCode::SUCCESS;
+}
+
+// HCI Accept Synchronous Connection (Vol 4, Part E § 7.1.26).
+ErrorCode BrEdrController::AcceptSynchronousConnection(Address bd_addr, uint32_t transmit_bandwidth,
+                                                       uint32_t receive_bandwidth,
+                                                       uint16_t max_latency, uint16_t voice_setting,
+                                                       uint8_t retransmission_effort,
+                                                       uint16_t packet_types) {
+  INFO(id_, "Accepting eSCO connection request from {}", bd_addr);
+
+  if (!connections_.HasPendingScoConnection(bd_addr)) {
+    INFO(id_, "No pending eSCO connection for {}", bd_addr);
+    return ErrorCode::COMMAND_DISALLOWED;
+  }
+
+  ErrorCode status = ErrorCode::SUCCESS;
+  uint16_t sco_handle = *connections_.GetScoConnectionHandle(bd_addr);
+  ScoLinkParameters link_parameters = {};
+  ScoConnectionParameters connection_parameters = {transmit_bandwidth,    receive_bandwidth,
+                                                   max_latency,           voice_setting,
+                                                   retransmission_effort, packet_types};
+
+  if (!connections_.AcceptPendingScoConnection(bd_addr, connection_parameters, [this, bd_addr] {
+        return BrEdrController::StartScoStream(bd_addr);
+      })) {
+    connections_.CancelPendingScoConnection(bd_addr);
+    status = ErrorCode::STATUS_UNKNOWN;  // TODO: proper status code
+    sco_handle = 0;
+  } else {
+    link_parameters = connections_.GetScoLinkParameters(bd_addr);
+  }
+
+  // Send eSCO connection response to peer.
+  SendLinkLayerPacket(model::packets::ScoConnectionResponseBuilder::Create(
+          GetAddress(), bd_addr, (uint8_t)status, link_parameters.transmission_interval,
+          link_parameters.retransmission_window, link_parameters.rx_packet_length,
+          link_parameters.tx_packet_length, link_parameters.air_mode, link_parameters.extended));
+
+  // Schedule HCI Synchronous Connection Complete event.
+  ScheduleTask(kNoDelayMs, [this, status, sco_handle, bd_addr, link_parameters]() {
+    send_event_(bluetooth::hci::SynchronousConnectionCompleteBuilder::Create(
+            ErrorCode(status), sco_handle, bd_addr,
+            link_parameters.extended ? bluetooth::hci::ScoLinkType::ESCO
+                                     : bluetooth::hci::ScoLinkType::SCO,
+            link_parameters.extended ? link_parameters.transmission_interval : 0,
+            link_parameters.extended ? link_parameters.retransmission_window : 0,
+            link_parameters.extended ? link_parameters.rx_packet_length : 0,
+            link_parameters.extended ? link_parameters.tx_packet_length : 0,
+            bluetooth::hci::ScoAirMode(link_parameters.air_mode)));
+  });
+
+  return ErrorCode::SUCCESS;
+}
+
+// HCI Reject Synchronous Connection (Vol 4, Part E § 7.1.27).
+ErrorCode BrEdrController::RejectSynchronousConnection(Address bd_addr, uint16_t reason) {
+  INFO(id_, "Rejecting eSCO connection request from {}", bd_addr);
+
+  if (reason == (uint8_t)ErrorCode::SUCCESS) {
+    reason = (uint8_t)ErrorCode::REMOTE_USER_TERMINATED_CONNECTION;
+  }
+  if (!connections_.HasPendingScoConnection(bd_addr)) {
+    return ErrorCode::COMMAND_DISALLOWED;
+  }
+
+  connections_.CancelPendingScoConnection(bd_addr);
+
+  // Send eSCO connection response to peer.
+  SendLinkLayerPacket(model::packets::ScoConnectionResponseBuilder::Create(
+          GetAddress(), bd_addr, reason, 0, 0, 0, 0, 0, 0));
+
+  // Schedule HCI Synchronous Connection Complete event.
+  ScheduleTask(kNoDelayMs, [this, reason, bd_addr]() {
+    send_event_(bluetooth::hci::SynchronousConnectionCompleteBuilder::Create(
+            ErrorCode(reason), 0, bd_addr, bluetooth::hci::ScoLinkType::ESCO, 0, 0, 0, 0,
+            bluetooth::hci::ScoAirMode::TRANSPARENT));
+  });
+
+  return ErrorCode::SUCCESS;
+}
+
 // =============================================================================
 //  BR/EDR Commands
 // =============================================================================
@@ -1750,154 +1903,6 @@ void BrEdrController::SetInquiryScanEnable(bool enable) { inquiry_scan_enable_ =
 void BrEdrController::SetPageScanEnable(bool enable) { page_scan_enable_ = enable; }
 
 void BrEdrController::SetPageTimeout(uint16_t page_timeout) { page_timeout_ = page_timeout; }
-
-ErrorCode BrEdrController::AddScoConnection(uint16_t connection_handle, uint16_t packet_type,
-                                            ScoDatapath datapath) {
-  if (!connections_.HasAclHandle(connection_handle)) {
-    return ErrorCode::UNKNOWN_CONNECTION;
-  }
-
-  auto const& connection = connections_.GetAclConnection(connection_handle);
-  if (connections_.HasPendingScoConnection(connection.address)) {
-    return ErrorCode::COMMAND_DISALLOWED;
-  }
-
-  INFO(id_, "Creating SCO connection with {}", connection.address);
-
-  // Save connection parameters.
-  ScoConnectionParameters connection_parameters = {
-          8000,
-          8000,
-          0xffff,
-          0x60 /* 16bit CVSD */,
-          (uint8_t)bluetooth::hci::RetransmissionEffort::NO_RETRANSMISSION,
-          (uint16_t)((uint16_t)((packet_type >> 5) & 0x7U) |
-                     (uint16_t)bluetooth::hci::SynchronousPacketTypeBits::NO_2_EV3_ALLOWED |
-                     (uint16_t)bluetooth::hci::SynchronousPacketTypeBits::NO_3_EV3_ALLOWED |
-                     (uint16_t)bluetooth::hci::SynchronousPacketTypeBits::NO_2_EV5_ALLOWED |
-                     (uint16_t)bluetooth::hci::SynchronousPacketTypeBits::NO_3_EV5_ALLOWED)};
-  connections_.CreateScoConnection(connection.address, connection_parameters, SCO_STATE_PENDING,
-                                   datapath, true);
-
-  // Send SCO connection request to peer.
-  SendLinkLayerPacket(model::packets::ScoConnectionRequestBuilder::Create(
-          GetAddress(), connection.address, connection_parameters.transmit_bandwidth,
-          connection_parameters.receive_bandwidth, connection_parameters.max_latency,
-          connection_parameters.voice_setting, connection_parameters.retransmission_effort,
-          connection_parameters.packet_type, class_of_device_));
-  return ErrorCode::SUCCESS;
-}
-
-ErrorCode BrEdrController::SetupSynchronousConnection(uint16_t connection_handle,
-                                                      uint32_t transmit_bandwidth,
-                                                      uint32_t receive_bandwidth,
-                                                      uint16_t max_latency, uint16_t voice_setting,
-                                                      uint8_t retransmission_effort,
-                                                      uint16_t packet_types, ScoDatapath datapath) {
-  if (!connections_.HasAclHandle(connection_handle)) {
-    return ErrorCode::UNKNOWN_CONNECTION;
-  }
-
-  auto const& connection = connections_.GetAclConnection(connection_handle);
-  if (connections_.HasPendingScoConnection(connection.address)) {
-    // This command may be used to modify an exising eSCO link.
-    // Skip for now. TODO: should return an event
-    // HCI_Synchronous_Connection_Changed on both sides.
-    return ErrorCode::COMMAND_DISALLOWED;
-  }
-
-  INFO(id_, "Creating eSCO connection with {}", connection.address);
-
-  // Save connection parameters.
-  ScoConnectionParameters connection_parameters = {transmit_bandwidth,    receive_bandwidth,
-                                                   max_latency,           voice_setting,
-                                                   retransmission_effort, packet_types};
-  connections_.CreateScoConnection(connection.address, connection_parameters, SCO_STATE_PENDING,
-                                   datapath);
-
-  // Send eSCO connection request to peer.
-  SendLinkLayerPacket(model::packets::ScoConnectionRequestBuilder::Create(
-          GetAddress(), connection.address, transmit_bandwidth, receive_bandwidth, max_latency,
-          voice_setting, retransmission_effort, packet_types, class_of_device_));
-  return ErrorCode::SUCCESS;
-}
-
-ErrorCode BrEdrController::AcceptSynchronousConnection(Address bd_addr, uint32_t transmit_bandwidth,
-                                                       uint32_t receive_bandwidth,
-                                                       uint16_t max_latency, uint16_t voice_setting,
-                                                       uint8_t retransmission_effort,
-                                                       uint16_t packet_types) {
-  INFO(id_, "Accepting eSCO connection request from {}", bd_addr);
-
-  if (!connections_.HasPendingScoConnection(bd_addr)) {
-    INFO(id_, "No pending eSCO connection for {}", bd_addr);
-    return ErrorCode::COMMAND_DISALLOWED;
-  }
-
-  ErrorCode status = ErrorCode::SUCCESS;
-  uint16_t sco_handle = *connections_.GetScoConnectionHandle(bd_addr);
-  ScoLinkParameters link_parameters = {};
-  ScoConnectionParameters connection_parameters = {transmit_bandwidth,    receive_bandwidth,
-                                                   max_latency,           voice_setting,
-                                                   retransmission_effort, packet_types};
-
-  if (!connections_.AcceptPendingScoConnection(bd_addr, connection_parameters, [this, bd_addr] {
-        return BrEdrController::StartScoStream(bd_addr);
-      })) {
-    connections_.CancelPendingScoConnection(bd_addr);
-    status = ErrorCode::STATUS_UNKNOWN;  // TODO: proper status code
-    sco_handle = 0;
-  } else {
-    link_parameters = connections_.GetScoLinkParameters(bd_addr);
-  }
-
-  // Send eSCO connection response to peer.
-  SendLinkLayerPacket(model::packets::ScoConnectionResponseBuilder::Create(
-          GetAddress(), bd_addr, (uint8_t)status, link_parameters.transmission_interval,
-          link_parameters.retransmission_window, link_parameters.rx_packet_length,
-          link_parameters.tx_packet_length, link_parameters.air_mode, link_parameters.extended));
-
-  // Schedule HCI Synchronous Connection Complete event.
-  ScheduleTask(kNoDelayMs, [this, status, sco_handle, bd_addr, link_parameters]() {
-    send_event_(bluetooth::hci::SynchronousConnectionCompleteBuilder::Create(
-            ErrorCode(status), sco_handle, bd_addr,
-            link_parameters.extended ? bluetooth::hci::ScoLinkType::ESCO
-                                     : bluetooth::hci::ScoLinkType::SCO,
-            link_parameters.extended ? link_parameters.transmission_interval : 0,
-            link_parameters.extended ? link_parameters.retransmission_window : 0,
-            link_parameters.extended ? link_parameters.rx_packet_length : 0,
-            link_parameters.extended ? link_parameters.tx_packet_length : 0,
-            bluetooth::hci::ScoAirMode(link_parameters.air_mode)));
-  });
-
-  return ErrorCode::SUCCESS;
-}
-
-ErrorCode BrEdrController::RejectSynchronousConnection(Address bd_addr, uint16_t reason) {
-  INFO(id_, "Rejecting eSCO connection request from {}", bd_addr);
-
-  if (reason == (uint8_t)ErrorCode::SUCCESS) {
-    reason = (uint8_t)ErrorCode::REMOTE_USER_TERMINATED_CONNECTION;
-  }
-  if (!connections_.HasPendingScoConnection(bd_addr)) {
-    return ErrorCode::COMMAND_DISALLOWED;
-  }
-
-  connections_.CancelPendingScoConnection(bd_addr);
-
-  // Send eSCO connection response to peer.
-  SendLinkLayerPacket(model::packets::ScoConnectionResponseBuilder::Create(
-          GetAddress(), bd_addr, reason, 0, 0, 0, 0, 0, 0));
-
-  // Schedule HCI Synchronous Connection Complete event.
-  ScheduleTask(kNoDelayMs, [this, reason, bd_addr]() {
-    send_event_(bluetooth::hci::SynchronousConnectionCompleteBuilder::Create(
-            ErrorCode(reason), 0, bd_addr, bluetooth::hci::ScoLinkType::ESCO, 0, 0, 0, 0,
-            bluetooth::hci::ScoAirMode::TRANSPARENT));
-  });
-
-  return ErrorCode::SUCCESS;
-}
 
 void BrEdrController::CheckExpiringConnection(uint16_t handle) {
   if (!connections_.HasAclHandle(handle)) {

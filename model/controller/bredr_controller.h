@@ -90,6 +90,16 @@ public:
   ErrorCode ReadRemoteExtendedFeatures(uint16_t connection_handle, uint8_t page_number);
   ErrorCode ReadRemoteVersionInformation(uint16_t connection_handle);
   ErrorCode ReadClockOffset(uint16_t connection_handle);
+  ErrorCode AddScoConnection(uint16_t connection_handle, uint16_t packet_type);
+  ErrorCode SetupSynchronousConnection(uint16_t connection_handle, uint32_t transmit_bandwidth,
+                                       uint32_t receive_bandwidth, uint16_t max_latency,
+                                       uint16_t voice_setting, uint8_t retransmission_effort,
+                                       uint16_t packet_types, ScoDatapath datapath);
+  ErrorCode AcceptSynchronousConnection(Address bd_addr, uint32_t transmit_bandwidth,
+                                        uint32_t receive_bandwidth, uint16_t max_latency,
+                                        uint16_t voice_setting, uint8_t retransmission_effort,
+                                        uint16_t packet_types);
+  ErrorCode RejectSynchronousConnection(Address bd_addr, uint16_t reason);
 
   // Internal task scheduler.
   // This scheduler is driven by the tick function only,
@@ -184,18 +194,6 @@ public:
 
   void ReadLocalOobData();
   void ReadLocalOobExtendedData();
-
-  ErrorCode AddScoConnection(uint16_t connection_handle, uint16_t packet_type,
-                             ScoDatapath datapath);
-  ErrorCode SetupSynchronousConnection(uint16_t connection_handle, uint32_t transmit_bandwidth,
-                                       uint32_t receive_bandwidth, uint16_t max_latency,
-                                       uint16_t voice_setting, uint8_t retransmission_effort,
-                                       uint16_t packet_types, ScoDatapath datapath);
-  ErrorCode AcceptSynchronousConnection(Address bd_addr, uint32_t transmit_bandwidth,
-                                        uint32_t receive_bandwidth, uint16_t max_latency,
-                                        uint16_t voice_setting, uint8_t retransmission_effort,
-                                        uint16_t packet_types);
-  ErrorCode RejectSynchronousConnection(Address bd_addr, uint16_t reason);
 
   // Returns true if the specified ACL connection handle is valid.
   bool HasAclConnection(uint16_t connection_handle);
