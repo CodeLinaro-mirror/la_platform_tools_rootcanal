@@ -276,6 +276,92 @@ ErrorCode BrEdrController::RejectConnectionRequest(Address bd_addr, uint8_t reas
   return ErrorCode::SUCCESS;
 }
 
+// HCI Change Connection Packet Type (Vol 4, Part E § 7.1.14).
+ErrorCode BrEdrController::ChangeConnectionPacketType(uint16_t connection_handle,
+                                                      uint16_t packet_type) {
+  if (!connections_.HasAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  ScheduleTask(kNoDelayMs, [this, connection_handle, packet_type]() {
+    if (IsEventUnmasked(EventCode::CONNECTION_PACKET_TYPE_CHANGED)) {
+      send_event_(bluetooth::hci::ConnectionPacketTypeChangedBuilder::Create(
+              ErrorCode::SUCCESS, connection_handle, packet_type));
+    }
+  });
+
+  return ErrorCode::SUCCESS;
+}
+
+// HCI Change Connection Link Key (Vol 4, Part E § 7.1.17).
+ErrorCode BrEdrController::ChangeConnectionLinkKey(uint16_t connection_handle) {
+  if (!connections_.HasAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  // TODO: implement real logic
+  return ErrorCode::COMMAND_DISALLOWED;
+}
+
+// HCI Remote Name Request (Vol 4, Part E § 7.1.19).
+ErrorCode BrEdrController::RemoteNameRequest(Address bd_addr, uint8_t /*page_scan_repetition_mode*/,
+                                             uint16_t /*clock_offset*/) {
+  // LMP features get requested with remote name requests.
+  SendLinkLayerPacket(model::packets::ReadRemoteLmpFeaturesBuilder::Create(GetAddress(), bd_addr));
+  SendLinkLayerPacket(model::packets::RemoteNameRequestBuilder::Create(GetAddress(), bd_addr));
+
+  return ErrorCode::SUCCESS;
+}
+
+// HCI Read Remote Supported Features (Vol 4, Part E § 7.1.21).
+ErrorCode BrEdrController::ReadRemoteSupportedFeatures(uint16_t connection_handle) {
+  if (!connections_.HasAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  auto& connection = connections_.GetAclConnection(connection_handle);
+  SendLinkLayerPacket(model::packets::ReadRemoteSupportedFeaturesBuilder::Create(
+          connection.own_address, connection.address));
+  return ErrorCode::SUCCESS;
+}
+
+// HCI Read Remote Extended Features (Vol 4, Part E § 7.1.22).
+ErrorCode BrEdrController::ReadRemoteExtendedFeatures(uint16_t connection_handle,
+                                                      uint8_t page_number) {
+  if (!connections_.HasAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  auto& connection = connections_.GetAclConnection(connection_handle);
+  SendLinkLayerPacket(model::packets::ReadRemoteExtendedFeaturesBuilder::Create(
+          connection.own_address, connection.address, page_number));
+  return ErrorCode::SUCCESS;
+}
+
+// HCI Read Remote Version Information (Vol 4, Part E § 7.1.23).
+ErrorCode BrEdrController::ReadRemoteVersionInformation(uint16_t connection_handle) {
+  if (!connections_.HasAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  auto& connection = connections_.GetAclConnection(connection_handle);
+  SendLinkLayerPacket(model::packets::ReadRemoteVersionInformationBuilder::Create(
+          connection.own_address, connection.address));
+  return ErrorCode::SUCCESS;
+}
+
+// HCI Read Clock Offset (Vol 4, Part E § 7.1.24).
+ErrorCode BrEdrController::ReadClockOffset(uint16_t connection_handle) {
+  if (!connections_.HasAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  auto& connection = connections_.GetAclConnection(connection_handle);
+  SendLinkLayerPacket(model::packets::ReadClockOffsetBuilder::Create(connection.own_address,
+                                                                     connection.address));
+  return ErrorCode::SUCCESS;
+}
+
 // =============================================================================
 //  BR/EDR Commands
 // =============================================================================
@@ -421,49 +507,6 @@ void BrEdrController::SendLinkLayerPacket(
   ScheduleTask(kNoDelayMs, [this, shared_packet, tx_power]() {
     send_to_remote_(shared_packet, Phy::Type::BR_EDR, tx_power);
   });
-}
-
-ErrorCode BrEdrController::SendCommandToRemoteByAddress(OpCode opcode, pdl::packet::slice args,
-                                                        const Address& own_address,
-                                                        const Address& peer_address) {
-  switch (opcode) {
-    case (OpCode::REMOTE_NAME_REQUEST):
-      // LMP features get requested with remote name requests.
-      SendLinkLayerPacket(
-              model::packets::ReadRemoteLmpFeaturesBuilder::Create(own_address, peer_address));
-      SendLinkLayerPacket(
-              model::packets::RemoteNameRequestBuilder::Create(own_address, peer_address));
-      break;
-    case (OpCode::READ_REMOTE_SUPPORTED_FEATURES):
-      SendLinkLayerPacket(model::packets::ReadRemoteSupportedFeaturesBuilder::Create(own_address,
-                                                                                     peer_address));
-      break;
-    case (OpCode::READ_REMOTE_EXTENDED_FEATURES): {
-      pdl::packet::slice page_number_slice = args.subrange(5, 1);
-      uint8_t page_number = page_number_slice.read_le<uint8_t>();
-      SendLinkLayerPacket(model::packets::ReadRemoteExtendedFeaturesBuilder::Create(
-              own_address, peer_address, page_number));
-    } break;
-    case (OpCode::READ_CLOCK_OFFSET):
-      SendLinkLayerPacket(
-              model::packets::ReadClockOffsetBuilder::Create(own_address, peer_address));
-      break;
-    default:
-      INFO(id_, "Dropping unhandled command 0x{:04x}", static_cast<uint16_t>(opcode));
-      return ErrorCode::UNKNOWN_HCI_COMMAND;
-  }
-
-  return ErrorCode::SUCCESS;
-}
-
-ErrorCode BrEdrController::SendCommandToRemoteByHandle(OpCode opcode, pdl::packet::slice args,
-                                                       uint16_t handle) {
-  if (!connections_.HasAclHandle(handle)) {
-    return ErrorCode::UNKNOWN_CONNECTION;
-  }
-
-  auto const& connection = connections_.GetAclConnection(handle);
-  return SendCommandToRemoteByAddress(opcode, args, connection.own_address, connection.address);
 }
 
 ErrorCode BrEdrController::SendScoToRemote(bluetooth::hci::ScoView sco_packet) {
@@ -1305,42 +1348,6 @@ void BrEdrController::SendDisconnectionCompleteEvent(uint16_t handle, ErrorCode 
                                                                        reason));
     });
   }
-}
-
-ErrorCode BrEdrController::ReadRemoteVersionInformation(uint16_t connection_handle) {
-  if (connections_.HasAclHandle(connection_handle)) {
-    auto const& connection = connections_.GetAclConnection(connection_handle);
-    SendLinkLayerPacket(model::packets::ReadRemoteVersionInformationBuilder::Create(
-            connection.own_address, connection.address));
-    return ErrorCode::SUCCESS;
-  }
-
-  return ErrorCode::UNKNOWN_CONNECTION;
-}
-
-ErrorCode BrEdrController::ChangeConnectionPacketType(uint16_t handle, uint16_t types) {
-  if (!connections_.HasAclHandle(handle)) {
-    return ErrorCode::UNKNOWN_CONNECTION;
-  }
-
-  ScheduleTask(kNoDelayMs, [this, handle, types]() {
-    if (IsEventUnmasked(EventCode::CONNECTION_PACKET_TYPE_CHANGED)) {
-      send_event_(bluetooth::hci::ConnectionPacketTypeChangedBuilder::Create(ErrorCode::SUCCESS,
-                                                                             handle, types));
-    }
-  });
-
-  return ErrorCode::SUCCESS;
-}
-
-// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
-ErrorCode BrEdrController::ChangeConnectionLinkKey(uint16_t handle) {
-  if (!connections_.HasAclHandle(handle)) {
-    return ErrorCode::UNKNOWN_CONNECTION;
-  }
-
-  // TODO: implement real logic
-  return ErrorCode::COMMAND_DISALLOWED;
 }
 
 // NOLINTNEXTLINE(readability-convert-member-functions-to-static)

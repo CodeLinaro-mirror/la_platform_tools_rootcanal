@@ -62,9 +62,6 @@ public:
   BrEdrController(const Address& address, const ControllerProperties& properties, uint32_t id = 0);
   ~BrEdrController();
 
-  ErrorCode SendCommandToRemoteByAddress(OpCode opcode, pdl::packet::slice args,
-                                         const Address& own_address, const Address& peer_address);
-  ErrorCode SendCommandToRemoteByHandle(OpCode opcode, pdl::packet::slice args, uint16_t handle);
   ErrorCode SendScoToRemote(bluetooth::hci::ScoView sco_packet);
 
   void ForwardToLm(bluetooth::hci::CommandView command);
@@ -85,9 +82,14 @@ public:
   ErrorCode CreateConnectionCancel(Address bd_addr);
   ErrorCode AcceptConnectionRequest(Address bd_addr, bool try_role_switch);
   ErrorCode RejectConnectionRequest(Address bd_addr, uint8_t reason);
-
-  // HCI command Read Remote Version Information (Vol 4, Part E § 7.1.23).
+  ErrorCode ChangeConnectionPacketType(uint16_t connection_handle, uint16_t packet_type);
+  ErrorCode ChangeConnectionLinkKey(uint16_t connection_handle);
+  ErrorCode RemoteNameRequest(Address bd_addr, uint8_t page_scan_repetition_mode,
+                              uint16_t clock_offset);
+  ErrorCode ReadRemoteSupportedFeatures(uint16_t connection_handle);
+  ErrorCode ReadRemoteExtendedFeatures(uint16_t connection_handle, uint8_t page_number);
   ErrorCode ReadRemoteVersionInformation(uint16_t connection_handle);
+  ErrorCode ReadClockOffset(uint16_t connection_handle);
 
   // Internal task scheduler.
   // This scheduler is driven by the tick function only,
@@ -160,8 +162,6 @@ public:
   uint16_t GetPageTimeout() const { return page_timeout_; }
   void SetPageTimeout(uint16_t page_timeout);
 
-  ErrorCode ChangeConnectionPacketType(uint16_t handle, uint16_t types);
-  ErrorCode ChangeConnectionLinkKey(uint16_t handle);
   ErrorCode CentralLinkKey(uint8_t key_flag);
   ErrorCode HoldMode(uint16_t handle, uint16_t hold_mode_max_interval,
                      uint16_t hold_mode_min_interval);

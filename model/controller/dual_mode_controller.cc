@@ -505,15 +505,14 @@ void DualModeController::ReadLocalExtendedFeatures(CommandView command) {
 void DualModeController::ReadRemoteExtendedFeatures(CommandView command) {
   auto command_view = bluetooth::hci::ReadRemoteExtendedFeaturesView::Create(command);
   CHECK_PACKET_VIEW(command_view);
+  uint16_t connection_handle = command_view.GetConnectionHandle();
+  uint8_t page_number = command_view.GetPageNumber();
 
   DEBUG(id_, "<< Read Remote Extended Features");
-  DEBUG(id_, "   connection_handle=0x{:x}", command_view.GetConnectionHandle());
-  DEBUG(id_, "   page_number={}", command_view.GetPageNumber());
+  DEBUG(id_, "   connection_handle=0x{:x}", connection_handle);
+  DEBUG(id_, "   page_number={}", page_number);
 
-  auto status = bredr_controller_.SendCommandToRemoteByHandle(OpCode::READ_REMOTE_EXTENDED_FEATURES,
-                                                              command_view.bytes(),
-                                                              command_view.GetConnectionHandle());
-
+  auto status = bredr_controller_.ReadRemoteExtendedFeatures(connection_handle, page_number);
   send_event_(bluetooth::hci::ReadRemoteExtendedFeaturesStatusBuilder::Create(status,
                                                                               kNumCommandPackets));
 }
@@ -534,14 +533,12 @@ void DualModeController::SwitchRole(CommandView command) {
 void DualModeController::ReadRemoteSupportedFeatures(CommandView command) {
   auto command_view = bluetooth::hci::ReadRemoteSupportedFeaturesView::Create(command);
   CHECK_PACKET_VIEW(command_view);
+  auto connection_handle = command_view.GetConnectionHandle();
 
   DEBUG(id_, "<< Read Remote Supported Features");
-  DEBUG(id_, "   connection_handle=0x{:x}", command_view.GetConnectionHandle());
+  DEBUG(id_, "   connection_handle=0x{:x}", connection_handle);
 
-  auto status = bredr_controller_.SendCommandToRemoteByHandle(
-          OpCode::READ_REMOTE_SUPPORTED_FEATURES, command_view.bytes(),
-          command_view.GetConnectionHandle());
-
+  auto status = bredr_controller_.ReadRemoteSupportedFeatures(connection_handle);
   send_event_(bluetooth::hci::ReadRemoteSupportedFeaturesStatusBuilder::Create(status,
                                                                                kNumCommandPackets));
 }
@@ -549,15 +546,12 @@ void DualModeController::ReadRemoteSupportedFeatures(CommandView command) {
 void DualModeController::ReadClockOffset(CommandView command) {
   auto command_view = bluetooth::hci::ReadClockOffsetView::Create(command);
   CHECK_PACKET_VIEW(command_view);
+  uint16_t connection_handle = command_view.GetConnectionHandle();
 
   DEBUG(id_, "<< Read Clock Offset");
-  DEBUG(id_, "   connection_handle=0x{:x}", command_view.GetConnectionHandle());
+  DEBUG(id_, "   connection_handle=0x{:x}", connection_handle);
 
-  uint16_t handle = command_view.GetConnectionHandle();
-
-  auto status = bredr_controller_.SendCommandToRemoteByHandle(OpCode::READ_CLOCK_OFFSET,
-                                                              command_view.bytes(), handle);
-
+  auto status = bredr_controller_.ReadClockOffset(connection_handle);
   send_event_(bluetooth::hci::ReadClockOffsetStatusBuilder::Create(status, kNumCommandPackets));
 }
 
@@ -1713,13 +1707,14 @@ void DualModeController::RemoteNameRequest(CommandView command) {
   auto command_view = bluetooth::hci::RemoteNameRequestView::Create(command);
   CHECK_PACKET_VIEW(command_view);
   Address bd_addr = command_view.GetBdAddr();
+  uint8_t page_scan_repetition_mode =
+          static_cast<uint8_t>(command_view.GetPageScanRepetitionMode());
 
   DEBUG(id_, "<< Remote Name Request");
   DEBUG(id_, "   bd_addr={}", bd_addr);
+  DEBUG(id_, "   page_scan_repetition_mode={}", page_scan_repetition_mode);
 
-  auto status = bredr_controller_.SendCommandToRemoteByAddress(
-          OpCode::REMOTE_NAME_REQUEST, command_view.bytes(), GetAddress(), bd_addr);
-
+  auto status = bredr_controller_.RemoteNameRequest(bd_addr, page_scan_repetition_mode, 0);
   send_event_(bluetooth::hci::RemoteNameRequestStatusBuilder::Create(status, kNumCommandPackets));
 }
 
