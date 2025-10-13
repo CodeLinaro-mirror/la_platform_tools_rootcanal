@@ -152,6 +152,12 @@ public:
   ErrorCode SniffSubrating(uint16_t connection_handle, uint16_t max_latency,
                            uint16_t min_remote_timeout, uint16_t min_local_timeout);
 
+  // Controller & Baseband commands (Vol 4, Part E § 7.3).
+
+  void SetEventMask(uint64_t event_mask) { event_mask_ = event_mask; }
+  void Reset();
+  void WriteLocalName(std::array<uint8_t, 248> const& local_name);
+
   // Internal task scheduler.
   //
   // This scheduler is driven by the tick function only,
@@ -209,7 +215,6 @@ public:
           const std::function<void(std::shared_ptr<model::packets::LinkLayerPacketBuilder>,
                                    Phy::Type, int8_t)>& send_to_remote);
 
-  void Reset();
   void Paging();
   void Inquiry();
 
@@ -317,7 +322,6 @@ public:
   }
 
   void SetLocalName(std::vector<uint8_t> const& local_name);
-  void SetLocalName(std::array<uint8_t, kLocalNameSize> const& local_name);
 
   void SetExtendedInquiryResponse(std::array<uint8_t, 240> const& extended_inquiry_response);
   void SetExtendedInquiryResponse(std::vector<uint8_t> const& extended_inquiry_response);
@@ -328,7 +332,6 @@ public:
 
   void SetScoFlowControlEnable(bool enable) { sco_flow_control_enable_ = enable; }
   void SetVoiceSetting(uint16_t voice_setting) { voice_setting_ = voice_setting; }
-  void SetEventMask(uint64_t event_mask) { event_mask_ = event_mask; }
   void SetEventMaskPage2(uint64_t event_mask) { event_mask_page_2_ = event_mask; }
 
   void SetLeHostSupport(bool enable);

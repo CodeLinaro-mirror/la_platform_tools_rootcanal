@@ -973,6 +973,65 @@ ErrorCode BrEdrController::SniffSubrating(uint16_t connection_handle, uint16_t m
 }
 
 // =============================================================================
+//  Controller & Baseband commands (Vol 4, Part E § 7.3)
+// =============================================================================
+
+// HCI Reset command (Vol 4, Part E § 7.3.2).
+void BrEdrController::Reset() {
+  // Explicitly Disconnect all existing links on reset.
+  // No Disconnection Complete event should be generated from the link
+  // disconnections, as only the HCI Command Complete event is expected for the
+  // HCI Reset command.
+  DisconnectAll(ErrorCode::REMOTE_USER_TERMINATED_CONNECTION);
+
+  // DisconnectAll does not close the local connection contexts.
+  connections_.Reset([this](TaskId task_id) { CancelScheduledTask(task_id); });
+
+  host_supported_features_ = 0;
+  le_host_support_ = false;
+  secure_simple_pairing_host_support_ = false;
+  secure_connections_host_support_ = false;
+  page_scan_enable_ = false;
+  inquiry_scan_enable_ = false;
+  inquiry_scan_interval_ = 0x1000;
+  inquiry_scan_window_ = 0x0012;
+  page_timeout_ = 0x2000;
+  connection_accept_timeout_ = 0x1FA0;
+  page_scan_interval_ = 0x0800;
+  page_scan_window_ = 0x0012;
+  voice_setting_ = 0x0060;
+  authentication_enable_ = AuthenticationEnable::NOT_REQUIRED;
+  default_link_policy_settings_ = 0x0000;
+  sco_flow_control_enable_ = false;
+  local_name_.fill(0);
+  extended_inquiry_response_.fill(0);
+  class_of_device_ = 0;
+  min_encryption_key_size_ = 16;
+  event_mask_ = 0x00001fffffffffff;
+  event_mask_page_2_ = 0x0;
+  page_scan_repetition_mode_ = PageScanRepetitionMode::R0;
+  oob_id_ = 1;
+  key_id_ = 1;
+  inquiry_mode_ = InquiryType::STANDARD;
+
+  bluetooth::hci::Lap general_iac;
+  general_iac.lap_ = 0x33;  // 0x9E8B33
+  current_iac_lap_list_.clear();
+  current_iac_lap_list_.emplace_back(general_iac);
+
+  page_ = {};
+  page_scan_ = {};
+  inquiry_ = {};
+
+  lm_.reset(link_manager_create(controller_ops_));
+}
+
+// HCI Write Local Name command (Vol 4, Part E § 7.3.11).
+void BrEdrController::WriteLocalName(std::array<uint8_t, kLocalNameSize> const& local_name) {
+  local_name_ = local_name;
+}
+
+// =============================================================================
 //  BR/EDR Commands
 // =============================================================================
 
@@ -1024,10 +1083,6 @@ void BrEdrController::SetSecureConnectionsSupport(bool enable) {
   } else {
     host_supported_features_ &= ~bit;
   }
-}
-
-void BrEdrController::SetLocalName(std::array<uint8_t, kLocalNameSize> const& local_name) {
-  std::copy(local_name.begin(), local_name.end(), local_name_.begin());
 }
 
 void BrEdrController::SetLocalName(std::vector<uint8_t> const& local_name) {
@@ -2085,55 +2140,6 @@ void BrEdrController::DisconnectAll(ErrorCode reason) {
     SendLinkLayerPacket(model::packets::DisconnectBuilder::Create(
             connection.own_address, connection.address, static_cast<uint8_t>(reason)));
   }
-}
-
-void BrEdrController::Reset() {
-  // Explicitly Disconnect all existing links on reset.
-  // No Disconnection Complete event should be generated from the link
-  // disconnections, as only the HCI Command Complete event is expected for the
-  // HCI Reset command.
-  DisconnectAll(ErrorCode::REMOTE_USER_TERMINATED_CONNECTION);
-
-  // DisconnectAll does not close the local connection contexts.
-  connections_.Reset([this](TaskId task_id) { CancelScheduledTask(task_id); });
-
-  host_supported_features_ = 0;
-  le_host_support_ = false;
-  secure_simple_pairing_host_support_ = false;
-  secure_connections_host_support_ = false;
-  page_scan_enable_ = false;
-  inquiry_scan_enable_ = false;
-  inquiry_scan_interval_ = 0x1000;
-  inquiry_scan_window_ = 0x0012;
-  page_timeout_ = 0x2000;
-  connection_accept_timeout_ = 0x1FA0;
-  page_scan_interval_ = 0x0800;
-  page_scan_window_ = 0x0012;
-  voice_setting_ = 0x0060;
-  authentication_enable_ = AuthenticationEnable::NOT_REQUIRED;
-  default_link_policy_settings_ = 0x0000;
-  sco_flow_control_enable_ = false;
-  local_name_.fill(0);
-  extended_inquiry_response_.fill(0);
-  class_of_device_ = 0;
-  min_encryption_key_size_ = 16;
-  event_mask_ = 0x00001fffffffffff;
-  event_mask_page_2_ = 0x0;
-  page_scan_repetition_mode_ = PageScanRepetitionMode::R0;
-  oob_id_ = 1;
-  key_id_ = 1;
-  inquiry_mode_ = InquiryType::STANDARD;
-
-  bluetooth::hci::Lap general_iac;
-  general_iac.lap_ = 0x33;  // 0x9E8B33
-  current_iac_lap_list_.clear();
-  current_iac_lap_list_.emplace_back(general_iac);
-
-  page_ = {};
-  page_scan_ = {};
-  inquiry_ = {};
-
-  lm_.reset(link_manager_create(controller_ops_));
 }
 
 /// Drive the logic for the Page controller substate.

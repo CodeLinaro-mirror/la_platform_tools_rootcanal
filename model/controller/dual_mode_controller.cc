@@ -1184,7 +1184,7 @@ void DualModeController::WriteLocalName(CommandView command) {
 
   DEBUG(id_, "<< Write Local Name");
 
-  bredr_controller_.SetLocalName(command_view.GetLocalName());
+  bredr_controller_.WriteLocalName(command_view.GetLocalName());
   send_event_(bluetooth::hci::WriteLocalNameCompleteBuilder::Create(kNumCommandPackets,
                                                                     ErrorCode::SUCCESS));
 }
