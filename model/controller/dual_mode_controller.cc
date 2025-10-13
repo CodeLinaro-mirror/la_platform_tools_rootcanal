@@ -1067,9 +1067,10 @@ void DualModeController::ReadDefaultLinkPolicySettings(CommandView command) {
 
   DEBUG(id_, "<< Read Default Link Policy Settings");
 
-  uint16_t settings = bredr_controller_.ReadDefaultLinkPolicySettings();
+  uint16_t settings = 0;
+  auto status = bredr_controller_.ReadDefaultLinkPolicySettings(&settings);
   send_event_(bluetooth::hci::ReadDefaultLinkPolicySettingsCompleteBuilder::Create(
-          kNumCommandPackets, ErrorCode::SUCCESS, settings));
+          kNumCommandPackets, status, settings));
 }
 
 void DualModeController::WriteDefaultLinkPolicySettings(CommandView command) {

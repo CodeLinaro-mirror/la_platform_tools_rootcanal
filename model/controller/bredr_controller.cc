@@ -828,6 +828,104 @@ ErrorCode BrEdrController::QosSetup(uint16_t connection_handle, uint8_t service_
   return ErrorCode::COMMAND_DISALLOWED;
 }
 
+// HCI Role Discovery command (Vol 4, Part E § 7.2.7).
+ErrorCode BrEdrController::RoleDiscovery(uint16_t connection_handle, bluetooth::hci::Role* role) {
+  if (!connections_.HasAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  *role = connections_.GetAclConnection(connection_handle).GetRole();
+  return ErrorCode::SUCCESS;
+}
+
+// HCI Switch Role command (Vol 4, Part E § 7.2.8).
+ErrorCode BrEdrController::SwitchRole(Address bd_addr, bluetooth::hci::Role role) {
+  // The BD_ADDR command parameter indicates for which connection
+  // the role switch is to be performed and shall specify a BR/EDR Controller
+  // for which a connection already exists.
+  auto connection_handle = connections_.GetAclConnectionHandle(bd_addr);
+  if (!connection_handle.has_value()) {
+    INFO(id_, "unknown connection address {}", bd_addr);
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  AclConnection& connection = connections_.GetAclConnection(*connection_handle);
+
+  // If there is an (e)SCO connection between the local device and the device
+  // identified by the BD_ADDR parameter, an attempt to perform a role switch
+  // shall be rejected by the local device.
+  if (connections_.GetScoConnectionHandle(bd_addr).has_value()) {
+    INFO(id_,
+         "role switch rejected because an Sco link is opened with"
+         " the target device");
+    return ErrorCode::COMMAND_DISALLOWED;
+  }
+
+  // If the connection between the local device and the device identified by the
+  // BD_ADDR parameter is placed in Sniff mode, an attempt to perform a role
+  // switch shall be rejected by the local device.
+  if (connection.GetMode() == AclConnectionState::kSniffMode) {
+    INFO(id_, "role switch rejected because the acl connection is in sniff mode");
+    return ErrorCode::COMMAND_DISALLOWED;
+  }
+
+  if (role != connection.GetRole()) {
+    SendLinkLayerPacket(model::packets::RoleSwitchRequestBuilder::Create(GetAddress(), bd_addr));
+  } else if (IsEventUnmasked(EventCode::ROLE_CHANGE)) {
+    // Note: the status is Success only if the role change procedure was
+    // actually performed, otherwise the status is >0.
+    ScheduleTask(kNoDelayMs, [this, bd_addr, role]() {
+      send_event_(bluetooth::hci::RoleChangeBuilder::Create(ErrorCode::ROLE_SWITCH_FAILED, bd_addr,
+                                                            role));
+    });
+  }
+
+  return ErrorCode::SUCCESS;
+}
+
+// HCI Read Link Policy Settings command (Vol 4, Part E § 7.2.9.
+ErrorCode BrEdrController::ReadLinkPolicySettings(uint16_t connection_handle,
+                                                  uint16_t* link_policy_settings) {
+  if (!connections_.HasAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  *link_policy_settings = connections_.GetAclConnection(connection_handle).GetLinkPolicySettings();
+  return ErrorCode::SUCCESS;
+}
+
+// HCI Write Link Policy Settings command (Vol 4, Part E § 7.2.10).
+ErrorCode BrEdrController::WriteLinkPolicySettings(uint16_t connection_handle,
+                                                   uint16_t link_policy_settings) {
+  if (!connections_.HasAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  if (link_policy_settings > 7 /* Sniff + Hold + Role switch */) {
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  connections_.GetAclConnection(connection_handle).SetLinkPolicySettings(link_policy_settings);
+  return ErrorCode::SUCCESS;
+}
+
+// HCI Read Default Link Policy Settings command (Vol 4, Part E § 7.2.11).
+ErrorCode BrEdrController::ReadDefaultLinkPolicySettings(
+        uint16_t* default_link_policy_settings) const {
+  *default_link_policy_settings = default_link_policy_settings_;
+  return ErrorCode::SUCCESS;
+}
+
+// HCI Write Default Link Policy Settings command (Vol 4, Part E § 7.2.12).
+ErrorCode BrEdrController::WriteDefaultLinkPolicySettings(uint16_t default_link_policy_settings) {
+  if (default_link_policy_settings > 7 /* Sniff + Hold + Role switch */) {
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  default_link_policy_settings_ = default_link_policy_settings;
+  return ErrorCode::SUCCESS;
+}
+
 // =============================================================================
 //  BR/EDR Commands
 // =============================================================================
@@ -1822,59 +1920,6 @@ ErrorCode BrEdrController::CentralLinkKey(uint8_t /* key_flag */) {
   return ErrorCode::COMMAND_DISALLOWED;
 }
 
-ErrorCode BrEdrController::RoleDiscovery(uint16_t handle, bluetooth::hci::Role* role) {
-  if (!connections_.HasAclHandle(handle)) {
-    return ErrorCode::UNKNOWN_CONNECTION;
-  }
-
-  *role = connections_.GetAclConnection(handle).GetRole();
-  return ErrorCode::SUCCESS;
-}
-
-ErrorCode BrEdrController::SwitchRole(Address bd_addr, bluetooth::hci::Role role) {
-  // The BD_ADDR command parameter indicates for which connection
-  // the role switch is to be performed and shall specify a BR/EDR Controller
-  // for which a connection already exists.
-  auto connection_handle = connections_.GetAclConnectionHandle(bd_addr);
-  if (!connection_handle.has_value()) {
-    INFO(id_, "unknown connection address {}", bd_addr);
-    return ErrorCode::UNKNOWN_CONNECTION;
-  }
-
-  AclConnection& connection = connections_.GetAclConnection(*connection_handle);
-
-  // If there is an (e)SCO connection between the local device and the device
-  // identified by the BD_ADDR parameter, an attempt to perform a role switch
-  // shall be rejected by the local device.
-  if (connections_.GetScoConnectionHandle(bd_addr).has_value()) {
-    INFO(id_,
-         "role switch rejected because an Sco link is opened with"
-         " the target device");
-    return ErrorCode::COMMAND_DISALLOWED;
-  }
-
-  // If the connection between the local device and the device identified by the
-  // BD_ADDR parameter is placed in Sniff mode, an attempt to perform a role
-  // switch shall be rejected by the local device.
-  if (connection.GetMode() == AclConnectionState::kSniffMode) {
-    INFO(id_, "role switch rejected because the acl connection is in sniff mode");
-    return ErrorCode::COMMAND_DISALLOWED;
-  }
-
-  if (role != connection.GetRole()) {
-    SendLinkLayerPacket(model::packets::RoleSwitchRequestBuilder::Create(GetAddress(), bd_addr));
-  } else if (IsEventUnmasked(EventCode::ROLE_CHANGE)) {
-    // Note: the status is Success only if the role change procedure was
-    // actually performed, otherwise the status is >0.
-    ScheduleTask(kNoDelayMs, [this, bd_addr, role]() {
-      send_event_(bluetooth::hci::RoleChangeBuilder::Create(ErrorCode::ROLE_SWITCH_FAILED, bd_addr,
-                                                            role));
-    });
-  }
-
-  return ErrorCode::SUCCESS;
-}
-
 void BrEdrController::IncomingRoleSwitchRequest(model::packets::LinkLayerPacketView incoming) {
   auto bd_addr = incoming.GetSourceAddress();
   auto connection_handle = connections_.GetAclConnectionHandle(bd_addr);
@@ -1937,41 +1982,6 @@ void BrEdrController::IncomingRoleSwitchResponse(model::packets::LinkLayerPacket
       send_event_(bluetooth::hci::RoleChangeBuilder::Create(status, bd_addr, new_role));
     });
   }
-}
-
-ErrorCode BrEdrController::ReadLinkPolicySettings(uint16_t handle, uint16_t* settings) {
-  if (!connections_.HasAclHandle(handle)) {
-    return ErrorCode::UNKNOWN_CONNECTION;
-  }
-
-  *settings = connections_.GetAclConnection(handle).GetLinkPolicySettings();
-  return ErrorCode::SUCCESS;
-}
-
-ErrorCode BrEdrController::WriteLinkPolicySettings(uint16_t handle, uint16_t settings) {
-  if (!connections_.HasAclHandle(handle)) {
-    return ErrorCode::UNKNOWN_CONNECTION;
-  }
-
-  if (settings > 7 /* Sniff + Hold + Role switch */) {
-    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
-  }
-
-  connections_.GetAclConnection(handle).SetLinkPolicySettings(settings);
-  return ErrorCode::SUCCESS;
-}
-
-ErrorCode BrEdrController::WriteDefaultLinkPolicySettings(uint16_t settings) {
-  if (settings > 7 /* Sniff + Hold + Role switch */) {
-    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
-  }
-
-  default_link_policy_settings_ = settings;
-  return ErrorCode::SUCCESS;
-}
-
-uint16_t BrEdrController::ReadDefaultLinkPolicySettings() const {
-  return default_link_policy_settings_;
 }
 
 void BrEdrController::ReadLocalOobData() {
