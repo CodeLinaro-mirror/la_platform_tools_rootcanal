@@ -926,6 +926,40 @@ ErrorCode BrEdrController::WriteDefaultLinkPolicySettings(uint16_t default_link_
   return ErrorCode::SUCCESS;
 }
 
+// HCI Flow Specification command (Vol 4, Part E § 7.2.13).
+ErrorCode BrEdrController::FlowSpecification(uint16_t connection_handle, uint8_t flow_direction,
+                                             uint8_t service_type, uint32_t /* token_rate */,
+                                             uint32_t /* token_bucket_size */,
+                                             uint32_t /* peak_bandwidth */,
+                                             uint32_t /* access_latency */) {
+  if (!connections_.HasAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  if (flow_direction > 0x01 || service_type > 0x02) {
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  // TODO: implement real logic
+  return ErrorCode::COMMAND_DISALLOWED;
+}
+
+// HCI Sniff Subrating command (Vol 4, Part E § 7.2.14).
+ErrorCode BrEdrController::SniffSubrating(uint16_t connection_handle, uint16_t max_latency,
+                                          uint16_t min_remote_timeout, uint16_t min_local_timeout) {
+  if (!connections_.HasAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  if (max_latency < 0x2 || max_latency > 0xfffe || min_remote_timeout > 0xfffe ||
+      min_local_timeout > 0xfffe) {
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  // TODO: generate HCI Sniff Subrating event to emulate sniff subrating negotiation.
+  return ErrorCode::SUCCESS;
+}
+
 // =============================================================================
 //  BR/EDR Commands
 // =============================================================================
@@ -2018,23 +2052,6 @@ void BrEdrController::ReadLocalOobExtendedData() {
   send_event_(bluetooth::hci::ReadLocalOobExtendedDataCompleteBuilder::Create(
           1, ErrorCode::SUCCESS, c_192_array, r_192_array, c_256_array, r_256_array));
   oob_id_ += 1;
-}
-
-ErrorCode BrEdrController::FlowSpecification(uint16_t handle, uint8_t flow_direction,
-                                             uint8_t service_type, uint32_t /* token_rate */,
-                                             uint32_t /* token_bucket_size */,
-                                             uint32_t /* peak_bandwidth */,
-                                             uint32_t /* access_latency */) {
-  if (!connections_.HasAclHandle(handle)) {
-    return ErrorCode::UNKNOWN_CONNECTION;
-  }
-
-  if (flow_direction > 0x01 || service_type > 0x02) {
-    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
-  }
-
-  // TODO: implement real logic
-  return ErrorCode::COMMAND_DISALLOWED;
 }
 
 ErrorCode BrEdrController::WriteLinkSupervisionTimeout(uint16_t handle, uint16_t /* timeout */) {
