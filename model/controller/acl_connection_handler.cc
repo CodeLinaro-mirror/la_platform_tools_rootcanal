@@ -36,6 +36,23 @@ namespace rootcanal {
 using ::bluetooth::hci::Address;
 using ::bluetooth::hci::AddressWithType;
 
+template <typename C>
+static uint16_t GetUnusedHandle(std::unordered_map<uint16_t, C> const& connections,
+                                uint16_t range_start, uint16_t range_end, uint16_t& last) {
+  while (connections.find(last) != connections.end()) {
+    if (++last > range_end) {
+      last = range_start;
+    }
+  }
+
+  uint16_t unused_handle = last;
+  if (++last > range_end) {
+    last = range_start;
+  }
+
+  return unused_handle;
+}
+
 void AclConnectionHandler::Reset(std::function<void(TaskId)> stopStream) {
   // Leave no dangling periodic task.
   for (auto& [_, sco_connection] : sco_connections_) {
@@ -45,7 +62,10 @@ void AclConnectionHandler::Reset(std::function<void(TaskId)> stopStream) {
   sco_connections_.clear();
   acl_connections_.clear();
   le_acl_connections_.clear();
-  last_handle_ = kReservedHandle - 2;
+
+  last_acl_handle_ = ConnectionHandle::kAclRangeStart;
+  last_sco_handle_ = ConnectionHandle::kScoRangeStart;
+  last_le_acl_handle_ = ConnectionHandle::kLeAclRangeStart;
 }
 
 bool AclConnectionHandler::HasAclHandle(uint16_t handle) const {
@@ -60,20 +80,9 @@ bool AclConnectionHandler::HasScoHandle(uint16_t handle) const {
   return sco_connections_.count(handle) != 0;
 }
 
-uint16_t AclConnectionHandler::GetUnusedHandle() {
-  // Keep a reserved range of handles for CIS connections implemented
-  // in the rust module.
-  while (HasAclHandle(last_handle_) || HasLeAclHandle(last_handle_) || HasScoHandle(last_handle_) ||
-         (last_handle_ >= kCisHandleRangeStart && last_handle_ < kCisHandleRangeEnd)) {
-    last_handle_ = (last_handle_ + 1) % kReservedHandle;
-  }
-  uint16_t unused_handle = last_handle_;
-  last_handle_ = (last_handle_ + 1) % kReservedHandle;
-  return unused_handle;
-}
-
 uint16_t AclConnectionHandler::CreateConnection(Address addr, Address own_addr) {
-  uint16_t handle = GetUnusedHandle();
+  uint16_t handle = GetUnusedHandle(acl_connections_, ConnectionHandle::kAclRangeStart,
+                                    ConnectionHandle::kAclRangeEnd, last_acl_handle_);
   acl_connections_.emplace(handle,
                            AclConnection{handle, addr, own_addr, bluetooth::hci::Role::CENTRAL});
   return handle;
@@ -84,7 +93,8 @@ uint16_t AclConnectionHandler::CreateLeConnection(AddressWithType addr,
                                                   AddressWithType own_addr,
                                                   bluetooth::hci::Role role,
                                                   LeAclConnectionParameters connection_parameters) {
-  uint16_t handle = GetUnusedHandle();
+  uint16_t handle = GetUnusedHandle(le_acl_connections_, ConnectionHandle::kLeAclRangeStart,
+                                    ConnectionHandle::kLeAclRangeEnd, last_le_acl_handle_);
   le_acl_connections_.emplace(handle, LeAclConnection{handle, addr, own_addr, resolved_peer, role,
                                                       connection_parameters});
   return handle;
@@ -99,8 +109,8 @@ bool AclConnectionHandler::Disconnect(uint16_t handle, std::function<void(TaskId
   if (HasAclHandle(handle)) {
     // It is the responsibility of the caller to remove SCO connections
     // with connected peer first.
-    uint16_t sco_handle = GetScoHandle(acl_connections_.at(handle).address);
-    ASSERT(!HasScoHandle(sco_handle));
+    auto sco_handle = GetScoConnectionHandle(acl_connections_.at(handle).address);
+    ASSERT(!sco_handle.has_value());
     acl_connections_.erase(handle);
     return true;
   }
@@ -132,6 +142,16 @@ std::optional<uint16_t> AclConnectionHandler::GetLeAclConnectionHandle(
   return {};
 }
 
+std::optional<uint16_t> AclConnectionHandler::GetScoConnectionHandle(
+        bluetooth::hci::Address addr) const {
+  for (auto const& [handle, connection] : sco_connections_) {
+    if (connection.GetAddress() == addr) {
+      return handle;
+    }
+  }
+  return {};
+}
+
 AclConnection& AclConnectionHandler::GetAclConnection(uint16_t handle) {
   ASSERT_LOG(HasAclHandle(handle), "Unknown handle %d", handle);
   return acl_connections_.at(handle);
@@ -150,8 +170,9 @@ Address AclConnectionHandler::GetScoAddress(uint16_t handle) const {
 void AclConnectionHandler::CreateScoConnection(bluetooth::hci::Address addr,
                                                ScoConnectionParameters const& parameters,
                                                ScoState state, ScoDatapath datapath, bool legacy) {
-  uint16_t sco_handle = GetUnusedHandle();
-  sco_connections_.emplace(sco_handle, ScoConnection(addr, parameters, state, datapath, legacy));
+  uint16_t handle = GetUnusedHandle(sco_connections_, ConnectionHandle::kScoRangeStart,
+                                    ConnectionHandle::kScoRangeEnd, last_sco_handle_);
+  sco_connections_.emplace(handle, ScoConnection(addr, parameters, state, datapath, legacy));
 }
 
 bool AclConnectionHandler::HasPendingScoConnection(bluetooth::hci::Address addr) const {
@@ -221,15 +242,6 @@ bool AclConnectionHandler::AcceptPendingScoConnection(bluetooth::hci::Address ad
     }
   }
   return false;
-}
-
-uint16_t AclConnectionHandler::GetScoHandle(bluetooth::hci::Address addr) const {
-  for (const auto& pair : sco_connections_) {
-    if (std::get<ScoConnection>(pair).GetAddress() == addr) {
-      return std::get<0>(pair);
-    }
-  }
-  return kReservedHandle;
 }
 
 ScoConnectionParameters AclConnectionHandler::GetScoConnectionParameters(

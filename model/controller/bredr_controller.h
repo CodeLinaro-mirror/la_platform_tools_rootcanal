@@ -60,7 +60,7 @@ AddressWithType PeerDeviceAddress(Address address, PeerAddressType peer_address_
 // address.
 AddressWithType PeerIdentityAddress(Address address, PeerAddressType peer_address_type);
 
-class LinkLayerController {
+class BrEdrController {
 public:
   static constexpr size_t kIrkSize = 16;
   static constexpr size_t kLtkSize = 16;
@@ -71,14 +71,13 @@ public:
   const uint32_t id_;
 
   // Generate a resolvable private address using the specified IRK.
-  static Address generate_rpa(std::array<uint8_t, LinkLayerController::kIrkSize> irk);
+  static Address generate_rpa(std::array<uint8_t, BrEdrController::kIrkSize> irk);
 
   // Return true if the input IRK is all 0s.
-  static bool irk_is_zero(std::array<uint8_t, LinkLayerController::kIrkSize> irk);
+  static bool irk_is_zero(std::array<uint8_t, BrEdrController::kIrkSize> irk);
 
-  LinkLayerController(const Address& address, const ControllerProperties& properties,
-                      uint32_t id = 0);
-  ~LinkLayerController();
+  BrEdrController(const Address& address, const ControllerProperties& properties, uint32_t id = 0);
+  ~BrEdrController();
 
   ErrorCode SendCommandToRemoteByAddress(OpCode opcode, pdl::packet::slice args,
                                          const Address& own_address, const Address& peer_address);
@@ -144,9 +143,7 @@ private:
 public:
   const Address& GetAddress() const;
 
-  void IncomingPacket(model::packets::LinkLayerPacketView incoming, Phy::Type phy, int8_t rssi);
-  void IncomingBrEdrPacket(model::packets::LinkLayerPacketView incoming, int8_t rssi);
-  void IncomingLePacket(model::packets::LinkLayerPacketView incoming, int8_t rssi);
+  void IncomingPacket(model::packets::LinkLayerPacketView incoming, int8_t rssi);
 
   void Tick();
   void Close();
@@ -679,9 +676,8 @@ protected:
   void IncomingReadRemoteSupportedFeaturesResponse(model::packets::LinkLayerPacketView incoming);
   void IncomingReadRemoteExtendedFeatures(model::packets::LinkLayerPacketView incoming);
   void IncomingReadRemoteExtendedFeaturesResponse(model::packets::LinkLayerPacketView incoming);
-  void IncomingReadRemoteVersion(model::packets::LinkLayerPacketView incoming, bool is_br_edr);
-  void IncomingReadRemoteVersionResponse(model::packets::LinkLayerPacketView incoming,
-                                         bool is_br_edr);
+  void IncomingReadRemoteVersion(model::packets::LinkLayerPacketView incoming);
+  void IncomingReadRemoteVersionResponse(model::packets::LinkLayerPacketView incoming);
   void IncomingReadClockOffset(model::packets::LinkLayerPacketView incoming);
   void IncomingReadClockOffsetResponse(model::packets::LinkLayerPacketView incoming);
   void IncomingRemoteNameRequest(model::packets::LinkLayerPacketView incoming);
