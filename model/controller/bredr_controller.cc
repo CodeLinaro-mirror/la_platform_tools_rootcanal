@@ -1027,26 +1027,65 @@ void BrEdrController::Reset() {
 }
 
 // HCI Write Local Name command (Vol 4, Part E § 7.3.11).
-void BrEdrController::WriteLocalName(std::array<uint8_t, kLocalNameSize> const& local_name) {
+void BrEdrController::WriteLocalName(std::array<uint8_t, 248> const& local_name) {
   local_name_ = local_name;
+}
+
+// HCI Read Scan Enable command (Vol 4, Part E § 7.3.17).
+void BrEdrController::ReadScanEnable(bluetooth::hci::ScanEnable* scan_enable) {
+  *scan_enable = inquiry_scan_enable_ && page_scan_enable_
+                         ? bluetooth::hci::ScanEnable::INQUIRY_AND_PAGE_SCAN
+                 : inquiry_scan_enable_ ? bluetooth::hci::ScanEnable::INQUIRY_SCAN_ONLY
+                 : page_scan_enable_    ? bluetooth::hci::ScanEnable::PAGE_SCAN_ONLY
+                                        : bluetooth::hci::ScanEnable::NO_SCANS;
+}
+
+// HCI Write Scan Enable command (Vol 4, Part E § 7.3.18).
+void BrEdrController::WriteScanEnable(bluetooth::hci::ScanEnable scan_enable) {
+  inquiry_scan_enable_ = scan_enable == bluetooth::hci::ScanEnable::INQUIRY_AND_PAGE_SCAN ||
+                         scan_enable == bluetooth::hci::ScanEnable::INQUIRY_SCAN_ONLY;
+  page_scan_enable_ = scan_enable == bluetooth::hci::ScanEnable::INQUIRY_AND_PAGE_SCAN ||
+                      scan_enable == bluetooth::hci::ScanEnable::PAGE_SCAN_ONLY;
+}
+
+// HCI Write Extended Inquiry Response command (Vol 4, Part E § 7.3.56).
+void BrEdrController::WriteExtendedInquiryResponse(
+        bool /*fec_required*/, std::array<uint8_t, 240> const& extended_inquiry_response) {
+  extended_inquiry_response_ = extended_inquiry_response;
+}
+
+// =============================================================================
+//  Status parameters (Vol 4, Part E § 7.5)
+// =============================================================================
+
+// HCI Read Rssi command (Vol 4, Part E § 7.5.4).
+ErrorCode BrEdrController::ReadRssi(uint16_t connection_handle, int8_t* rssi) {
+  if (!connections_.HasAclHandle(connection_handle)) {
+    // Not documented: If the connection handle is not found, the Controller
+    // shall return the error code Unknown Connection Identifier (0x02).
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  *rssi = connections_.GetAclConnection(connection_handle).GetRssi();
+  return ErrorCode::SUCCESS;
+}
+
+// HCI Read Encryption Key Size command (Vol 4, Part E § 7.5.7).
+ErrorCode BrEdrController::ReadEncryptionKeySize(uint16_t connection_handle, uint8_t* key_size) {
+  if (!connections_.HasAclHandle(connection_handle)) {
+    // Not documented: If the connection handle is not found, the Controller
+    // shall return the error code Unknown Connection Identifier (0x02).
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  // TODO: The Encryption Key Size should be specific to an ACL connection.
+  *key_size = 16;
+  return ErrorCode::SUCCESS;
 }
 
 // =============================================================================
 //  BR/EDR Commands
 // =============================================================================
-
-// HCI Read Rssi command (Vol 4, Part E § 7.5.4).
-ErrorCode BrEdrController::ReadRssi(uint16_t connection_handle, int8_t* rssi) {
-  if (connections_.HasAclHandle(connection_handle)) {
-    *rssi = connections_.GetAclConnection(connection_handle).GetRssi();
-    return ErrorCode::SUCCESS;
-  }
-
-  // Not documented: If the connection handle is not found, the Controller
-  // shall return the error code Unknown Connection Identifier (0x02).
-  INFO(id_, "unknown connection identifier");
-  return ErrorCode::UNKNOWN_CONNECTION;
-}
 
 void BrEdrController::SetSecureSimplePairingSupport(bool enable) {
   uint64_t bit = 0x1;
@@ -1089,11 +1128,6 @@ void BrEdrController::SetLocalName(std::vector<uint8_t> const& local_name) {
   ASSERT(local_name.size() <= local_name_.size());
   local_name_.fill(0);
   std::copy(local_name.begin(), local_name.end(), local_name_.begin());
-}
-
-void BrEdrController::SetExtendedInquiryResponse(
-        std::array<uint8_t, 240> const& extended_inquiry_response) {
-  extended_inquiry_response_ = extended_inquiry_response;
 }
 
 void BrEdrController::SetExtendedInquiryResponse(
@@ -1533,17 +1567,17 @@ void BrEdrController::IncomingInquiryPacket(model::packets::LinkLayerPacketView 
   switch (inquiry.GetInquiryType()) {
     case (model::packets::InquiryType::STANDARD): {
       SendLinkLayerPacket(model::packets::InquiryResponseBuilder::Create(
-              GetAddress(), peer, static_cast<uint8_t>(GetPageScanRepetitionMode()),
+              GetAddress(), peer, static_cast<uint8_t>(page_scan_repetition_mode_),
               class_of_device_, GetClockOffset()));
     } break;
     case (model::packets::InquiryType::RSSI): {
       SendLinkLayerPacket(model::packets::InquiryResponseWithRssiBuilder::Create(
-              GetAddress(), peer, static_cast<uint8_t>(GetPageScanRepetitionMode()),
+              GetAddress(), peer, static_cast<uint8_t>(page_scan_repetition_mode_),
               class_of_device_, GetClockOffset(), rssi));
     } break;
     case (model::packets::InquiryType::EXTENDED): {
       SendLinkLayerPacket(model::packets::ExtendedInquiryResponseBuilder::Create(
-              GetAddress(), peer, static_cast<uint8_t>(GetPageScanRepetitionMode()),
+              GetAddress(), peer, static_cast<uint8_t>(page_scan_repetition_mode_),
               class_of_device_, GetClockOffset(), rssi, extended_inquiry_response_));
     } break;
     default:
@@ -2194,10 +2228,6 @@ void BrEdrController::Inquiry() {
     inquiry_->next_inquiry_event = now + kInquiryInterval;
   }
 }
-
-void BrEdrController::SetInquiryScanEnable(bool enable) { inquiry_scan_enable_ = enable; }
-
-void BrEdrController::SetPageScanEnable(bool enable) { page_scan_enable_ = enable; }
 
 void BrEdrController::SetPageTimeout(uint16_t page_timeout) { page_timeout_ = page_timeout; }
 

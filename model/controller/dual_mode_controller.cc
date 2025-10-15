@@ -392,13 +392,15 @@ void DualModeController::ReadRssi(CommandView command) {
 void DualModeController::ReadEncryptionKeySize(CommandView command) {
   auto command_view = bluetooth::hci::ReadEncryptionKeySizeView::Create(command);
   CHECK_PACKET_VIEW(command_view);
+  uint16_t connection_handle = command_view.GetConnectionHandle();
 
   DEBUG(id_, "<< Read Encryption Key Size");
-  DEBUG(id_, "   connection_handle=0x{:x}", command_view.GetConnectionHandle());
+  DEBUG(id_, "   connection_handle=0x{:x}", connection_handle);
 
+  uint8_t key_size = 0;
+  auto status = bredr_controller_.ReadEncryptionKeySize(connection_handle, &key_size);
   send_event_(bluetooth::hci::ReadEncryptionKeySizeCompleteBuilder::Create(
-          kNumCommandPackets, ErrorCode::SUCCESS, command_view.GetConnectionHandle(),
-          bredr_controller_.GetEncryptionKeySize()));
+          kNumCommandPackets, status, connection_handle, key_size));
 }
 
 void DualModeController::HostBufferSize(CommandView command) {
@@ -1195,7 +1197,9 @@ void DualModeController::WriteExtendedInquiryResponse(CommandView command) {
 
   DEBUG(id_, "<< Write Extended Inquiry Response");
 
-  bredr_controller_.SetExtendedInquiryResponse(command_view.GetExtendedInquiryResponse());
+  bredr_controller_.WriteExtendedInquiryResponse(
+          command_view.GetFecRequired() == bluetooth::hci::FecRequired::REQUIRED,
+          command_view.GetExtendedInquiryResponse());
   send_event_(bluetooth::hci::WriteExtendedInquiryResponseCompleteBuilder::Create(
           kNumCommandPackets, ErrorCode::SUCCESS));
 }
@@ -1319,14 +1323,8 @@ void DualModeController::ReadScanEnable(CommandView command) {
 
   DEBUG(id_, "<< Read Scan Enable");
 
-  bool inquiry_scan = bredr_controller_.GetInquiryScanEnable();
-  bool page_scan = bredr_controller_.GetPageScanEnable();
-
-  bluetooth::hci::ScanEnable scan_enable =
-          inquiry_scan && page_scan ? bluetooth::hci::ScanEnable::INQUIRY_AND_PAGE_SCAN
-          : inquiry_scan            ? bluetooth::hci::ScanEnable::INQUIRY_SCAN_ONLY
-          : page_scan               ? bluetooth::hci::ScanEnable::PAGE_SCAN_ONLY
-                                    : bluetooth::hci::ScanEnable::NO_SCANS;
+  bluetooth::hci::ScanEnable scan_enable = bluetooth::hci::ScanEnable::NO_SCANS;
+  bredr_controller_.ReadScanEnable(&scan_enable);
 
   send_event_(bluetooth::hci::ReadScanEnableCompleteBuilder::Create(
           kNumCommandPackets, ErrorCode::SUCCESS, scan_enable));
@@ -1336,16 +1334,11 @@ void DualModeController::WriteScanEnable(CommandView command) {
   auto command_view = bluetooth::hci::WriteScanEnableView::Create(command);
   CHECK_PACKET_VIEW(command_view);
   bluetooth::hci::ScanEnable scan_enable = command_view.GetScanEnable();
-  bool inquiry_scan = scan_enable == bluetooth::hci::ScanEnable::INQUIRY_AND_PAGE_SCAN ||
-                      scan_enable == bluetooth::hci::ScanEnable::INQUIRY_SCAN_ONLY;
-  bool page_scan = scan_enable == bluetooth::hci::ScanEnable::INQUIRY_AND_PAGE_SCAN ||
-                   scan_enable == bluetooth::hci::ScanEnable::PAGE_SCAN_ONLY;
 
   DEBUG(id_, "<< Write Scan Enable");
   DEBUG(id_, "   scan_enable={}", bluetooth::hci::ScanEnableText(scan_enable));
 
-  bredr_controller_.SetInquiryScanEnable(inquiry_scan);
-  bredr_controller_.SetPageScanEnable(page_scan);
+  bredr_controller_.WriteScanEnable(scan_enable);
   send_event_(bluetooth::hci::WriteScanEnableCompleteBuilder::Create(kNumCommandPackets,
                                                                      ErrorCode::SUCCESS));
 }
