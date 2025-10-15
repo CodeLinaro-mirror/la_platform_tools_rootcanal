@@ -94,6 +94,8 @@ cc_library(
         "model/controller/acl_connection.h",
         "model/controller/acl_connection_handler.cc",
         "model/controller/acl_connection_handler.h",
+        "model/controller/bredr_controller.cc",
+        "model/controller/bredr_controller.h",
         "model/controller/connection_handle.h",
         "model/controller/controller_properties.cc",
         "model/controller/controller_properties.h",
@@ -103,8 +105,8 @@ cc_library(
         "model/controller/le_acl_connection.h",
         "model/controller/le_advertiser.cc",
         "model/controller/le_advertiser.h",
-        "model/controller/link_layer_controller.cc",
-        "model/controller/link_layer_controller.h",
+        "model/controller/le_controller.cc",
+        "model/controller/le_controller.h",
         "model/controller/sco_connection.cc",
         "model/controller/sco_connection.h",
         "model/controller/vendor_commands/csr.h",
@@ -228,8 +230,8 @@ genrule(
 
 genrule(
     name = "rootcanal_bredr_bb_cxx_gen",
-    srcs = ["packets/bredr_bb.pdl"],
-    outs = ["bredr_bb.h"],
+    srcs = ["packets/bredr_bb_packets.pdl"],
+    outs = ["packets/bredr_bb_packets.h"],
     cmd = "set -o pipefail; $(location @pdl-compiler//:pdlc) $(SRCS) | $(location @pdl-compiler//:pdl_cxx_generator) --namespace bredr_bb --include-header hci/address.h --using-namespace bluetooth::hci --output $(OUTS)",
     tools = [
         "@pdl-compiler//:pdl_cxx_generator",
