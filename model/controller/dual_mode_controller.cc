@@ -724,7 +724,11 @@ void DualModeController::ReadLocalOobData(CommandView command) {
 
   DEBUG(id_, "<< Read Local Oob Data");
 
-  bredr_controller_.ReadLocalOobData();
+  std::array<uint8_t, 16> c{};
+  std::array<uint8_t, 16> r{};
+  bredr_controller_.ReadLocalOobData(&c, &r);
+  send_event_(bluetooth::hci::ReadLocalOobDataCompleteBuilder::Create(kNumCommandPackets,
+                                                                      ErrorCode::SUCCESS, c, r));
 }
 
 void DualModeController::ReadLocalOobExtendedData(CommandView command) {
@@ -732,7 +736,13 @@ void DualModeController::ReadLocalOobExtendedData(CommandView command) {
 
   DEBUG(id_, "<< Read Local Oob Extended Data");
 
-  bredr_controller_.ReadLocalOobExtendedData();
+  std::array<uint8_t, 16> c_192{};
+  std::array<uint8_t, 16> r_192{};
+  std::array<uint8_t, 16> c_256{};
+  std::array<uint8_t, 16> r_256{};
+  bredr_controller_.ReadLocalOobExtendedData(&c_192, &r_192, &c_256, &r_256);
+  send_event_(bluetooth::hci::ReadLocalOobExtendedDataCompleteBuilder::Create(
+          kNumCommandPackets, ErrorCode::SUCCESS, c_192, r_192, c_256, r_256));
 }
 
 void DualModeController::SetMinEncryptionKeySize(CommandView command) {

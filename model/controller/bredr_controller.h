@@ -161,6 +161,9 @@ public:
   void WriteScanEnable(bluetooth::hci::ScanEnable scan_enable);
   void WriteExtendedInquiryResponse(bool fec_required,
                                     std::array<uint8_t, 240> const& extended_inquiry_response);
+  void ReadLocalOobData(std::array<uint8_t, 16>* c, std::array<uint8_t, 16>* r);
+  void ReadLocalOobExtendedData(std::array<uint8_t, 16>* c_192, std::array<uint8_t, 16>* r_192,
+                                std::array<uint8_t, 16>* c_256, std::array<uint8_t, 16>* r_256);
 
   // Status parameters (Vol 4, Part E § 7.5).
 
@@ -236,9 +239,6 @@ public:
   ErrorCode CentralLinkKey(uint8_t key_flag);
   ErrorCode WriteLinkSupervisionTimeout(uint16_t handle, uint16_t timeout);
   void CheckExpiringConnection(uint16_t handle);
-
-  void ReadLocalOobData();
-  void ReadLocalOobExtendedData();
 
   // Returns true if the specified ACL connection handle is valid.
   bool HasAclConnection(uint16_t connection_handle);

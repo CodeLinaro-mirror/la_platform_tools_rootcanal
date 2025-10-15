@@ -1054,6 +1054,41 @@ void BrEdrController::WriteExtendedInquiryResponse(
   extended_inquiry_response_ = extended_inquiry_response;
 }
 
+// HCI Read Local OOB Data command (Vol 4, Part E § 7.3.60).
+void BrEdrController::ReadLocalOobData(std::array<uint8_t, 16>* c, std::array<uint8_t, 16>* r) {
+  *c = std::array<uint8_t, 16>({'c', ' ', 'a', 'r', 'r', 'a', 'y', ' ', '0', '0', '0', '0', '0',
+                                '0', static_cast<uint8_t>((oob_id_ % 0x10000) >> 8),
+                                static_cast<uint8_t>(oob_id_ % 0x100)});
+
+  *r = std::array<uint8_t, 16>({'r', ' ', 'a', 'r', 'r', 'a', 'y', ' ', '0', '0', '0', '0', '0',
+                                '0', static_cast<uint8_t>((oob_id_ % 0x10000) >> 8),
+                                static_cast<uint8_t>(oob_id_ % 0x100)});
+  oob_id_ += 1;
+}
+
+// HCI Read Local OOB Extended Data command (Vol 4, Part E § 7.3.95).
+void BrEdrController::ReadLocalOobExtendedData(std::array<uint8_t, 16>* c_192,
+                                               std::array<uint8_t, 16>* r_192,
+                                               std::array<uint8_t, 16>* c_256,
+                                               std::array<uint8_t, 16>* r_256) {
+  *c_192 = std::array<uint8_t, 16>({'c', ' ', 'a', 'r', 'r', 'a', 'y', ' ', '1', '9', '2', '0', '0',
+                                    '0', static_cast<uint8_t>((oob_id_ % 0x10000) >> 8),
+                                    static_cast<uint8_t>(oob_id_ % 0x100)});
+
+  *r_192 = std::array<uint8_t, 16>({'r', ' ', 'a', 'r', 'r', 'a', 'y', ' ', '1', '9', '2', '0', '0',
+                                    '0', static_cast<uint8_t>((oob_id_ % 0x10000) >> 8),
+                                    static_cast<uint8_t>(oob_id_ % 0x100)});
+
+  *c_256 = std::array<uint8_t, 16>({'c', ' ', 'a', 'r', 'r', 'a', 'y', ' ', '2', '5', '6', '0', '0',
+                                    '0', static_cast<uint8_t>((oob_id_ % 0x10000) >> 8),
+                                    static_cast<uint8_t>(oob_id_ % 0x100)});
+
+  *r_256 = std::array<uint8_t, 16>({'r', ' ', 'a', 'r', 'r', 'a', 'y', ' ', '2', '5', '6', '0', '0',
+                                    '0', static_cast<uint8_t>((oob_id_ % 0x10000) >> 8),
+                                    static_cast<uint8_t>(oob_id_ % 0x100)});
+  oob_id_ += 1;
+}
+
 // =============================================================================
 //  Status parameters (Vol 4, Part E § 7.5)
 // =============================================================================
@@ -2114,42 +2149,6 @@ void BrEdrController::IncomingRoleSwitchResponse(model::packets::LinkLayerPacket
       send_event_(bluetooth::hci::RoleChangeBuilder::Create(status, bd_addr, new_role));
     });
   }
-}
-
-void BrEdrController::ReadLocalOobData() {
-  std::array<uint8_t, 16> c_array({'c', ' ', 'a', 'r', 'r', 'a', 'y', ' ', '0', '0', '0', '0', '0',
-                                   '0', static_cast<uint8_t>((oob_id_ % 0x10000) >> 8),
-                                   static_cast<uint8_t>(oob_id_ % 0x100)});
-
-  std::array<uint8_t, 16> r_array({'r', ' ', 'a', 'r', 'r', 'a', 'y', ' ', '0', '0', '0', '0', '0',
-                                   '0', static_cast<uint8_t>((oob_id_ % 0x10000) >> 8),
-                                   static_cast<uint8_t>(oob_id_ % 0x100)});
-
-  send_event_(bluetooth::hci::ReadLocalOobDataCompleteBuilder::Create(1, ErrorCode::SUCCESS,
-                                                                      c_array, r_array));
-  oob_id_ += 1;
-}
-
-void BrEdrController::ReadLocalOobExtendedData() {
-  std::array<uint8_t, 16> c_192_array({'c', ' ', 'a', 'r', 'r', 'a', 'y', ' ', '1', '9', '2', '0',
-                                       '0', '0', static_cast<uint8_t>((oob_id_ % 0x10000) >> 8),
-                                       static_cast<uint8_t>(oob_id_ % 0x100)});
-
-  std::array<uint8_t, 16> r_192_array({'r', ' ', 'a', 'r', 'r', 'a', 'y', ' ', '1', '9', '2', '0',
-                                       '0', '0', static_cast<uint8_t>((oob_id_ % 0x10000) >> 8),
-                                       static_cast<uint8_t>(oob_id_ % 0x100)});
-
-  std::array<uint8_t, 16> c_256_array({'c', ' ', 'a', 'r', 'r', 'a', 'y', ' ', '2', '5', '6', '0',
-                                       '0', '0', static_cast<uint8_t>((oob_id_ % 0x10000) >> 8),
-                                       static_cast<uint8_t>(oob_id_ % 0x100)});
-
-  std::array<uint8_t, 16> r_256_array({'r', ' ', 'a', 'r', 'r', 'a', 'y', ' ', '2', '5', '6', '0',
-                                       '0', '0', static_cast<uint8_t>((oob_id_ % 0x10000) >> 8),
-                                       static_cast<uint8_t>(oob_id_ % 0x100)});
-
-  send_event_(bluetooth::hci::ReadLocalOobExtendedDataCompleteBuilder::Create(
-          1, ErrorCode::SUCCESS, c_192_array, r_192_array, c_256_array, r_256_array));
-  oob_id_ += 1;
 }
 
 ErrorCode BrEdrController::WriteLinkSupervisionTimeout(uint16_t handle, uint16_t /* timeout */) {
