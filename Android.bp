@@ -440,10 +440,10 @@ genrule {
         " --using-namespace bluetooth::hci" +
         " --output $(out)",
     srcs: [
-        "packets/bredr_bb.pdl",
+        "packets/bredr_bb_packets.pdl",
     ],
     out: [
-        "bredr_bb.h",
+        "packets/bredr_bb_packets.h",
     ],
 }
 
