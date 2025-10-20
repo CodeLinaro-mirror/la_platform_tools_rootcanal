@@ -74,7 +74,7 @@ public:
 
   // Link Control commands (Vol 4, Part E § 7.1).
 
-  ErrorCode Inquiry(uint32_t lap, uint8_t inquiry_length, uint8_t num_responses);
+  ErrorCode Inquiry(uint8_t lap, uint8_t inquiry_length, uint8_t num_responses);
   ErrorCode InquiryCancel();
   ErrorCode CreateConnection(Address bd_addr, uint16_t packet_type,
                              uint8_t page_scan_repetition_mode, uint16_t clock_offset,
@@ -329,6 +329,9 @@ private:
   uint16_t inquiry_scan_interval_{0x1000};
   uint16_t inquiry_scan_window_{0x0012};
 
+  // Inquiry Mode (Vol 4, Part E § 6.5).
+  model::packets::InquiryType inquiry_mode_{model::packets::InquiryType::STANDARD};
+
   // Page Timeout (Vol 4, Part E § 6.6).
   uint16_t page_timeout_{0x2000};
 
@@ -402,7 +405,7 @@ private:
   struct ControllerOps controller_ops_;
 
   // Classic state.
-  struct Page {
+  struct PageState {
     Address bd_addr;
     uint8_t allow_role_switch;
     std::chrono::steady_clock::time_point next_page_event{};
@@ -411,9 +414,9 @@ private:
 
   // Page substate.
   // RootCanal will allow only one page request running at the same time.
-  std::optional<Page> page_;
+  std::optional<PageState> page_;
 
-  struct PageScan {
+  struct PageScanState {
     Address bd_addr;
     bool authentication_required;
     uint8_t allow_role_switch;
@@ -422,13 +425,19 @@ private:
   // Page scan substate.
   // Set when page scan is enabled and a valid page request is received.
   // Holds the state for the connection being established.
-  std::optional<PageScan> page_scan_;
+  std::optional<PageScanState> page_scan_;
 
-  std::chrono::steady_clock::time_point last_inquiry_;
-  model::packets::InquiryType inquiry_mode_{model::packets::InquiryType::STANDARD};
-  TaskId inquiry_timer_task_id_ = kInvalidTaskId;
-  uint64_t inquiry_lap_{};
-  uint8_t inquiry_max_responses_{};
+  // Inquiry substate.
+  struct InquiryState {
+    uint8_t lap;
+    uint8_t num_responses;
+    std::chrono::steady_clock::time_point next_inquiry_event{};
+    std::chrono::steady_clock::time_point inquiry_timeout{};
+  };
+
+  // Inquiry substate.
+  // RootCanal will allow only one inquiry request running at the same time.
+  std::optional<InquiryState> inquiry_;
 
 public:
   // Type of scheduled tasks.

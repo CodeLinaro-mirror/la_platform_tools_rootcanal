@@ -57,6 +57,7 @@ namespace rootcanal {
 
 constexpr milliseconds kNoDelayMs(0);
 constexpr milliseconds kPageInterval(1000);
+constexpr milliseconds kInquiryInterval(2000);
 
 const Address& BrEdrController::GetAddress() const { return address_; }
 
@@ -78,24 +79,35 @@ bool BrEdrController::IsEventUnmasked(EventCode event) const {
 // =============================================================================
 
 // HCI Inquiry (Vol 4, Part E § 7.1.1).
-ErrorCode BrEdrController::Inquiry(uint32_t lap, uint8_t inquiry_length, uint8_t num_responses) {
+ErrorCode BrEdrController::Inquiry(uint8_t lap, uint8_t inquiry_length, uint8_t num_responses) {
   if (num_responses > 0xff || inquiry_length < 0x1 || inquiry_length > 0x30) {
     return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
   }
 
-  inquiry_lap_ = lap;
-  inquiry_max_responses_ = num_responses;
-  inquiry_timer_task_id_ = ScheduleTask(std::chrono::milliseconds(inquiry_length * 1280),
-                                        [this]() { BrEdrController::InquiryTimeout(); });
+  if (inquiry_.has_value()) {
+    INFO(id_, "Inquiry command is already pending");
+    return ErrorCode::COMMAND_DISALLOWED;
+  }
+
+  auto now = std::chrono::steady_clock::now();
+  inquiry_ = InquiryState{
+          .lap = lap,
+          .num_responses = num_responses,
+          .next_inquiry_event = now + kInquiryInterval,
+          .inquiry_timeout = now + std::chrono::milliseconds(inquiry_length * 1280),
+  };
 
   return ErrorCode::SUCCESS;
 }
 
 // HCI Inquiry Cancel (Vol 4, Part E § 7.1.2).
 ErrorCode BrEdrController::InquiryCancel() {
-  ASSERT(inquiry_timer_task_id_ != kInvalidTaskId);
-  CancelScheduledTask(inquiry_timer_task_id_);
-  inquiry_timer_task_id_ = kInvalidTaskId;
+  if (!inquiry_.has_value()) {
+    INFO(id_, "Inquiry command is not pending");
+    return ErrorCode::COMMAND_DISALLOWED;
+  }
+
+  inquiry_ = {};
   return ErrorCode::SUCCESS;
 }
 
@@ -125,7 +137,7 @@ ErrorCode BrEdrController::CreateConnection(Address bd_addr, uint16_t /* packet_
   }
 
   auto now = std::chrono::steady_clock::now();
-  page_ = Page{
+  page_ = PageState{
           .bd_addr = bd_addr,
           .allow_role_switch = allow_role_switch,
           .next_page_event = now + kPageInterval,
@@ -1111,7 +1123,7 @@ void BrEdrController::IncomingPagePacket(model::packets::LinkLayerPacketView inc
 
   INFO(id_, "processing connection request from {}", bd_addr);
 
-  page_scan_ = PageScan{
+  page_scan_ = PageScanState{
           .bd_addr = bd_addr,
           .authentication_required = authentication_enable_ == AuthenticationEnable::REQUIRED,
           .allow_role_switch = page.GetAllowRoleSwitch(),
@@ -1188,10 +1200,7 @@ void BrEdrController::IncomingPageResponsePacket(model::packets::LinkLayerPacket
 void BrEdrController::Tick() {
   RunPendingTasks();
   Paging();
-
-  if (inquiry_timer_task_id_ != kInvalidTaskId) {
-    Inquiry();
-  }
+  Inquiry();
   link_manager_tick(lm_.get());
 }
 
@@ -1667,10 +1676,7 @@ void BrEdrController::Reset() {
   page_scan_repetition_mode_ = PageScanRepetitionMode::R0;
   oob_id_ = 1;
   key_id_ = 1;
-  last_inquiry_ = steady_clock::now();
   inquiry_mode_ = InquiryType::STANDARD;
-  inquiry_lap_ = 0;
-  inquiry_max_responses_ = 0;
 
   bluetooth::hci::Lap general_iac;
   general_iac.lap_ = 0x33;  // 0x9E8B33
@@ -1679,11 +1685,7 @@ void BrEdrController::Reset() {
 
   page_ = {};
   page_scan_ = {};
-
-  if (inquiry_timer_task_id_ != kInvalidTaskId) {
-    CancelScheduledTask(inquiry_timer_task_id_);
-    inquiry_timer_task_id_ = kInvalidTaskId;
-  }
+  inquiry_ = {};
 
   lm_.reset(link_manager_create(controller_ops_));
 }
@@ -1714,28 +1716,31 @@ void BrEdrController::Paging() {
   }
 }
 
-void BrEdrController::InquiryTimeout() {
-  if (inquiry_timer_task_id_ != kInvalidTaskId) {
-    inquiry_timer_task_id_ = kInvalidTaskId;
-    if (IsEventUnmasked(EventCode::INQUIRY_COMPLETE)) {
-      send_event_(bluetooth::hci::InquiryCompleteBuilder::Create(ErrorCode::SUCCESS));
-    }
-  }
-}
-
 void BrEdrController::SetInquiryMode(uint8_t mode) {
   inquiry_mode_ = static_cast<model::packets::InquiryType>(mode);
 }
 
+/// Drive the logic for the Inquiry controller substate.
 void BrEdrController::Inquiry() {
-  steady_clock::time_point now = steady_clock::now();
-  if (duration_cast<milliseconds>(now - last_inquiry_) < milliseconds(2000)) {
+  auto now = std::chrono::steady_clock::now();
+
+  if (inquiry_.has_value() && now >= inquiry_->inquiry_timeout) {
+    INFO("inquiry timeout triggered");
+
+    if (IsEventUnmasked(EventCode::INQUIRY_COMPLETE)) {
+      send_event_(bluetooth::hci::InquiryCompleteBuilder::Create(ErrorCode::SUCCESS));
+    }
+
+    inquiry_ = {};
     return;
   }
 
-  SendLinkLayerPacket(model::packets::InquiryBuilder::Create(GetAddress(), Address::kEmpty,
-                                                             inquiry_mode_, inquiry_lap_));
-  last_inquiry_ = now;
+  // Send an Inquiry packet to the peer when an inquiry interval has passed.
+  if (inquiry_.has_value() && now >= inquiry_->next_inquiry_event) {
+    SendLinkLayerPacket(model::packets::InquiryBuilder::Create(GetAddress(), Address::kEmpty,
+                                                               inquiry_mode_, inquiry_->lap));
+    inquiry_->next_inquiry_event = now + kInquiryInterval;
+  }
 }
 
 void BrEdrController::SetInquiryScanEnable(bool enable) { inquiry_scan_enable_ = enable; }
