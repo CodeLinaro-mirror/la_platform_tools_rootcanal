@@ -146,6 +146,11 @@ public:
   ErrorCode WriteLinkPolicySettings(uint16_t connection_handle, uint16_t link_policy_settings);
   ErrorCode ReadDefaultLinkPolicySettings(uint16_t* default_link_policy_settings) const;
   ErrorCode WriteDefaultLinkPolicySettings(uint16_t default_link_policy_settings);
+  ErrorCode FlowSpecification(uint16_t connection_handle, uint8_t flow_direction,
+                              uint8_t service_type, uint32_t token_rate, uint32_t token_bucket_size,
+                              uint32_t peak_bandwidth, uint32_t access_latency);
+  ErrorCode SniffSubrating(uint16_t connection_handle, uint16_t max_latency,
+                           uint16_t min_remote_timeout, uint16_t min_local_timeout);
 
   // Internal task scheduler.
   //
@@ -221,9 +226,6 @@ public:
   void SetPageTimeout(uint16_t page_timeout);
 
   ErrorCode CentralLinkKey(uint8_t key_flag);
-  ErrorCode FlowSpecification(uint16_t handle, uint8_t flow_direction, uint8_t service_type,
-                              uint32_t token_rate, uint32_t token_bucket_size,
-                              uint32_t peak_bandwidth, uint32_t access_latency);
   ErrorCode WriteLinkSupervisionTimeout(uint16_t handle, uint16_t timeout);
   void CheckExpiringConnection(uint16_t handle);
 

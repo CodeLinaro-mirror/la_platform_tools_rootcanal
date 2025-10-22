@@ -1094,8 +1094,11 @@ void DualModeController::SniffSubrating(CommandView command) {
   DEBUG(id_, "<< Sniff Subrating");
   DEBUG(id_, "   connection_handle=0x{:x}", connection_handle);
 
-  send_event_(bluetooth::hci::SniffSubratingCompleteBuilder::Create(
-          kNumCommandPackets, ErrorCode::SUCCESS, connection_handle));
+  auto status = bredr_controller_.SniffSubrating(connection_handle, command_view.GetMaxLatency(),
+                                                 command_view.GetMinRemoteTimeout(),
+                                                 command_view.GetMinLocalTimeout());
+  send_event_(bluetooth::hci::SniffSubratingCompleteBuilder::Create(kNumCommandPackets, status,
+                                                                    connection_handle));
 }
 
 void DualModeController::FlowSpecification(CommandView command) {
