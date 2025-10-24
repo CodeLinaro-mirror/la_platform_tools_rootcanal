@@ -74,6 +74,32 @@ bool BrEdrController::IsEventUnmasked(EventCode event) const {
 }
 
 // =============================================================================
+//  Link Control commands (Vol 4, Part E § 7.1)
+// =============================================================================
+
+// HCI Inquiry (Vol 4, Part E § 7.1.1).
+ErrorCode BrEdrController::Inquiry(uint32_t lap, uint8_t inquiry_length, uint8_t num_responses) {
+  if (num_responses > 0xff || inquiry_length < 0x1 || inquiry_length > 0x30) {
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  inquiry_lap_ = lap;
+  inquiry_max_responses_ = num_responses;
+  inquiry_timer_task_id_ = ScheduleTask(std::chrono::milliseconds(inquiry_length * 1280),
+                                        [this]() { BrEdrController::InquiryTimeout(); });
+
+  return ErrorCode::SUCCESS;
+}
+
+// HCI Inquiry Cancel (Vol 4, Part E § 7.1.2).
+ErrorCode BrEdrController::InquiryCancel() {
+  ASSERT(inquiry_timer_task_id_ != kInvalidTaskId);
+  CancelScheduledTask(inquiry_timer_task_id_);
+  inquiry_timer_task_id_ = kInvalidTaskId;
+  return ErrorCode::SUCCESS;
+}
+
+// =============================================================================
 //  BR/EDR Commands
 // =============================================================================
 
@@ -1679,17 +1705,6 @@ void BrEdrController::Paging() {
   }
 }
 
-void BrEdrController::StartInquiry(milliseconds timeout) {
-  inquiry_timer_task_id_ =
-          ScheduleTask(milliseconds(timeout), [this]() { BrEdrController::InquiryTimeout(); });
-}
-
-void BrEdrController::InquiryCancel() {
-  ASSERT(inquiry_timer_task_id_ != kInvalidTaskId);
-  CancelScheduledTask(inquiry_timer_task_id_);
-  inquiry_timer_task_id_ = kInvalidTaskId;
-}
-
 void BrEdrController::InquiryTimeout() {
   if (inquiry_timer_task_id_ != kInvalidTaskId) {
     inquiry_timer_task_id_ = kInvalidTaskId;
@@ -1702,10 +1717,6 @@ void BrEdrController::InquiryTimeout() {
 void BrEdrController::SetInquiryMode(uint8_t mode) {
   inquiry_mode_ = static_cast<model::packets::InquiryType>(mode);
 }
-
-void BrEdrController::SetInquiryLAP(uint64_t lap) { inquiry_lap_ = lap; }
-
-void BrEdrController::SetInquiryMaxResponses(uint8_t max) { inquiry_max_responses_ = max; }
 
 void BrEdrController::Inquiry() {
   steady_clock::time_point now = steady_clock::now();
