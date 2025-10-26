@@ -1645,23 +1645,17 @@ void DualModeController::SetEventFilter(CommandView command) {
 void DualModeController::Inquiry(CommandView command) {
   auto command_view = bluetooth::hci::InquiryView::Create(command);
   CHECK_PACKET_VIEW(command_view);
-  auto max_responses = command_view.GetNumResponses();
-  auto length = command_view.GetInquiryLength();
+  auto lap = command_view.GetLap().lap_;
+  auto inquiry_length = command_view.GetInquiryLength();
+  auto num_responses = command_view.GetNumResponses();
 
   DEBUG(id_, "<< Inquiry");
-  DEBUG(id_, "   num_responses={}", max_responses);
-  DEBUG(id_, "   inquiry_length={}", length);
+  DEBUG(id_, "   LAP={}", lap);
+  DEBUG(id_, "   inquiry_length={}", inquiry_length);
+  DEBUG(id_, "   num_responses={}", num_responses);
 
-  if (max_responses > 0xff || length < 1 || length > 0x30) {
-    send_event_(bluetooth::hci::InquiryStatusBuilder::Create(
-            ErrorCode::INVALID_HCI_COMMAND_PARAMETERS, kNumCommandPackets));
-    return;
-  }
-  bredr_controller_.SetInquiryLAP(command_view.GetLap().lap_);
-  bredr_controller_.SetInquiryMaxResponses(max_responses);
-  bredr_controller_.StartInquiry(std::chrono::milliseconds(length * 1280));
-
-  send_event_(bluetooth::hci::InquiryStatusBuilder::Create(ErrorCode::SUCCESS, kNumCommandPackets));
+  auto status = bredr_controller_.Inquiry(lap, inquiry_length, num_responses);
+  send_event_(bluetooth::hci::InquiryStatusBuilder::Create(status, kNumCommandPackets));
 }
 
 void DualModeController::InquiryCancel(CommandView command) {
@@ -1670,9 +1664,8 @@ void DualModeController::InquiryCancel(CommandView command) {
 
   DEBUG(id_, "<< Inquiry Cancel");
 
-  bredr_controller_.InquiryCancel();
-  send_event_(bluetooth::hci::InquiryCancelCompleteBuilder::Create(kNumCommandPackets,
-                                                                   ErrorCode::SUCCESS));
+  auto status = bredr_controller_.InquiryCancel();
+  send_event_(bluetooth::hci::InquiryCancelCompleteBuilder::Create(kNumCommandPackets, status));
 }
 
 void DualModeController::AcceptConnectionRequest(CommandView command) {
