@@ -57,6 +57,7 @@ namespace rootcanal {
 
 constexpr milliseconds kNoDelayMs(0);
 constexpr milliseconds kPageInterval(1000);
+constexpr milliseconds kInquiryInterval(2000);
 
 const Address& BrEdrController::GetAddress() const { return address_; }
 
@@ -78,24 +79,862 @@ bool BrEdrController::IsEventUnmasked(EventCode event) const {
 // =============================================================================
 
 // HCI Inquiry (Vol 4, Part E § 7.1.1).
-ErrorCode BrEdrController::Inquiry(uint32_t lap, uint8_t inquiry_length, uint8_t num_responses) {
+ErrorCode BrEdrController::Inquiry(uint8_t lap, uint8_t inquiry_length, uint8_t num_responses) {
   if (num_responses > 0xff || inquiry_length < 0x1 || inquiry_length > 0x30) {
     return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
   }
 
-  inquiry_lap_ = lap;
-  inquiry_max_responses_ = num_responses;
-  inquiry_timer_task_id_ = ScheduleTask(std::chrono::milliseconds(inquiry_length * 1280),
-                                        [this]() { BrEdrController::InquiryTimeout(); });
+  if (inquiry_.has_value()) {
+    INFO(id_, "Inquiry command is already pending");
+    return ErrorCode::COMMAND_DISALLOWED;
+  }
+
+  auto now = std::chrono::steady_clock::now();
+  inquiry_ = InquiryState{
+          .lap = lap,
+          .num_responses = num_responses,
+          .next_inquiry_event = now + kInquiryInterval,
+          .inquiry_timeout = now + std::chrono::milliseconds(inquiry_length * 1280),
+  };
 
   return ErrorCode::SUCCESS;
 }
 
 // HCI Inquiry Cancel (Vol 4, Part E § 7.1.2).
 ErrorCode BrEdrController::InquiryCancel() {
-  ASSERT(inquiry_timer_task_id_ != kInvalidTaskId);
-  CancelScheduledTask(inquiry_timer_task_id_);
-  inquiry_timer_task_id_ = kInvalidTaskId;
+  if (!inquiry_.has_value()) {
+    INFO(id_, "Inquiry command is not pending");
+    return ErrorCode::COMMAND_DISALLOWED;
+  }
+
+  inquiry_ = {};
+  return ErrorCode::SUCCESS;
+}
+
+// HCI Create Connection (Vol 4, Part E § 7.1.5).
+ErrorCode BrEdrController::CreateConnection(Address bd_addr, uint16_t /* packet_type */,
+                                            uint8_t /* page_scan_repetition_mode */,
+                                            uint16_t /* clock_offset */,
+                                            uint8_t allow_role_switch) {
+  // RootCanal only accepts one pending outgoing connection at any time.
+  if (page_.has_value()) {
+    INFO(id_, "Create Connection command is already pending");
+    return ErrorCode::COMMAND_DISALLOWED;
+  }
+
+  // Reject the command if a connection already exists
+  // for the selected peer address.
+  if (connections_.GetAclConnectionHandle(bd_addr).has_value()) {
+    INFO(id_, "Connection with {} already exists", bd_addr);
+    return ErrorCode::CONNECTION_ALREADY_EXISTS;
+  }
+
+  // Reject the command if a pending connection already exists
+  // for the selected peer address.
+  if (page_scan_.has_value() && page_scan_->bd_addr == bd_addr) {
+    INFO(id_, "Connection with {} is already being established", bd_addr);
+    return ErrorCode::CONNECTION_ALREADY_EXISTS;
+  }
+
+  auto now = std::chrono::steady_clock::now();
+  page_ = PageState{
+          .bd_addr = bd_addr,
+          .allow_role_switch = allow_role_switch,
+          .next_page_event = now + kPageInterval,
+          .page_timeout = now + slots(page_timeout_),
+  };
+
+  return ErrorCode::SUCCESS;
+}
+
+// HCI Disconnect (Vol 4, Part E § 7.1.6).
+// \p host_reason is taken from the Disconnect command, and sent over
+// to the remote as disconnect error. \p controller_reason is the code
+// used in the DisconnectionComplete event.
+ErrorCode BrEdrController::Disconnect(uint16_t handle, ErrorCode host_reason,
+                                      ErrorCode controller_reason) {
+  if (connections_.HasScoHandle(handle)) {
+    const Address remote = connections_.GetScoAddress(handle);
+    INFO(id_, "Disconnecting eSCO connection with {}", remote);
+
+    SendLinkLayerPacket(model::packets::ScoDisconnectBuilder::Create(
+            GetAddress(), remote, static_cast<uint8_t>(host_reason)));
+
+    connections_.Disconnect(handle, [this](TaskId task_id) { CancelScheduledTask(task_id); });
+    SendDisconnectionCompleteEvent(handle, controller_reason);
+    return ErrorCode::SUCCESS;
+  }
+
+  if (connections_.HasAclHandle(handle)) {
+    auto connection = connections_.GetAclConnection(handle);
+    auto address = connection.address;
+    INFO(id_, "Disconnecting ACL connection with {}", connection.address);
+
+    auto sco_handle = connections_.GetScoConnectionHandle(connection.address);
+    if (sco_handle.has_value()) {
+      SendLinkLayerPacket(model::packets::ScoDisconnectBuilder::Create(
+              connection.own_address, connection.address, static_cast<uint8_t>(host_reason)));
+
+      connections_.Disconnect(*sco_handle,
+                              [this](TaskId task_id) { CancelScheduledTask(task_id); });
+      SendDisconnectionCompleteEvent(*sco_handle, controller_reason);
+    }
+
+    SendLinkLayerPacket(model::packets::DisconnectBuilder::Create(
+            connection.own_address, connection.address, static_cast<uint8_t>(host_reason)));
+
+    connections_.Disconnect(handle, [this](TaskId task_id) { CancelScheduledTask(task_id); });
+    SendDisconnectionCompleteEvent(handle, controller_reason);
+
+    ASSERT(link_manager_remove_link(lm_.get(), reinterpret_cast<uint8_t (*)[6]>(address.data())));
+    return ErrorCode::SUCCESS;
+  }
+
+  return ErrorCode::UNKNOWN_CONNECTION;
+}
+
+// HCI Create Connection Cancel (Vol 4, Part E § 7.1.7).
+ErrorCode BrEdrController::CreateConnectionCancel(Address bd_addr) {
+  // If the HCI_Create_Connection_Cancel command is sent to the Controller
+  // without a preceding HCI_Create_Connection command to the same device,
+  // the BR/EDR Controller shall return an HCI_Command_Complete event with
+  // the error code Unknown Connection Identifier (0x02)
+  if (!page_.has_value() || page_->bd_addr != bd_addr) {
+    INFO(id_, "no pending connection to {}", bd_addr.ToString());
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  // The HCI_Connection_Complete event for the corresponding HCI_Create_-
+  // Connection command shall always be sent. The HCI_Connection_Complete
+  // event shall be sent after the HCI_Command_Complete event for the
+  // HCI_Create_Connection_Cancel command. If the cancellation was successful,
+  // the HCI_Connection_Complete event will be generated with the error code
+  // Unknown Connection Identifier (0x02).
+  if (IsEventUnmasked(EventCode::CONNECTION_COMPLETE)) {
+    ScheduleTask(kNoDelayMs, [this, bd_addr]() {
+      send_event_(bluetooth::hci::ConnectionCompleteBuilder::Create(
+              ErrorCode::UNKNOWN_CONNECTION, 0, bd_addr, bluetooth::hci::LinkType::ACL,
+              bluetooth::hci::Enable::DISABLED));
+    });
+  }
+
+  page_ = {};
+  return ErrorCode::SUCCESS;
+}
+
+// HCI Accept Connection Request (Vol 4, Part E § 7.1.8).
+ErrorCode BrEdrController::AcceptConnectionRequest(Address bd_addr, bool try_role_switch) {
+  if (page_scan_.has_value() && page_scan_->bd_addr == bd_addr) {
+    INFO(id_, "Accepting connection request from {}", bd_addr);
+    ScheduleTask(kNoDelayMs, [this, bd_addr, try_role_switch]() {
+      INFO(id_, "Accepted connection from {}", bd_addr);
+      MakePeripheralConnection(bd_addr, try_role_switch);
+    });
+
+    return ErrorCode::SUCCESS;
+  }
+
+  // The HCI command Accept Connection may be used to accept incoming SCO
+  // connection requests.
+  if (connections_.HasPendingScoConnection(bd_addr)) {
+    ErrorCode status = ErrorCode::SUCCESS;
+    uint16_t sco_handle = *connections_.GetScoConnectionHandle(bd_addr);
+    ScoLinkParameters link_parameters = {};
+    ScoConnectionParameters connection_parameters =
+            connections_.GetScoConnectionParameters(bd_addr);
+
+    if (!connections_.AcceptPendingScoConnection(bd_addr, connection_parameters, [this, bd_addr] {
+          return BrEdrController::StartScoStream(bd_addr);
+        })) {
+      connections_.CancelPendingScoConnection(bd_addr);
+      status = ErrorCode::SCO_INTERVAL_REJECTED;  // TODO: proper status code
+      sco_handle = 0;
+    } else {
+      link_parameters = connections_.GetScoLinkParameters(bd_addr);
+    }
+
+    // Send eSCO connection response to peer.
+    SendLinkLayerPacket(model::packets::ScoConnectionResponseBuilder::Create(
+            GetAddress(), bd_addr, (uint8_t)status, link_parameters.transmission_interval,
+            link_parameters.retransmission_window, link_parameters.rx_packet_length,
+            link_parameters.tx_packet_length, link_parameters.air_mode, link_parameters.extended));
+
+    // Schedule HCI Connection Complete event.
+    if (IsEventUnmasked(EventCode::CONNECTION_COMPLETE)) {
+      ScheduleTask(kNoDelayMs, [this, status, sco_handle, bd_addr]() {
+        send_event_(bluetooth::hci::ConnectionCompleteBuilder::Create(
+                ErrorCode(status), sco_handle, bd_addr, bluetooth::hci::LinkType::SCO,
+                bluetooth::hci::Enable::DISABLED));
+      });
+    }
+
+    return ErrorCode::SUCCESS;
+  }
+
+  INFO(id_, "No pending connection for {}", bd_addr);
+  return ErrorCode::UNKNOWN_CONNECTION;
+}
+
+// HCI Accept Connection Request (Vol 4, Part E § 7.1.9).
+ErrorCode BrEdrController::RejectConnectionRequest(Address bd_addr, uint8_t reason) {
+  if (!page_scan_.has_value() || page_scan_->bd_addr != bd_addr) {
+    INFO(id_, "No pending connection for {}", bd_addr);
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  ScheduleTask(kNoDelayMs,
+               [this, bd_addr, reason]() { RejectPeripheralConnection(bd_addr, reason); });
+
+  return ErrorCode::SUCCESS;
+}
+
+// HCI Change Connection Packet Type (Vol 4, Part E § 7.1.14).
+ErrorCode BrEdrController::ChangeConnectionPacketType(uint16_t connection_handle,
+                                                      uint16_t packet_type) {
+  if (!connections_.HasAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  ScheduleTask(kNoDelayMs, [this, connection_handle, packet_type]() {
+    if (IsEventUnmasked(EventCode::CONNECTION_PACKET_TYPE_CHANGED)) {
+      send_event_(bluetooth::hci::ConnectionPacketTypeChangedBuilder::Create(
+              ErrorCode::SUCCESS, connection_handle, packet_type));
+    }
+  });
+
+  return ErrorCode::SUCCESS;
+}
+
+// HCI Change Connection Link Key (Vol 4, Part E § 7.1.17).
+ErrorCode BrEdrController::ChangeConnectionLinkKey(uint16_t connection_handle) {
+  if (!connections_.HasAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  // TODO: implement real logic
+  return ErrorCode::COMMAND_DISALLOWED;
+}
+
+// HCI Remote Name Request (Vol 4, Part E § 7.1.19).
+ErrorCode BrEdrController::RemoteNameRequest(Address bd_addr, uint8_t /*page_scan_repetition_mode*/,
+                                             uint16_t /*clock_offset*/) {
+  // LMP features get requested with remote name requests.
+  SendLinkLayerPacket(model::packets::ReadRemoteLmpFeaturesBuilder::Create(GetAddress(), bd_addr));
+  SendLinkLayerPacket(model::packets::RemoteNameRequestBuilder::Create(GetAddress(), bd_addr));
+
+  return ErrorCode::SUCCESS;
+}
+
+// HCI Read Remote Supported Features (Vol 4, Part E § 7.1.21).
+ErrorCode BrEdrController::ReadRemoteSupportedFeatures(uint16_t connection_handle) {
+  if (!connections_.HasAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  auto& connection = connections_.GetAclConnection(connection_handle);
+  SendLinkLayerPacket(model::packets::ReadRemoteSupportedFeaturesBuilder::Create(
+          connection.own_address, connection.address));
+  return ErrorCode::SUCCESS;
+}
+
+// HCI Read Remote Extended Features (Vol 4, Part E § 7.1.22).
+ErrorCode BrEdrController::ReadRemoteExtendedFeatures(uint16_t connection_handle,
+                                                      uint8_t page_number) {
+  if (!connections_.HasAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  auto& connection = connections_.GetAclConnection(connection_handle);
+  SendLinkLayerPacket(model::packets::ReadRemoteExtendedFeaturesBuilder::Create(
+          connection.own_address, connection.address, page_number));
+  return ErrorCode::SUCCESS;
+}
+
+// HCI Read Remote Version Information (Vol 4, Part E § 7.1.23).
+ErrorCode BrEdrController::ReadRemoteVersionInformation(uint16_t connection_handle) {
+  if (!connections_.HasAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  auto& connection = connections_.GetAclConnection(connection_handle);
+  SendLinkLayerPacket(model::packets::ReadRemoteVersionInformationBuilder::Create(
+          connection.own_address, connection.address));
+  return ErrorCode::SUCCESS;
+}
+
+// HCI Read Clock Offset (Vol 4, Part E § 7.1.24).
+ErrorCode BrEdrController::ReadClockOffset(uint16_t connection_handle) {
+  if (!connections_.HasAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  auto& connection = connections_.GetAclConnection(connection_handle);
+  SendLinkLayerPacket(model::packets::ReadClockOffsetBuilder::Create(connection.own_address,
+                                                                     connection.address));
+  return ErrorCode::SUCCESS;
+}
+
+// HCI Add SCO Connection.
+// Deprecated in the Core specification v1.2, removed in v4.2.
+// Support is provided to satisfy PTS tester requirements.
+ErrorCode BrEdrController::AddScoConnection(uint16_t connection_handle, uint16_t packet_type) {
+  if (!connections_.HasAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  auto const& connection = connections_.GetAclConnection(connection_handle);
+  if (connections_.HasPendingScoConnection(connection.address)) {
+    return ErrorCode::COMMAND_DISALLOWED;
+  }
+
+  INFO(id_, "Creating SCO connection with {}", connection.address);
+
+  // Save connection parameters.
+  ScoConnectionParameters connection_parameters = {
+          8000,
+          8000,
+          0xffff,
+          0x60 /* 16bit CVSD */,
+          (uint8_t)bluetooth::hci::RetransmissionEffort::NO_RETRANSMISSION,
+          (uint16_t)((uint16_t)((packet_type >> 5) & 0x7U) |
+                     (uint16_t)bluetooth::hci::SynchronousPacketTypeBits::NO_2_EV3_ALLOWED |
+                     (uint16_t)bluetooth::hci::SynchronousPacketTypeBits::NO_3_EV3_ALLOWED |
+                     (uint16_t)bluetooth::hci::SynchronousPacketTypeBits::NO_2_EV5_ALLOWED |
+                     (uint16_t)bluetooth::hci::SynchronousPacketTypeBits::NO_3_EV5_ALLOWED)};
+  connections_.CreateScoConnection(connection.address, connection_parameters, SCO_STATE_PENDING,
+                                   ScoDatapath::NORMAL, true);
+
+  // Send SCO connection request to peer.
+  SendLinkLayerPacket(model::packets::ScoConnectionRequestBuilder::Create(
+          GetAddress(), connection.address, connection_parameters.transmit_bandwidth,
+          connection_parameters.receive_bandwidth, connection_parameters.max_latency,
+          connection_parameters.voice_setting, connection_parameters.retransmission_effort,
+          connection_parameters.packet_type, class_of_device_));
+  return ErrorCode::SUCCESS;
+}
+
+// HCI Setup Synchronous Connection (Vol 4, Part E § 7.1.26).
+ErrorCode BrEdrController::SetupSynchronousConnection(uint16_t connection_handle,
+                                                      uint32_t transmit_bandwidth,
+                                                      uint32_t receive_bandwidth,
+                                                      uint16_t max_latency, uint16_t voice_setting,
+                                                      uint8_t retransmission_effort,
+                                                      uint16_t packet_types, ScoDatapath datapath) {
+  if (!connections_.HasAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  auto const& connection = connections_.GetAclConnection(connection_handle);
+  if (connections_.HasPendingScoConnection(connection.address)) {
+    // This command may be used to modify an exising eSCO link.
+    // Skip for now. TODO: should return an event
+    // HCI_Synchronous_Connection_Changed on both sides.
+    return ErrorCode::COMMAND_DISALLOWED;
+  }
+
+  INFO(id_, "Creating eSCO connection with {}", connection.address);
+
+  // Save connection parameters.
+  ScoConnectionParameters connection_parameters = {transmit_bandwidth,    receive_bandwidth,
+                                                   max_latency,           voice_setting,
+                                                   retransmission_effort, packet_types};
+  connections_.CreateScoConnection(connection.address, connection_parameters, SCO_STATE_PENDING,
+                                   datapath);
+
+  // Send eSCO connection request to peer.
+  SendLinkLayerPacket(model::packets::ScoConnectionRequestBuilder::Create(
+          GetAddress(), connection.address, transmit_bandwidth, receive_bandwidth, max_latency,
+          voice_setting, retransmission_effort, packet_types, class_of_device_));
+  return ErrorCode::SUCCESS;
+}
+
+// HCI Accept Synchronous Connection (Vol 4, Part E § 7.1.26).
+ErrorCode BrEdrController::AcceptSynchronousConnection(Address bd_addr, uint32_t transmit_bandwidth,
+                                                       uint32_t receive_bandwidth,
+                                                       uint16_t max_latency, uint16_t voice_setting,
+                                                       uint8_t retransmission_effort,
+                                                       uint16_t packet_types) {
+  INFO(id_, "Accepting eSCO connection request from {}", bd_addr);
+
+  if (!connections_.HasPendingScoConnection(bd_addr)) {
+    INFO(id_, "No pending eSCO connection for {}", bd_addr);
+    return ErrorCode::COMMAND_DISALLOWED;
+  }
+
+  ErrorCode status = ErrorCode::SUCCESS;
+  uint16_t sco_handle = *connections_.GetScoConnectionHandle(bd_addr);
+  ScoLinkParameters link_parameters = {};
+  ScoConnectionParameters connection_parameters = {transmit_bandwidth,    receive_bandwidth,
+                                                   max_latency,           voice_setting,
+                                                   retransmission_effort, packet_types};
+
+  if (!connections_.AcceptPendingScoConnection(bd_addr, connection_parameters, [this, bd_addr] {
+        return BrEdrController::StartScoStream(bd_addr);
+      })) {
+    connections_.CancelPendingScoConnection(bd_addr);
+    status = ErrorCode::STATUS_UNKNOWN;  // TODO: proper status code
+    sco_handle = 0;
+  } else {
+    link_parameters = connections_.GetScoLinkParameters(bd_addr);
+  }
+
+  // Send eSCO connection response to peer.
+  SendLinkLayerPacket(model::packets::ScoConnectionResponseBuilder::Create(
+          GetAddress(), bd_addr, (uint8_t)status, link_parameters.transmission_interval,
+          link_parameters.retransmission_window, link_parameters.rx_packet_length,
+          link_parameters.tx_packet_length, link_parameters.air_mode, link_parameters.extended));
+
+  // Schedule HCI Synchronous Connection Complete event.
+  ScheduleTask(kNoDelayMs, [this, status, sco_handle, bd_addr, link_parameters]() {
+    send_event_(bluetooth::hci::SynchronousConnectionCompleteBuilder::Create(
+            ErrorCode(status), sco_handle, bd_addr,
+            link_parameters.extended ? bluetooth::hci::ScoLinkType::ESCO
+                                     : bluetooth::hci::ScoLinkType::SCO,
+            link_parameters.extended ? link_parameters.transmission_interval : 0,
+            link_parameters.extended ? link_parameters.retransmission_window : 0,
+            link_parameters.extended ? link_parameters.rx_packet_length : 0,
+            link_parameters.extended ? link_parameters.tx_packet_length : 0,
+            bluetooth::hci::ScoAirMode(link_parameters.air_mode)));
+  });
+
+  return ErrorCode::SUCCESS;
+}
+
+// HCI Reject Synchronous Connection (Vol 4, Part E § 7.1.27).
+ErrorCode BrEdrController::RejectSynchronousConnection(Address bd_addr, uint16_t reason) {
+  INFO(id_, "Rejecting eSCO connection request from {}", bd_addr);
+
+  if (reason == (uint8_t)ErrorCode::SUCCESS) {
+    reason = (uint8_t)ErrorCode::REMOTE_USER_TERMINATED_CONNECTION;
+  }
+  if (!connections_.HasPendingScoConnection(bd_addr)) {
+    return ErrorCode::COMMAND_DISALLOWED;
+  }
+
+  connections_.CancelPendingScoConnection(bd_addr);
+
+  // Send eSCO connection response to peer.
+  SendLinkLayerPacket(model::packets::ScoConnectionResponseBuilder::Create(
+          GetAddress(), bd_addr, reason, 0, 0, 0, 0, 0, 0));
+
+  // Schedule HCI Synchronous Connection Complete event.
+  ScheduleTask(kNoDelayMs, [this, reason, bd_addr]() {
+    send_event_(bluetooth::hci::SynchronousConnectionCompleteBuilder::Create(
+            ErrorCode(reason), 0, bd_addr, bluetooth::hci::ScoLinkType::ESCO, 0, 0, 0, 0,
+            bluetooth::hci::ScoAirMode::TRANSPARENT));
+  });
+
+  return ErrorCode::SUCCESS;
+}
+
+// HCI Enhanced Setup Synchronous Connection (Vol 4, Part E § 7.1.45).
+ErrorCode BrEdrController::EnhancedSetupSynchronousConnection(
+        uint16_t connection_handle, uint32_t transmit_bandwidth, uint32_t receive_bandwidth,
+        bluetooth::hci::ScoCodingFormat transmit_coding_format,
+        bluetooth::hci::ScoCodingFormat receive_coding_format,
+        uint16_t /*transmit_codec_frame_size*/, uint16_t /*receive_codec_frame_size*/,
+        uint32_t input_bandwidth, uint32_t output_bandwidth,
+        bluetooth::hci::ScoCodingFormat input_coding_format,
+        bluetooth::hci::ScoCodingFormat output_coding_format, uint16_t /*input_coded_data_size*/,
+        uint16_t /*output_coded_data_size*/,
+        bluetooth::hci::ScoPcmDataFormat /*input_pcm_data_format*/,
+        bluetooth::hci::ScoPcmDataFormat /*output_pcm_data_format*/,
+        uint8_t /*input_pcm_sample_payload_msb_position*/,
+        uint8_t /*output_pcm_sample_payload_msb_position*/,
+        bluetooth::hci::ScoDataPath input_data_path, bluetooth::hci::ScoDataPath output_data_path,
+        uint8_t /*input_transport_unit_size*/, uint8_t /*output_transport_unit_size*/,
+        uint16_t max_latency, uint16_t packet_type,
+        bluetooth::hci::RetransmissionEffort retransmission_effort) {
+  // The Host shall set the Transmit_Coding_Format and Receive_Coding_Formats
+  // to be equal.
+  if (transmit_coding_format.coding_format_ != receive_coding_format.coding_format_ ||
+      transmit_coding_format.company_id_ != receive_coding_format.company_id_ ||
+      transmit_coding_format.vendor_specific_codec_id_ !=
+              receive_coding_format.vendor_specific_codec_id_) {
+    INFO(id_,
+         "EnhancedSetupSynchronousConnection: rejected Transmit_Coding_Format "
+         "({}) and Receive_Coding_Format ({}) as they are not equal",
+         transmit_coding_format.ToString(), receive_coding_format.ToString());
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  // The Host shall either set the Input_Bandwidth and Output_Bandwidth
+  // to be equal, or shall set one of them to be zero and the other non-zero.
+  if (input_bandwidth != output_bandwidth && input_bandwidth != 0 && output_bandwidth != 0) {
+    INFO(id_,
+         "EnhancedSetupSynchronousConnection: rejected Input_Bandwidth ({})"
+         " and Output_Bandwidth ({}) as they are not equal and different from 0",
+         input_bandwidth, output_bandwidth);
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  // The Host shall set the Input_Coding_Format and Output_Coding_Format
+  // to be equal.
+  if (input_coding_format.coding_format_ != output_coding_format.coding_format_ ||
+      input_coding_format.company_id_ != output_coding_format.company_id_ ||
+      input_coding_format.vendor_specific_codec_id_ !=
+              output_coding_format.vendor_specific_codec_id_) {
+    INFO(id_,
+         "EnhancedSetupSynchronousConnection: rejected Input_Coding_Format ({})"
+         " and Output_Coding_Format ({}) as they are not equal",
+         input_coding_format.ToString(), output_coding_format.ToString());
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  // Root-Canal does not implement audio data transport paths other than the
+  // default HCI transport - other transports will receive spoofed data
+  ScoDatapath datapath = ScoDatapath::NORMAL;
+  if (input_data_path != bluetooth::hci::ScoDataPath::HCI ||
+      output_data_path != bluetooth::hci::ScoDataPath::HCI) {
+    WARNING(id_,
+            "EnhancedSetupSynchronousConnection: Input_Data_Path ({})"
+            " and/or Output_Data_Path ({}) are not over HCI, so data will be "
+            "spoofed",
+            static_cast<unsigned>(input_data_path), static_cast<unsigned>(output_data_path));
+    datapath = ScoDatapath::SPOOFED;
+  }
+
+  // Either both the Transmit_Coding_Format and Input_Coding_Format shall be
+  // “transparent” or neither shall be. If both are “transparent”, the
+  // Transmit_Bandwidth and the Input_Bandwidth shall be the same and the
+  // Controller shall not modify the data sent to the remote device.
+  if (transmit_coding_format.coding_format_ == bluetooth::hci::ScoCodingFormatValues::TRANSPARENT &&
+      input_coding_format.coding_format_ == bluetooth::hci::ScoCodingFormatValues::TRANSPARENT &&
+      transmit_bandwidth != input_bandwidth) {
+    INFO(id_,
+         "EnhancedSetupSynchronousConnection: rejected Transmit_Bandwidth ({})"
+         " and Input_Bandwidth ({}) as they are not equal",
+         transmit_bandwidth, input_bandwidth);
+    INFO(id_,
+         "EnhancedSetupSynchronousConnection: the Transmit_Bandwidth and "
+         "Input_Bandwidth shall be equal when both Transmit_Coding_Format "
+         "and Input_Coding_Format are 'transparent'");
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+  if ((transmit_coding_format.coding_format_ ==
+       bluetooth::hci::ScoCodingFormatValues::TRANSPARENT) !=
+      (input_coding_format.coding_format_ == bluetooth::hci::ScoCodingFormatValues::TRANSPARENT)) {
+    INFO(id_,
+         "EnhancedSetupSynchronousConnection: rejected Transmit_Coding_Format "
+         "({}) and Input_Coding_Format ({}) as they are incompatible",
+         transmit_coding_format.ToString(), input_coding_format.ToString());
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  // Either both the Receive_Coding_Format and Output_Coding_Format shall
+  // be “transparent” or neither shall be. If both are “transparent”, the
+  // Receive_Bandwidth and the Output_Bandwidth shall be the same and the
+  // Controller shall not modify the data sent to the Host.
+  if (receive_coding_format.coding_format_ == bluetooth::hci::ScoCodingFormatValues::TRANSPARENT &&
+      output_coding_format.coding_format_ == bluetooth::hci::ScoCodingFormatValues::TRANSPARENT &&
+      receive_bandwidth != output_bandwidth) {
+    INFO(id_,
+         "EnhancedSetupSynchronousConnection: rejected Receive_Bandwidth ({})"
+         " and Output_Bandwidth ({}) as they are not equal",
+         receive_bandwidth, output_bandwidth);
+    INFO(id_,
+         "EnhancedSetupSynchronousConnection: the Receive_Bandwidth and "
+         "Output_Bandwidth shall be equal when both Receive_Coding_Format "
+         "and Output_Coding_Format are 'transparent'");
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+  if ((receive_coding_format.coding_format_ ==
+       bluetooth::hci::ScoCodingFormatValues::TRANSPARENT) !=
+      (output_coding_format.coding_format_ == bluetooth::hci::ScoCodingFormatValues::TRANSPARENT)) {
+    INFO(id_,
+         "EnhancedSetupSynchronousConnection: rejected Receive_Coding_Format "
+         "({}) and Output_Coding_Format ({}) as they are incompatible",
+         receive_coding_format.ToString(), output_coding_format.ToString());
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  return SetupSynchronousConnection(
+          connection_handle, transmit_bandwidth, receive_bandwidth, max_latency, GetVoiceSetting(),
+          static_cast<uint8_t>(retransmission_effort), packet_type, datapath);
+}
+
+// HCI Enhanced Accept Synchronous Connection (Vol 4, Part E § 7.1.46).
+ErrorCode BrEdrController::EnhancedAcceptSynchronousConnection(
+        Address bd_addr, uint32_t transmit_bandwidth, uint32_t receive_bandwidth,
+        bluetooth::hci::ScoCodingFormat transmit_coding_format,
+        bluetooth::hci::ScoCodingFormat receive_coding_format,
+        uint16_t /*transmit_codec_frame_size*/, uint16_t /*receive_codec_frame_size*/,
+        uint32_t input_bandwidth, uint32_t output_bandwidth,
+        bluetooth::hci::ScoCodingFormat input_coding_format,
+        bluetooth::hci::ScoCodingFormat output_coding_format, uint16_t /*input_coded_data_size*/,
+        uint16_t /*output_coded_data_size*/,
+        bluetooth::hci::ScoPcmDataFormat /*input_pcm_data_format*/,
+        bluetooth::hci::ScoPcmDataFormat /*output_pcm_data_format*/,
+        uint8_t /*input_pcm_sample_payload_msb_position*/,
+        uint8_t /*output_pcm_sample_payload_msb_position*/,
+        bluetooth::hci::ScoDataPath input_data_path, bluetooth::hci::ScoDataPath output_data_path,
+        uint8_t /*input_transport_unit_size*/, uint8_t /*output_transport_unit_size*/,
+        uint16_t max_latency, uint16_t packet_type,
+        bluetooth::hci::RetransmissionEffort retransmission_effort) {
+  // The Host shall set the Transmit_Coding_Format and Receive_Coding_Formats
+  // to be equal.
+  if (transmit_coding_format.coding_format_ != receive_coding_format.coding_format_ ||
+      transmit_coding_format.company_id_ != receive_coding_format.company_id_ ||
+      transmit_coding_format.vendor_specific_codec_id_ !=
+              receive_coding_format.vendor_specific_codec_id_) {
+    INFO(id_,
+         "EnhancedAcceptSynchronousConnection: rejected Transmit_Coding_Format "
+         "({})"
+         " and Receive_Coding_Format ({}) as they are not equal",
+         transmit_coding_format.ToString(), receive_coding_format.ToString());
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  // The Host shall either set the Input_Bandwidth and Output_Bandwidth
+  // to be equal, or shall set one of them to be zero and the other non-zero.
+  if (input_bandwidth != output_bandwidth && input_bandwidth != 0 && output_bandwidth != 0) {
+    INFO(id_,
+         "EnhancedAcceptSynchronousConnection: rejected Input_Bandwidth ({})"
+         " and Output_Bandwidth ({}) as they are not equal and different from 0",
+         input_bandwidth, output_bandwidth);
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  // The Host shall set the Input_Coding_Format and Output_Coding_Format
+  // to be equal.
+  if (input_coding_format.coding_format_ != output_coding_format.coding_format_ ||
+      input_coding_format.company_id_ != output_coding_format.company_id_ ||
+      input_coding_format.vendor_specific_codec_id_ !=
+              output_coding_format.vendor_specific_codec_id_) {
+    INFO(id_,
+         "EnhancedAcceptSynchronousConnection: rejected Input_Coding_Format ({})"
+         " and Output_Coding_Format ({}) as they are not equal",
+         input_coding_format.ToString(), output_coding_format.ToString());
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  // Root-Canal does not implement audio data transport paths other than the
+  // default HCI transport.
+  if (input_data_path != bluetooth::hci::ScoDataPath::HCI ||
+      output_data_path != bluetooth::hci::ScoDataPath::HCI) {
+    INFO(id_,
+         "EnhancedSetupSynchronousConnection: Input_Data_Path ({})"
+         " and/or Output_Data_Path ({}) are not over HCI, so data will be "
+         "spoofed",
+         static_cast<unsigned>(input_data_path), static_cast<unsigned>(output_data_path));
+  }
+
+  // Either both the Transmit_Coding_Format and Input_Coding_Format shall be
+  // “transparent” or neither shall be. If both are “transparent”, the
+  // Transmit_Bandwidth and the Input_Bandwidth shall be the same and the
+  // Controller shall not modify the data sent to the remote device.
+  if (transmit_coding_format.coding_format_ == bluetooth::hci::ScoCodingFormatValues::TRANSPARENT &&
+      input_coding_format.coding_format_ == bluetooth::hci::ScoCodingFormatValues::TRANSPARENT &&
+      transmit_bandwidth != input_bandwidth) {
+    INFO(id_,
+         "EnhancedSetupSynchronousConnection: rejected Transmit_Bandwidth ({})"
+         " and Input_Bandwidth ({}) as they are not equal",
+         transmit_bandwidth, input_bandwidth);
+    INFO(id_,
+         "EnhancedSetupSynchronousConnection: the Transmit_Bandwidth and "
+         "Input_Bandwidth shall be equal when both Transmit_Coding_Format "
+         "and Input_Coding_Format are 'transparent'");
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+  if ((transmit_coding_format.coding_format_ ==
+       bluetooth::hci::ScoCodingFormatValues::TRANSPARENT) !=
+      (input_coding_format.coding_format_ == bluetooth::hci::ScoCodingFormatValues::TRANSPARENT)) {
+    INFO(id_,
+         "EnhancedSetupSynchronousConnection: rejected Transmit_Coding_Format "
+         "({}) and Input_Coding_Format ({}) as they are incompatible",
+         transmit_coding_format.ToString(), input_coding_format.ToString());
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  // Either both the Receive_Coding_Format and Output_Coding_Format shall
+  // be “transparent” or neither shall be. If both are “transparent”, the
+  // Receive_Bandwidth and the Output_Bandwidth shall be the same and the
+  // Controller shall not modify the data sent to the Host.
+  if (receive_coding_format.coding_format_ == bluetooth::hci::ScoCodingFormatValues::TRANSPARENT &&
+      output_coding_format.coding_format_ == bluetooth::hci::ScoCodingFormatValues::TRANSPARENT &&
+      receive_bandwidth != output_bandwidth) {
+    INFO(id_,
+         "EnhancedSetupSynchronousConnection: rejected Receive_Bandwidth ({})"
+         " and Output_Bandwidth ({}) as they are not equal",
+         receive_bandwidth, output_bandwidth);
+    INFO(id_,
+         "EnhancedSetupSynchronousConnection: the Receive_Bandwidth and "
+         "Output_Bandwidth shall be equal when both Receive_Coding_Format "
+         "and Output_Coding_Format are 'transparent'");
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+  if ((receive_coding_format.coding_format_ ==
+       bluetooth::hci::ScoCodingFormatValues::TRANSPARENT) !=
+      (output_coding_format.coding_format_ == bluetooth::hci::ScoCodingFormatValues::TRANSPARENT)) {
+    INFO(id_,
+         "EnhancedSetupSynchronousConnection: rejected Receive_Coding_Format "
+         "({}) and Output_Coding_Format ({}) as they are incompatible",
+         receive_coding_format.ToString(), output_coding_format.ToString());
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  return AcceptSynchronousConnection(bd_addr, transmit_bandwidth, receive_bandwidth, max_latency,
+                                     GetVoiceSetting(), static_cast<uint8_t>(retransmission_effort),
+                                     packet_type);
+}
+
+// =============================================================================
+//  Link Policy commands (Vol 4, Part E § 7.2)
+// =============================================================================
+
+// HCI Hold Mode command (Vol 4, Part E § 7.2.1).
+ErrorCode BrEdrController::HoldMode(uint16_t connection_handle, uint16_t hold_mode_max_interval,
+                                    uint16_t hold_mode_min_interval) {
+  if (!connections_.HasAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  if (hold_mode_max_interval < hold_mode_min_interval) {
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  // TODO: implement real logic
+  return ErrorCode::COMMAND_DISALLOWED;
+}
+
+// HCI Sniff Mode command (Vol 4, Part E § 7.2.2).
+ErrorCode BrEdrController::SniffMode(uint16_t connection_handle, uint16_t sniff_max_interval,
+                                     uint16_t sniff_min_interval, uint16_t sniff_attempt,
+                                     uint16_t sniff_timeout) {
+  if (!connections_.HasAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  if (sniff_max_interval < sniff_min_interval || sniff_attempt < 0x0001 || sniff_attempt > 0x7FFF ||
+      sniff_timeout > 0x7FFF) {
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  // TODO: implement real logic
+  return ErrorCode::COMMAND_DISALLOWED;
+}
+
+// HCI Exit Sniff Mode command (Vol 4, Part E § 7.2.3).
+ErrorCode BrEdrController::ExitSniffMode(uint16_t connection_handle) {
+  if (!connections_.HasAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  // TODO: implement real logic
+  return ErrorCode::COMMAND_DISALLOWED;
+}
+
+// HCI QoS Setup command (Vol 4, Part E § 7.2.6).
+ErrorCode BrEdrController::QosSetup(uint16_t connection_handle, uint8_t service_type,
+                                    uint32_t /* token_rate */, uint32_t /* peak_bandwidth */,
+                                    uint32_t /* latency */, uint32_t /* delay_variation */) {
+  if (!connections_.HasAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  if (service_type > 0x02) {
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  // TODO: implement real logic
+  return ErrorCode::COMMAND_DISALLOWED;
+}
+
+// HCI Role Discovery command (Vol 4, Part E § 7.2.7).
+ErrorCode BrEdrController::RoleDiscovery(uint16_t connection_handle, bluetooth::hci::Role* role) {
+  if (!connections_.HasAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  *role = connections_.GetAclConnection(connection_handle).GetRole();
+  return ErrorCode::SUCCESS;
+}
+
+// HCI Switch Role command (Vol 4, Part E § 7.2.8).
+ErrorCode BrEdrController::SwitchRole(Address bd_addr, bluetooth::hci::Role role) {
+  // The BD_ADDR command parameter indicates for which connection
+  // the role switch is to be performed and shall specify a BR/EDR Controller
+  // for which a connection already exists.
+  auto connection_handle = connections_.GetAclConnectionHandle(bd_addr);
+  if (!connection_handle.has_value()) {
+    INFO(id_, "unknown connection address {}", bd_addr);
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  AclConnection& connection = connections_.GetAclConnection(*connection_handle);
+
+  // If there is an (e)SCO connection between the local device and the device
+  // identified by the BD_ADDR parameter, an attempt to perform a role switch
+  // shall be rejected by the local device.
+  if (connections_.GetScoConnectionHandle(bd_addr).has_value()) {
+    INFO(id_,
+         "role switch rejected because an Sco link is opened with"
+         " the target device");
+    return ErrorCode::COMMAND_DISALLOWED;
+  }
+
+  // If the connection between the local device and the device identified by the
+  // BD_ADDR parameter is placed in Sniff mode, an attempt to perform a role
+  // switch shall be rejected by the local device.
+  if (connection.GetMode() == AclConnectionState::kSniffMode) {
+    INFO(id_, "role switch rejected because the acl connection is in sniff mode");
+    return ErrorCode::COMMAND_DISALLOWED;
+  }
+
+  if (role != connection.GetRole()) {
+    SendLinkLayerPacket(model::packets::RoleSwitchRequestBuilder::Create(GetAddress(), bd_addr));
+  } else if (IsEventUnmasked(EventCode::ROLE_CHANGE)) {
+    // Note: the status is Success only if the role change procedure was
+    // actually performed, otherwise the status is >0.
+    ScheduleTask(kNoDelayMs, [this, bd_addr, role]() {
+      send_event_(bluetooth::hci::RoleChangeBuilder::Create(ErrorCode::ROLE_SWITCH_FAILED, bd_addr,
+                                                            role));
+    });
+  }
+
+  return ErrorCode::SUCCESS;
+}
+
+// HCI Read Link Policy Settings command (Vol 4, Part E § 7.2.9.
+ErrorCode BrEdrController::ReadLinkPolicySettings(uint16_t connection_handle,
+                                                  uint16_t* link_policy_settings) {
+  if (!connections_.HasAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  *link_policy_settings = connections_.GetAclConnection(connection_handle).GetLinkPolicySettings();
+  return ErrorCode::SUCCESS;
+}
+
+// HCI Write Link Policy Settings command (Vol 4, Part E § 7.2.10).
+ErrorCode BrEdrController::WriteLinkPolicySettings(uint16_t connection_handle,
+                                                   uint16_t link_policy_settings) {
+  if (!connections_.HasAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  if (link_policy_settings > 7 /* Sniff + Hold + Role switch */) {
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  connections_.GetAclConnection(connection_handle).SetLinkPolicySettings(link_policy_settings);
+  return ErrorCode::SUCCESS;
+}
+
+// HCI Read Default Link Policy Settings command (Vol 4, Part E § 7.2.11).
+ErrorCode BrEdrController::ReadDefaultLinkPolicySettings(
+        uint16_t* default_link_policy_settings) const {
+  *default_link_policy_settings = default_link_policy_settings_;
+  return ErrorCode::SUCCESS;
+}
+
+// HCI Write Default Link Policy Settings command (Vol 4, Part E § 7.2.12).
+ErrorCode BrEdrController::WriteDefaultLinkPolicySettings(uint16_t default_link_policy_settings) {
+  if (default_link_policy_settings > 7 /* Sniff + Hold + Role switch */) {
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  default_link_policy_settings_ = default_link_policy_settings;
   return ErrorCode::SUCCESS;
 }
 
@@ -244,49 +1083,6 @@ void BrEdrController::SendLinkLayerPacket(
   ScheduleTask(kNoDelayMs, [this, shared_packet, tx_power]() {
     send_to_remote_(shared_packet, Phy::Type::BR_EDR, tx_power);
   });
-}
-
-ErrorCode BrEdrController::SendCommandToRemoteByAddress(OpCode opcode, pdl::packet::slice args,
-                                                        const Address& own_address,
-                                                        const Address& peer_address) {
-  switch (opcode) {
-    case (OpCode::REMOTE_NAME_REQUEST):
-      // LMP features get requested with remote name requests.
-      SendLinkLayerPacket(
-              model::packets::ReadRemoteLmpFeaturesBuilder::Create(own_address, peer_address));
-      SendLinkLayerPacket(
-              model::packets::RemoteNameRequestBuilder::Create(own_address, peer_address));
-      break;
-    case (OpCode::READ_REMOTE_SUPPORTED_FEATURES):
-      SendLinkLayerPacket(model::packets::ReadRemoteSupportedFeaturesBuilder::Create(own_address,
-                                                                                     peer_address));
-      break;
-    case (OpCode::READ_REMOTE_EXTENDED_FEATURES): {
-      pdl::packet::slice page_number_slice = args.subrange(5, 1);
-      uint8_t page_number = page_number_slice.read_le<uint8_t>();
-      SendLinkLayerPacket(model::packets::ReadRemoteExtendedFeaturesBuilder::Create(
-              own_address, peer_address, page_number));
-    } break;
-    case (OpCode::READ_CLOCK_OFFSET):
-      SendLinkLayerPacket(
-              model::packets::ReadClockOffsetBuilder::Create(own_address, peer_address));
-      break;
-    default:
-      INFO(id_, "Dropping unhandled command 0x{:04x}", static_cast<uint16_t>(opcode));
-      return ErrorCode::UNKNOWN_HCI_COMMAND;
-  }
-
-  return ErrorCode::SUCCESS;
-}
-
-ErrorCode BrEdrController::SendCommandToRemoteByHandle(OpCode opcode, pdl::packet::slice args,
-                                                       uint16_t handle) {
-  if (!connections_.HasAclHandle(handle)) {
-    return ErrorCode::UNKNOWN_CONNECTION;
-  }
-
-  auto const& connection = connections_.GetAclConnection(handle);
-  return SendCommandToRemoteByAddress(opcode, args, connection.own_address, connection.address);
 }
 
 ErrorCode BrEdrController::SendScoToRemote(bluetooth::hci::ScoView sco_packet) {
@@ -934,7 +1730,7 @@ void BrEdrController::IncomingPagePacket(model::packets::LinkLayerPacketView inc
 
   INFO(id_, "processing connection request from {}", bd_addr);
 
-  page_scan_ = PageScan{
+  page_scan_ = PageScanState{
           .bd_addr = bd_addr,
           .authentication_required = authentication_enable_ == AuthenticationEnable::REQUIRED,
           .allow_role_switch = page.GetAllowRoleSwitch(),
@@ -1011,10 +1807,7 @@ void BrEdrController::IncomingPageResponsePacket(model::packets::LinkLayerPacket
 void BrEdrController::Tick() {
   RunPendingTasks();
   Paging();
-
-  if (inquiry_timer_task_id_ != kInvalidTaskId) {
-    Inquiry();
-  }
+  Inquiry();
   link_manager_tick(lm_.get());
 }
 
@@ -1060,58 +1853,6 @@ void BrEdrController::WriteCurrentIacLap(std::vector<bluetooth::hci::Lap> iac_la
   if (current_iac_lap_list_.size() > properties_.num_supported_iac) {
     current_iac_lap_list_.resize(properties_.num_supported_iac);
   }
-}
-
-ErrorCode BrEdrController::AcceptConnectionRequest(const Address& bd_addr, bool try_role_switch) {
-  if (page_scan_.has_value() && page_scan_->bd_addr == bd_addr) {
-    INFO(id_, "Accepting connection request from {}", bd_addr);
-    ScheduleTask(kNoDelayMs, [this, bd_addr, try_role_switch]() {
-      INFO(id_, "Accepted connection from {}", bd_addr);
-      MakePeripheralConnection(bd_addr, try_role_switch);
-    });
-
-    return ErrorCode::SUCCESS;
-  }
-
-  // The HCI command Accept Connection may be used to accept incoming SCO
-  // connection requests.
-  if (connections_.HasPendingScoConnection(bd_addr)) {
-    ErrorCode status = ErrorCode::SUCCESS;
-    uint16_t sco_handle = *connections_.GetScoConnectionHandle(bd_addr);
-    ScoLinkParameters link_parameters = {};
-    ScoConnectionParameters connection_parameters =
-            connections_.GetScoConnectionParameters(bd_addr);
-
-    if (!connections_.AcceptPendingScoConnection(bd_addr, connection_parameters, [this, bd_addr] {
-          return BrEdrController::StartScoStream(bd_addr);
-        })) {
-      connections_.CancelPendingScoConnection(bd_addr);
-      status = ErrorCode::SCO_INTERVAL_REJECTED;  // TODO: proper status code
-      sco_handle = 0;
-    } else {
-      link_parameters = connections_.GetScoLinkParameters(bd_addr);
-    }
-
-    // Send eSCO connection response to peer.
-    SendLinkLayerPacket(model::packets::ScoConnectionResponseBuilder::Create(
-            GetAddress(), bd_addr, (uint8_t)status, link_parameters.transmission_interval,
-            link_parameters.retransmission_window, link_parameters.rx_packet_length,
-            link_parameters.tx_packet_length, link_parameters.air_mode, link_parameters.extended));
-
-    // Schedule HCI Connection Complete event.
-    if (IsEventUnmasked(EventCode::CONNECTION_COMPLETE)) {
-      ScheduleTask(kNoDelayMs, [this, status, sco_handle, bd_addr]() {
-        send_event_(bluetooth::hci::ConnectionCompleteBuilder::Create(
-                ErrorCode(status), sco_handle, bd_addr, bluetooth::hci::LinkType::SCO,
-                bluetooth::hci::Enable::DISABLED));
-      });
-    }
-
-    return ErrorCode::SUCCESS;
-  }
-
-  INFO(id_, "No pending connection for {}", bd_addr);
-  return ErrorCode::UNKNOWN_CONNECTION;
 }
 
 void BrEdrController::MakePeripheralConnection(const Address& bd_addr, bool try_role_switch) {
@@ -1162,17 +1903,6 @@ void BrEdrController::MakePeripheralConnection(const Address& bd_addr, bool try_
           model::packets::PageResponseBuilder::Create(GetAddress(), bd_addr, try_role_switch));
 }
 
-ErrorCode BrEdrController::RejectConnectionRequest(const Address& addr, uint8_t reason) {
-  if (!page_scan_.has_value() || page_scan_->bd_addr != addr) {
-    INFO(id_, "No pending connection for {}", addr);
-    return ErrorCode::UNKNOWN_CONNECTION;
-  }
-
-  ScheduleTask(kNoDelayMs, [this, addr, reason]() { RejectPeripheralConnection(addr, reason); });
-
-  return ErrorCode::SUCCESS;
-}
-
 void BrEdrController::RejectPeripheralConnection(const Address& addr, uint8_t reason) {
   INFO(id_, "Sending page reject to {} (reason 0x{:02x})", addr, reason);
   SendLinkLayerPacket(model::packets::PageRejectBuilder::Create(GetAddress(), addr, reason));
@@ -1184,69 +1914,6 @@ void BrEdrController::RejectPeripheralConnection(const Address& addr, uint8_t re
   }
 }
 
-ErrorCode BrEdrController::CreateConnection(const Address& bd_addr, uint16_t /* packet_type */,
-                                            uint8_t /* page_scan_mode */,
-                                            uint16_t /* clock_offset */,
-                                            uint8_t allow_role_switch) {
-  // RootCanal only accepts one pending outgoing connection at any time.
-  if (page_.has_value()) {
-    INFO(id_, "Create Connection command is already pending");
-    return ErrorCode::COMMAND_DISALLOWED;
-  }
-
-  // Reject the command if a connection already exists
-  // for the selected peer address.
-  if (connections_.GetAclConnectionHandle(bd_addr).has_value()) {
-    INFO(id_, "Connection with {} already exists", bd_addr);
-    return ErrorCode::CONNECTION_ALREADY_EXISTS;
-  }
-
-  // Reject the command if a pending connection already exists
-  // for the selected peer address.
-  if (page_scan_.has_value() && page_scan_->bd_addr == bd_addr) {
-    INFO(id_, "Connection with {} is already being established", bd_addr);
-    return ErrorCode::CONNECTION_ALREADY_EXISTS;
-  }
-
-  auto now = std::chrono::steady_clock::now();
-  page_ = Page{
-          .bd_addr = bd_addr,
-          .allow_role_switch = allow_role_switch,
-          .next_page_event = now + kPageInterval,
-          .page_timeout = now + slots(page_timeout_),
-  };
-
-  return ErrorCode::SUCCESS;
-}
-
-ErrorCode BrEdrController::CreateConnectionCancel(const Address& bd_addr) {
-  // If the HCI_Create_Connection_Cancel command is sent to the Controller
-  // without a preceding HCI_Create_Connection command to the same device,
-  // the BR/EDR Controller shall return an HCI_Command_Complete event with
-  // the error code Unknown Connection Identifier (0x02)
-  if (!page_.has_value() || page_->bd_addr != bd_addr) {
-    INFO(id_, "no pending connection to {}", bd_addr.ToString());
-    return ErrorCode::UNKNOWN_CONNECTION;
-  }
-
-  // The HCI_Connection_Complete event for the corresponding HCI_Create_-
-  // Connection command shall always be sent. The HCI_Connection_Complete
-  // event shall be sent after the HCI_Command_Complete event for the
-  // HCI_Create_Connection_Cancel command. If the cancellation was successful,
-  // the HCI_Connection_Complete event will be generated with the error code
-  // Unknown Connection Identifier (0x02).
-  if (IsEventUnmasked(EventCode::CONNECTION_COMPLETE)) {
-    ScheduleTask(kNoDelayMs, [this, bd_addr]() {
-      send_event_(bluetooth::hci::ConnectionCompleteBuilder::Create(
-              ErrorCode::UNKNOWN_CONNECTION, 0, bd_addr, bluetooth::hci::LinkType::ACL,
-              bluetooth::hci::Enable::DISABLED));
-    });
-  }
-
-  page_ = {};
-  return ErrorCode::SUCCESS;
-}
-
 void BrEdrController::SendDisconnectionCompleteEvent(uint16_t handle, ErrorCode reason) {
   if (IsEventUnmasked(EventCode::DISCONNECTION_COMPLETE)) {
     ScheduleTask(kNoDelayMs, [this, handle, reason]() {
@@ -1256,195 +1923,10 @@ void BrEdrController::SendDisconnectionCompleteEvent(uint16_t handle, ErrorCode 
   }
 }
 
-ErrorCode BrEdrController::Disconnect(uint16_t handle, ErrorCode host_reason,
-                                      ErrorCode controller_reason) {
-  if (connections_.HasScoHandle(handle)) {
-    const Address remote = connections_.GetScoAddress(handle);
-    INFO(id_, "Disconnecting eSCO connection with {}", remote);
-
-    SendLinkLayerPacket(model::packets::ScoDisconnectBuilder::Create(
-            GetAddress(), remote, static_cast<uint8_t>(host_reason)));
-
-    connections_.Disconnect(handle, [this](TaskId task_id) { CancelScheduledTask(task_id); });
-    SendDisconnectionCompleteEvent(handle, controller_reason);
-    return ErrorCode::SUCCESS;
-  }
-
-  if (connections_.HasAclHandle(handle)) {
-    auto connection = connections_.GetAclConnection(handle);
-    auto address = connection.address;
-    INFO(id_, "Disconnecting ACL connection with {}", connection.address);
-
-    auto sco_handle = connections_.GetScoConnectionHandle(connection.address);
-    if (sco_handle.has_value()) {
-      SendLinkLayerPacket(model::packets::ScoDisconnectBuilder::Create(
-              connection.own_address, connection.address, static_cast<uint8_t>(host_reason)));
-
-      connections_.Disconnect(*sco_handle,
-                              [this](TaskId task_id) { CancelScheduledTask(task_id); });
-      SendDisconnectionCompleteEvent(*sco_handle, controller_reason);
-    }
-
-    SendLinkLayerPacket(model::packets::DisconnectBuilder::Create(
-            connection.own_address, connection.address, static_cast<uint8_t>(host_reason)));
-
-    connections_.Disconnect(handle, [this](TaskId task_id) { CancelScheduledTask(task_id); });
-    SendDisconnectionCompleteEvent(handle, controller_reason);
-
-    ASSERT(link_manager_remove_link(lm_.get(), reinterpret_cast<uint8_t (*)[6]>(address.data())));
-    return ErrorCode::SUCCESS;
-  }
-
-  return ErrorCode::UNKNOWN_CONNECTION;
-}
-
-ErrorCode BrEdrController::ReadRemoteVersionInformation(uint16_t connection_handle) {
-  if (connections_.HasAclHandle(connection_handle)) {
-    auto const& connection = connections_.GetAclConnection(connection_handle);
-    SendLinkLayerPacket(model::packets::ReadRemoteVersionInformationBuilder::Create(
-            connection.own_address, connection.address));
-    return ErrorCode::SUCCESS;
-  }
-
-  return ErrorCode::UNKNOWN_CONNECTION;
-}
-
-ErrorCode BrEdrController::ChangeConnectionPacketType(uint16_t handle, uint16_t types) {
-  if (!connections_.HasAclHandle(handle)) {
-    return ErrorCode::UNKNOWN_CONNECTION;
-  }
-
-  ScheduleTask(kNoDelayMs, [this, handle, types]() {
-    if (IsEventUnmasked(EventCode::CONNECTION_PACKET_TYPE_CHANGED)) {
-      send_event_(bluetooth::hci::ConnectionPacketTypeChangedBuilder::Create(ErrorCode::SUCCESS,
-                                                                             handle, types));
-    }
-  });
-
-  return ErrorCode::SUCCESS;
-}
-
-// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
-ErrorCode BrEdrController::ChangeConnectionLinkKey(uint16_t handle) {
-  if (!connections_.HasAclHandle(handle)) {
-    return ErrorCode::UNKNOWN_CONNECTION;
-  }
-
-  // TODO: implement real logic
-  return ErrorCode::COMMAND_DISALLOWED;
-}
-
 // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
 ErrorCode BrEdrController::CentralLinkKey(uint8_t /* key_flag */) {
   // TODO: implement real logic
   return ErrorCode::COMMAND_DISALLOWED;
-}
-
-ErrorCode BrEdrController::HoldMode(uint16_t handle, uint16_t hold_mode_max_interval,
-                                    uint16_t hold_mode_min_interval) {
-  if (!connections_.HasAclHandle(handle)) {
-    return ErrorCode::UNKNOWN_CONNECTION;
-  }
-
-  if (hold_mode_max_interval < hold_mode_min_interval) {
-    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
-  }
-
-  // TODO: implement real logic
-  return ErrorCode::COMMAND_DISALLOWED;
-}
-
-ErrorCode BrEdrController::SniffMode(uint16_t handle, uint16_t sniff_max_interval,
-                                     uint16_t sniff_min_interval, uint16_t sniff_attempt,
-                                     uint16_t sniff_timeout) {
-  if (!connections_.HasAclHandle(handle)) {
-    return ErrorCode::UNKNOWN_CONNECTION;
-  }
-
-  if (sniff_max_interval < sniff_min_interval || sniff_attempt < 0x0001 || sniff_attempt > 0x7FFF ||
-      sniff_timeout > 0x7FFF) {
-    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
-  }
-
-  // TODO: implement real logic
-  return ErrorCode::COMMAND_DISALLOWED;
-}
-
-ErrorCode BrEdrController::ExitSniffMode(uint16_t handle) {
-  if (!connections_.HasAclHandle(handle)) {
-    return ErrorCode::UNKNOWN_CONNECTION;
-  }
-
-  // TODO: implement real logic
-  return ErrorCode::COMMAND_DISALLOWED;
-}
-
-ErrorCode BrEdrController::QosSetup(uint16_t handle, uint8_t service_type,
-                                    uint32_t /* token_rate */, uint32_t /* peak_bandwidth */,
-                                    uint32_t /* latency */, uint32_t /* delay_variation */) {
-  if (!connections_.HasAclHandle(handle)) {
-    return ErrorCode::UNKNOWN_CONNECTION;
-  }
-
-  if (service_type > 0x02) {
-    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
-  }
-
-  // TODO: implement real logic
-  return ErrorCode::COMMAND_DISALLOWED;
-}
-
-ErrorCode BrEdrController::RoleDiscovery(uint16_t handle, bluetooth::hci::Role* role) {
-  if (!connections_.HasAclHandle(handle)) {
-    return ErrorCode::UNKNOWN_CONNECTION;
-  }
-
-  *role = connections_.GetAclConnection(handle).GetRole();
-  return ErrorCode::SUCCESS;
-}
-
-ErrorCode BrEdrController::SwitchRole(Address bd_addr, bluetooth::hci::Role role) {
-  // The BD_ADDR command parameter indicates for which connection
-  // the role switch is to be performed and shall specify a BR/EDR Controller
-  // for which a connection already exists.
-  auto connection_handle = connections_.GetAclConnectionHandle(bd_addr);
-  if (!connection_handle.has_value()) {
-    INFO(id_, "unknown connection address {}", bd_addr);
-    return ErrorCode::UNKNOWN_CONNECTION;
-  }
-
-  AclConnection& connection = connections_.GetAclConnection(*connection_handle);
-
-  // If there is an (e)SCO connection between the local device and the device
-  // identified by the BD_ADDR parameter, an attempt to perform a role switch
-  // shall be rejected by the local device.
-  if (connections_.GetScoConnectionHandle(bd_addr).has_value()) {
-    INFO(id_,
-         "role switch rejected because an Sco link is opened with"
-         " the target device");
-    return ErrorCode::COMMAND_DISALLOWED;
-  }
-
-  // If the connection between the local device and the device identified by the
-  // BD_ADDR parameter is placed in Sniff mode, an attempt to perform a role
-  // switch shall be rejected by the local device.
-  if (connection.GetMode() == AclConnectionState::kSniffMode) {
-    INFO(id_, "role switch rejected because the acl connection is in sniff mode");
-    return ErrorCode::COMMAND_DISALLOWED;
-  }
-
-  if (role != connection.GetRole()) {
-    SendLinkLayerPacket(model::packets::RoleSwitchRequestBuilder::Create(GetAddress(), bd_addr));
-  } else if (IsEventUnmasked(EventCode::ROLE_CHANGE)) {
-    // Note: the status is Success only if the role change procedure was
-    // actually performed, otherwise the status is >0.
-    ScheduleTask(kNoDelayMs, [this, bd_addr, role]() {
-      send_event_(bluetooth::hci::RoleChangeBuilder::Create(ErrorCode::ROLE_SWITCH_FAILED, bd_addr,
-                                                            role));
-    });
-  }
-
-  return ErrorCode::SUCCESS;
 }
 
 void BrEdrController::IncomingRoleSwitchRequest(model::packets::LinkLayerPacketView incoming) {
@@ -1509,41 +1991,6 @@ void BrEdrController::IncomingRoleSwitchResponse(model::packets::LinkLayerPacket
       send_event_(bluetooth::hci::RoleChangeBuilder::Create(status, bd_addr, new_role));
     });
   }
-}
-
-ErrorCode BrEdrController::ReadLinkPolicySettings(uint16_t handle, uint16_t* settings) {
-  if (!connections_.HasAclHandle(handle)) {
-    return ErrorCode::UNKNOWN_CONNECTION;
-  }
-
-  *settings = connections_.GetAclConnection(handle).GetLinkPolicySettings();
-  return ErrorCode::SUCCESS;
-}
-
-ErrorCode BrEdrController::WriteLinkPolicySettings(uint16_t handle, uint16_t settings) {
-  if (!connections_.HasAclHandle(handle)) {
-    return ErrorCode::UNKNOWN_CONNECTION;
-  }
-
-  if (settings > 7 /* Sniff + Hold + Role switch */) {
-    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
-  }
-
-  connections_.GetAclConnection(handle).SetLinkPolicySettings(settings);
-  return ErrorCode::SUCCESS;
-}
-
-ErrorCode BrEdrController::WriteDefaultLinkPolicySettings(uint16_t settings) {
-  if (settings > 7 /* Sniff + Hold + Role switch */) {
-    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
-  }
-
-  default_link_policy_settings_ = settings;
-  return ErrorCode::SUCCESS;
-}
-
-uint16_t BrEdrController::ReadDefaultLinkPolicySettings() const {
-  return default_link_policy_settings_;
 }
 
 void BrEdrController::ReadLocalOobData() {
@@ -1658,10 +2105,7 @@ void BrEdrController::Reset() {
   page_scan_repetition_mode_ = PageScanRepetitionMode::R0;
   oob_id_ = 1;
   key_id_ = 1;
-  last_inquiry_ = steady_clock::now();
   inquiry_mode_ = InquiryType::STANDARD;
-  inquiry_lap_ = 0;
-  inquiry_max_responses_ = 0;
 
   bluetooth::hci::Lap general_iac;
   general_iac.lap_ = 0x33;  // 0x9E8B33
@@ -1670,11 +2114,7 @@ void BrEdrController::Reset() {
 
   page_ = {};
   page_scan_ = {};
-
-  if (inquiry_timer_task_id_ != kInvalidTaskId) {
-    CancelScheduledTask(inquiry_timer_task_id_);
-    inquiry_timer_task_id_ = kInvalidTaskId;
-  }
+  inquiry_ = {};
 
   lm_.reset(link_manager_create(controller_ops_));
 }
@@ -1705,28 +2145,31 @@ void BrEdrController::Paging() {
   }
 }
 
-void BrEdrController::InquiryTimeout() {
-  if (inquiry_timer_task_id_ != kInvalidTaskId) {
-    inquiry_timer_task_id_ = kInvalidTaskId;
-    if (IsEventUnmasked(EventCode::INQUIRY_COMPLETE)) {
-      send_event_(bluetooth::hci::InquiryCompleteBuilder::Create(ErrorCode::SUCCESS));
-    }
-  }
-}
-
 void BrEdrController::SetInquiryMode(uint8_t mode) {
   inquiry_mode_ = static_cast<model::packets::InquiryType>(mode);
 }
 
+/// Drive the logic for the Inquiry controller substate.
 void BrEdrController::Inquiry() {
-  steady_clock::time_point now = steady_clock::now();
-  if (duration_cast<milliseconds>(now - last_inquiry_) < milliseconds(2000)) {
+  auto now = std::chrono::steady_clock::now();
+
+  if (inquiry_.has_value() && now >= inquiry_->inquiry_timeout) {
+    INFO("inquiry timeout triggered");
+
+    if (IsEventUnmasked(EventCode::INQUIRY_COMPLETE)) {
+      send_event_(bluetooth::hci::InquiryCompleteBuilder::Create(ErrorCode::SUCCESS));
+    }
+
+    inquiry_ = {};
     return;
   }
 
-  SendLinkLayerPacket(model::packets::InquiryBuilder::Create(GetAddress(), Address::kEmpty,
-                                                             inquiry_mode_, inquiry_lap_));
-  last_inquiry_ = now;
+  // Send an Inquiry packet to the peer when an inquiry interval has passed.
+  if (inquiry_.has_value() && now >= inquiry_->next_inquiry_event) {
+    SendLinkLayerPacket(model::packets::InquiryBuilder::Create(GetAddress(), Address::kEmpty,
+                                                               inquiry_mode_, inquiry_->lap));
+    inquiry_->next_inquiry_event = now + kInquiryInterval;
+  }
 }
 
 void BrEdrController::SetInquiryScanEnable(bool enable) { inquiry_scan_enable_ = enable; }
@@ -1734,154 +2177,6 @@ void BrEdrController::SetInquiryScanEnable(bool enable) { inquiry_scan_enable_ =
 void BrEdrController::SetPageScanEnable(bool enable) { page_scan_enable_ = enable; }
 
 void BrEdrController::SetPageTimeout(uint16_t page_timeout) { page_timeout_ = page_timeout; }
-
-ErrorCode BrEdrController::AddScoConnection(uint16_t connection_handle, uint16_t packet_type,
-                                            ScoDatapath datapath) {
-  if (!connections_.HasAclHandle(connection_handle)) {
-    return ErrorCode::UNKNOWN_CONNECTION;
-  }
-
-  auto const& connection = connections_.GetAclConnection(connection_handle);
-  if (connections_.HasPendingScoConnection(connection.address)) {
-    return ErrorCode::COMMAND_DISALLOWED;
-  }
-
-  INFO(id_, "Creating SCO connection with {}", connection.address);
-
-  // Save connection parameters.
-  ScoConnectionParameters connection_parameters = {
-          8000,
-          8000,
-          0xffff,
-          0x60 /* 16bit CVSD */,
-          (uint8_t)bluetooth::hci::RetransmissionEffort::NO_RETRANSMISSION,
-          (uint16_t)((uint16_t)((packet_type >> 5) & 0x7U) |
-                     (uint16_t)bluetooth::hci::SynchronousPacketTypeBits::NO_2_EV3_ALLOWED |
-                     (uint16_t)bluetooth::hci::SynchronousPacketTypeBits::NO_3_EV3_ALLOWED |
-                     (uint16_t)bluetooth::hci::SynchronousPacketTypeBits::NO_2_EV5_ALLOWED |
-                     (uint16_t)bluetooth::hci::SynchronousPacketTypeBits::NO_3_EV5_ALLOWED)};
-  connections_.CreateScoConnection(connection.address, connection_parameters, SCO_STATE_PENDING,
-                                   datapath, true);
-
-  // Send SCO connection request to peer.
-  SendLinkLayerPacket(model::packets::ScoConnectionRequestBuilder::Create(
-          GetAddress(), connection.address, connection_parameters.transmit_bandwidth,
-          connection_parameters.receive_bandwidth, connection_parameters.max_latency,
-          connection_parameters.voice_setting, connection_parameters.retransmission_effort,
-          connection_parameters.packet_type, class_of_device_));
-  return ErrorCode::SUCCESS;
-}
-
-ErrorCode BrEdrController::SetupSynchronousConnection(uint16_t connection_handle,
-                                                      uint32_t transmit_bandwidth,
-                                                      uint32_t receive_bandwidth,
-                                                      uint16_t max_latency, uint16_t voice_setting,
-                                                      uint8_t retransmission_effort,
-                                                      uint16_t packet_types, ScoDatapath datapath) {
-  if (!connections_.HasAclHandle(connection_handle)) {
-    return ErrorCode::UNKNOWN_CONNECTION;
-  }
-
-  auto const& connection = connections_.GetAclConnection(connection_handle);
-  if (connections_.HasPendingScoConnection(connection.address)) {
-    // This command may be used to modify an exising eSCO link.
-    // Skip for now. TODO: should return an event
-    // HCI_Synchronous_Connection_Changed on both sides.
-    return ErrorCode::COMMAND_DISALLOWED;
-  }
-
-  INFO(id_, "Creating eSCO connection with {}", connection.address);
-
-  // Save connection parameters.
-  ScoConnectionParameters connection_parameters = {transmit_bandwidth,    receive_bandwidth,
-                                                   max_latency,           voice_setting,
-                                                   retransmission_effort, packet_types};
-  connections_.CreateScoConnection(connection.address, connection_parameters, SCO_STATE_PENDING,
-                                   datapath);
-
-  // Send eSCO connection request to peer.
-  SendLinkLayerPacket(model::packets::ScoConnectionRequestBuilder::Create(
-          GetAddress(), connection.address, transmit_bandwidth, receive_bandwidth, max_latency,
-          voice_setting, retransmission_effort, packet_types, class_of_device_));
-  return ErrorCode::SUCCESS;
-}
-
-ErrorCode BrEdrController::AcceptSynchronousConnection(Address bd_addr, uint32_t transmit_bandwidth,
-                                                       uint32_t receive_bandwidth,
-                                                       uint16_t max_latency, uint16_t voice_setting,
-                                                       uint8_t retransmission_effort,
-                                                       uint16_t packet_types) {
-  INFO(id_, "Accepting eSCO connection request from {}", bd_addr);
-
-  if (!connections_.HasPendingScoConnection(bd_addr)) {
-    INFO(id_, "No pending eSCO connection for {}", bd_addr);
-    return ErrorCode::COMMAND_DISALLOWED;
-  }
-
-  ErrorCode status = ErrorCode::SUCCESS;
-  uint16_t sco_handle = *connections_.GetScoConnectionHandle(bd_addr);
-  ScoLinkParameters link_parameters = {};
-  ScoConnectionParameters connection_parameters = {transmit_bandwidth,    receive_bandwidth,
-                                                   max_latency,           voice_setting,
-                                                   retransmission_effort, packet_types};
-
-  if (!connections_.AcceptPendingScoConnection(bd_addr, connection_parameters, [this, bd_addr] {
-        return BrEdrController::StartScoStream(bd_addr);
-      })) {
-    connections_.CancelPendingScoConnection(bd_addr);
-    status = ErrorCode::STATUS_UNKNOWN;  // TODO: proper status code
-    sco_handle = 0;
-  } else {
-    link_parameters = connections_.GetScoLinkParameters(bd_addr);
-  }
-
-  // Send eSCO connection response to peer.
-  SendLinkLayerPacket(model::packets::ScoConnectionResponseBuilder::Create(
-          GetAddress(), bd_addr, (uint8_t)status, link_parameters.transmission_interval,
-          link_parameters.retransmission_window, link_parameters.rx_packet_length,
-          link_parameters.tx_packet_length, link_parameters.air_mode, link_parameters.extended));
-
-  // Schedule HCI Synchronous Connection Complete event.
-  ScheduleTask(kNoDelayMs, [this, status, sco_handle, bd_addr, link_parameters]() {
-    send_event_(bluetooth::hci::SynchronousConnectionCompleteBuilder::Create(
-            ErrorCode(status), sco_handle, bd_addr,
-            link_parameters.extended ? bluetooth::hci::ScoLinkType::ESCO
-                                     : bluetooth::hci::ScoLinkType::SCO,
-            link_parameters.extended ? link_parameters.transmission_interval : 0,
-            link_parameters.extended ? link_parameters.retransmission_window : 0,
-            link_parameters.extended ? link_parameters.rx_packet_length : 0,
-            link_parameters.extended ? link_parameters.tx_packet_length : 0,
-            bluetooth::hci::ScoAirMode(link_parameters.air_mode)));
-  });
-
-  return ErrorCode::SUCCESS;
-}
-
-ErrorCode BrEdrController::RejectSynchronousConnection(Address bd_addr, uint16_t reason) {
-  INFO(id_, "Rejecting eSCO connection request from {}", bd_addr);
-
-  if (reason == (uint8_t)ErrorCode::SUCCESS) {
-    reason = (uint8_t)ErrorCode::REMOTE_USER_TERMINATED_CONNECTION;
-  }
-  if (!connections_.HasPendingScoConnection(bd_addr)) {
-    return ErrorCode::COMMAND_DISALLOWED;
-  }
-
-  connections_.CancelPendingScoConnection(bd_addr);
-
-  // Send eSCO connection response to peer.
-  SendLinkLayerPacket(model::packets::ScoConnectionResponseBuilder::Create(
-          GetAddress(), bd_addr, reason, 0, 0, 0, 0, 0, 0));
-
-  // Schedule HCI Synchronous Connection Complete event.
-  ScheduleTask(kNoDelayMs, [this, reason, bd_addr]() {
-    send_event_(bluetooth::hci::SynchronousConnectionCompleteBuilder::Create(
-            ErrorCode(reason), 0, bd_addr, bluetooth::hci::ScoLinkType::ESCO, 0, 0, 0, 0,
-            bluetooth::hci::ScoAirMode::TRANSPARENT));
-  });
-
-  return ErrorCode::SUCCESS;
-}
 
 void BrEdrController::CheckExpiringConnection(uint16_t handle) {
   if (!connections_.HasAclHandle(handle)) {
