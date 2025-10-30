@@ -62,9 +62,6 @@ public:
   BrEdrController(const Address& address, const ControllerProperties& properties, uint32_t id = 0);
   ~BrEdrController();
 
-  ErrorCode SendCommandToRemoteByAddress(OpCode opcode, pdl::packet::slice args,
-                                         const Address& own_address, const Address& peer_address);
-  ErrorCode SendCommandToRemoteByHandle(OpCode opcode, pdl::packet::slice args, uint16_t handle);
   ErrorCode SendScoToRemote(bluetooth::hci::ScoView sco_packet);
 
   void ForwardToLm(bluetooth::hci::CommandView command);
@@ -74,35 +71,87 @@ public:
 
   // Link Control commands (Vol 4, Part E § 7.1).
 
-  ErrorCode Inquiry(uint32_t lap, uint8_t inquiry_length, uint8_t num_responses);
+  ErrorCode Inquiry(uint8_t lap, uint8_t inquiry_length, uint8_t num_responses);
   ErrorCode InquiryCancel();
-
-  ErrorCode AcceptConnectionRequest(const Address& addr, bool try_role_switch);
-  void MakePeripheralConnection(const Address& addr, bool try_role_switch);
-  ErrorCode RejectConnectionRequest(const Address& addr, uint8_t reason);
-  void RejectPeripheralConnection(const Address& addr, uint8_t reason);
-
-  // HCI command Create Connection (Vol 4, Part E § 7.1.5).
-  ErrorCode CreateConnection(const Address& bd_addr, uint16_t packet_type, uint8_t page_scan_mode,
-                             uint16_t clock_offset, uint8_t allow_role_switch);
-
-  // HCI command Disconnect (Vol 4, Part E § 7.1.6).
-  // \p host_reason is taken from the Disconnect command, and sent over
-  // to the remote as disconnect error. \p controller_reason is the code
-  // used in the DisconnectionComplete event.
+  ErrorCode CreateConnection(Address bd_addr, uint16_t packet_type,
+                             uint8_t page_scan_repetition_mode, uint16_t clock_offset,
+                             uint8_t allow_role_switch);
   ErrorCode Disconnect(
-          uint16_t handle, ErrorCode host_reason,
+          uint16_t connection_handle, ErrorCode host_reason,
           ErrorCode controller_reason = ErrorCode::CONNECTION_TERMINATED_BY_LOCAL_HOST);
-
-  // HCI command Create Connection Cancel (Vol 4, Part E § 7.1.7).
-  ErrorCode CreateConnectionCancel(const Address& bd_addr);
-
-  // HCI command Read Remote Version Information (Vol 4, Part E § 7.1.23).
+  ErrorCode CreateConnectionCancel(Address bd_addr);
+  ErrorCode AcceptConnectionRequest(Address bd_addr, bool try_role_switch);
+  ErrorCode RejectConnectionRequest(Address bd_addr, uint8_t reason);
+  ErrorCode ChangeConnectionPacketType(uint16_t connection_handle, uint16_t packet_type);
+  ErrorCode ChangeConnectionLinkKey(uint16_t connection_handle);
+  ErrorCode RemoteNameRequest(Address bd_addr, uint8_t page_scan_repetition_mode,
+                              uint16_t clock_offset);
+  ErrorCode ReadRemoteSupportedFeatures(uint16_t connection_handle);
+  ErrorCode ReadRemoteExtendedFeatures(uint16_t connection_handle, uint8_t page_number);
   ErrorCode ReadRemoteVersionInformation(uint16_t connection_handle);
+  ErrorCode ReadClockOffset(uint16_t connection_handle);
+  ErrorCode AddScoConnection(uint16_t connection_handle, uint16_t packet_type);
+  ErrorCode SetupSynchronousConnection(uint16_t connection_handle, uint32_t transmit_bandwidth,
+                                       uint32_t receive_bandwidth, uint16_t max_latency,
+                                       uint16_t voice_setting, uint8_t retransmission_effort,
+                                       uint16_t packet_types, ScoDatapath datapath);
+  ErrorCode AcceptSynchronousConnection(Address bd_addr, uint32_t transmit_bandwidth,
+                                        uint32_t receive_bandwidth, uint16_t max_latency,
+                                        uint16_t voice_setting, uint8_t retransmission_effort,
+                                        uint16_t packet_types);
+  ErrorCode RejectSynchronousConnection(Address bd_addr, uint16_t reason);
+  ErrorCode EnhancedSetupSynchronousConnection(
+          uint16_t connection_handle, uint32_t transmit_bandwidth, uint32_t receive_bandwidth,
+          bluetooth::hci::ScoCodingFormat transmit_coding_format,
+          bluetooth::hci::ScoCodingFormat receive_coding_format, uint16_t transmit_codec_frame_size,
+          uint16_t receive_codec_frame_size, uint32_t input_bandwidth, uint32_t output_bandwidth,
+          bluetooth::hci::ScoCodingFormat input_coding_format,
+          bluetooth::hci::ScoCodingFormat output_coding_format, uint16_t input_coded_data_size,
+          uint16_t output_coded_data_size, bluetooth::hci::ScoPcmDataFormat input_pcm_data_format,
+          bluetooth::hci::ScoPcmDataFormat output_pcm_data_format,
+          uint8_t input_pcm_sample_payload_msb_position,
+          uint8_t output_pcm_sample_payload_msb_position,
+          bluetooth::hci::ScoDataPath input_data_path, bluetooth::hci::ScoDataPath output_data_path,
+          uint8_t input_transport_unit_size, uint8_t output_transport_unit_size,
+          uint16_t max_latency, uint16_t packet_type,
+          bluetooth::hci::RetransmissionEffort retransmission_effort);
+  ErrorCode EnhancedAcceptSynchronousConnection(
+          Address bd_addr, uint32_t transmit_bandwidth, uint32_t receive_bandwidth,
+          bluetooth::hci::ScoCodingFormat transmit_coding_format,
+          bluetooth::hci::ScoCodingFormat receive_coding_format, uint16_t transmit_codec_frame_size,
+          uint16_t receive_codec_frame_size, uint32_t input_bandwidth, uint32_t output_bandwidth,
+          bluetooth::hci::ScoCodingFormat input_coding_format,
+          bluetooth::hci::ScoCodingFormat output_coding_format, uint16_t input_coded_data_size,
+          uint16_t output_coded_data_size, bluetooth::hci::ScoPcmDataFormat input_pcm_data_format,
+          bluetooth::hci::ScoPcmDataFormat output_pcm_data_format,
+          uint8_t input_pcm_sample_payload_msb_position,
+          uint8_t output_pcm_sample_payload_msb_position,
+          bluetooth::hci::ScoDataPath input_data_path, bluetooth::hci::ScoDataPath output_data_path,
+          uint8_t input_transport_unit_size, uint8_t output_transport_unit_size,
+          uint16_t max_latency, uint16_t packet_type,
+          bluetooth::hci::RetransmissionEffort retransmission_effort);
+
+  // Link Policy commands (Vol 4, Part E § 7.2).
+
+  ErrorCode HoldMode(uint16_t connection_handle, uint16_t hold_mode_max_interval,
+                     uint16_t hold_mode_min_interval);
+  ErrorCode SniffMode(uint16_t connection_handle, uint16_t sniff_max_interval,
+                      uint16_t sniff_min_interval, uint16_t sniff_attempt, uint16_t sniff_timeout);
+  ErrorCode ExitSniffMode(uint16_t connection_handle);
+  ErrorCode QosSetup(uint16_t connection_handle, uint8_t service_type, uint32_t token_rate,
+                     uint32_t peak_bandwidth, uint32_t latency, uint32_t delay_variation);
+  ErrorCode RoleDiscovery(uint16_t connection_handle, bluetooth::hci::Role* role);
+  ErrorCode SwitchRole(Address bd_addr, bluetooth::hci::Role role);
+  ErrorCode ReadLinkPolicySettings(uint16_t connection_handle, uint16_t* link_policy_settings);
+  ErrorCode WriteLinkPolicySettings(uint16_t connection_handle, uint16_t link_policy_settings);
+  ErrorCode ReadDefaultLinkPolicySettings(uint16_t* default_link_policy_settings) const;
+  ErrorCode WriteDefaultLinkPolicySettings(uint16_t default_link_policy_settings);
 
   // Internal task scheduler.
+  //
   // This scheduler is driven by the tick function only,
   // hence the precision of the scheduler is within a tick period.
+
   class Task;
   using TaskId = uint32_t;
   using TaskCallback = std::function<void(void)>;
@@ -126,6 +175,8 @@ public:
 
 private:
   void SendDisconnectionCompleteEvent(uint16_t handle, ErrorCode reason);
+  void MakePeripheralConnection(const Address& addr, bool try_role_switch);
+  void RejectPeripheralConnection(const Address& addr, uint8_t reason);
 
 public:
   const Address& GetAddress() const;
@@ -169,42 +220,15 @@ public:
   uint16_t GetPageTimeout() const { return page_timeout_; }
   void SetPageTimeout(uint16_t page_timeout);
 
-  ErrorCode ChangeConnectionPacketType(uint16_t handle, uint16_t types);
-  ErrorCode ChangeConnectionLinkKey(uint16_t handle);
   ErrorCode CentralLinkKey(uint8_t key_flag);
-  ErrorCode HoldMode(uint16_t handle, uint16_t hold_mode_max_interval,
-                     uint16_t hold_mode_min_interval);
-  ErrorCode SniffMode(uint16_t handle, uint16_t sniff_max_interval, uint16_t sniff_min_interval,
-                      uint16_t sniff_attempt, uint16_t sniff_timeout);
-  ErrorCode ExitSniffMode(uint16_t handle);
-  ErrorCode QosSetup(uint16_t handle, uint8_t service_type, uint32_t token_rate,
-                     uint32_t peak_bandwidth, uint32_t latency, uint32_t delay_variation);
-  ErrorCode RoleDiscovery(uint16_t handle, bluetooth::hci::Role* role);
-  ErrorCode SwitchRole(Address bd_addr, bluetooth::hci::Role role);
-  ErrorCode ReadLinkPolicySettings(uint16_t handle, uint16_t* settings);
-  ErrorCode WriteLinkPolicySettings(uint16_t handle, uint16_t settings);
   ErrorCode FlowSpecification(uint16_t handle, uint8_t flow_direction, uint8_t service_type,
                               uint32_t token_rate, uint32_t token_bucket_size,
                               uint32_t peak_bandwidth, uint32_t access_latency);
   ErrorCode WriteLinkSupervisionTimeout(uint16_t handle, uint16_t timeout);
-  ErrorCode WriteDefaultLinkPolicySettings(uint16_t settings);
   void CheckExpiringConnection(uint16_t handle);
-  uint16_t ReadDefaultLinkPolicySettings() const;
 
   void ReadLocalOobData();
   void ReadLocalOobExtendedData();
-
-  ErrorCode AddScoConnection(uint16_t connection_handle, uint16_t packet_type,
-                             ScoDatapath datapath);
-  ErrorCode SetupSynchronousConnection(uint16_t connection_handle, uint32_t transmit_bandwidth,
-                                       uint32_t receive_bandwidth, uint16_t max_latency,
-                                       uint16_t voice_setting, uint8_t retransmission_effort,
-                                       uint16_t packet_types, ScoDatapath datapath);
-  ErrorCode AcceptSynchronousConnection(Address bd_addr, uint32_t transmit_bandwidth,
-                                        uint32_t receive_bandwidth, uint16_t max_latency,
-                                        uint16_t voice_setting, uint8_t retransmission_effort,
-                                        uint16_t packet_types);
-  ErrorCode RejectSynchronousConnection(Address bd_addr, uint16_t reason);
 
   // Returns true if the specified ACL connection handle is valid.
   bool HasAclConnection(uint16_t connection_handle);
@@ -338,6 +362,9 @@ private:
   uint16_t inquiry_scan_interval_{0x1000};
   uint16_t inquiry_scan_window_{0x0012};
 
+  // Inquiry Mode (Vol 4, Part E § 6.5).
+  model::packets::InquiryType inquiry_mode_{model::packets::InquiryType::STANDARD};
+
   // Page Timeout (Vol 4, Part E § 6.6).
   uint16_t page_timeout_{0x2000};
 
@@ -411,7 +438,7 @@ private:
   struct ControllerOps controller_ops_;
 
   // Classic state.
-  struct Page {
+  struct PageState {
     Address bd_addr;
     uint8_t allow_role_switch;
     std::chrono::steady_clock::time_point next_page_event{};
@@ -420,9 +447,9 @@ private:
 
   // Page substate.
   // RootCanal will allow only one page request running at the same time.
-  std::optional<Page> page_;
+  std::optional<PageState> page_;
 
-  struct PageScan {
+  struct PageScanState {
     Address bd_addr;
     bool authentication_required;
     uint8_t allow_role_switch;
@@ -431,13 +458,19 @@ private:
   // Page scan substate.
   // Set when page scan is enabled and a valid page request is received.
   // Holds the state for the connection being established.
-  std::optional<PageScan> page_scan_;
+  std::optional<PageScanState> page_scan_;
 
-  std::chrono::steady_clock::time_point last_inquiry_;
-  model::packets::InquiryType inquiry_mode_{model::packets::InquiryType::STANDARD};
-  TaskId inquiry_timer_task_id_ = kInvalidTaskId;
-  uint64_t inquiry_lap_{};
-  uint8_t inquiry_max_responses_{};
+  // Inquiry substate.
+  struct InquiryState {
+    uint8_t lap;
+    uint8_t num_responses;
+    std::chrono::steady_clock::time_point next_inquiry_event{};
+    std::chrono::steady_clock::time_point inquiry_timeout{};
+  };
+
+  // Inquiry substate.
+  // RootCanal will allow only one inquiry request running at the same time.
+  std::optional<InquiryState> inquiry_;
 
 public:
   // Type of scheduled tasks.

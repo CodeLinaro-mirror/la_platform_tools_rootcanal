@@ -20,13 +20,17 @@ use std::path::{Path, PathBuf};
 fn main() {
     generate_module(&PathBuf::from("lmp_packets.pdl").canonicalize().unwrap());
     generate_module(&PathBuf::from("llcp_packets.pdl").canonicalize().unwrap());
-    generate_module(&PathBuf::from("../packets/hci_packets.pdl").canonicalize().unwrap());
+    generate_module(&PathBuf::from("hci_packets.pdl").canonicalize().unwrap());
 }
 
 fn generate_module(in_file: &Path) {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
-    let mut out_file =
-        File::create(out_dir.join(in_file.file_name().unwrap()).with_extension("rs")).unwrap();
+    let mut out_file = File::create(
+        out_dir
+            .join(in_file.file_name().unwrap())
+            .with_extension("rs"),
+    )
+    .unwrap();
 
     println!("cargo:rerun-if-changed={}", in_file.display());
 
@@ -38,5 +42,7 @@ fn generate_module(in_file: &Path) {
     .expect("PDL parse failed");
     let analyzed_file = pdl_compiler::analyzer::analyze(&parsed_file).expect("PDL analysis failed");
     let rust_source = pdl_compiler::backends::rust::generate(&sources, &analyzed_file, &[]);
-    out_file.write_all(rust_source.as_bytes()).expect("Could not write to output file");
+    out_file
+        .write_all(rust_source.as_bytes())
+        .expect("Could not write to output file");
 }
