@@ -1761,9 +1761,9 @@ packet FlowSpecificationStatus : CommandStatus (command_op_code = FLOW_SPECIFICA
 packet SniffSubrating : Command (op_code = SNIFF_SUBRATING) {
   connection_handle : 12,
   _reserved_ : 4,
-  maximum_latency : 16,  // 0x0002-0xFFFE (1.25ms-40.9s)
-  minimum_remote_timeout : 16, // 0x0000-0xFFFE (0-40.9s)
-  minimum_local_timeout: 16, // 0x0000-0xFFFE (0-40.9s)
+  max_latency : 16,  // 0x0002-0xFFFE (1.25ms-40.9s)
+  min_remote_timeout : 16, // 0x0000-0xFFFE (0-40.9s)
+  min_local_timeout: 16, // 0x0000-0xFFFE (0-40.9s)
 }
 
 packet SniffSubratingComplete : CommandComplete (command_op_code = SNIFF_SUBRATING) {

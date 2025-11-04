@@ -938,22 +938,189 @@ ErrorCode BrEdrController::WriteDefaultLinkPolicySettings(uint16_t default_link_
   return ErrorCode::SUCCESS;
 }
 
+// HCI Flow Specification command (Vol 4, Part E § 7.2.13).
+ErrorCode BrEdrController::FlowSpecification(uint16_t connection_handle, uint8_t flow_direction,
+                                             uint8_t service_type, uint32_t /* token_rate */,
+                                             uint32_t /* token_bucket_size */,
+                                             uint32_t /* peak_bandwidth */,
+                                             uint32_t /* access_latency */) {
+  if (!connections_.HasAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  if (flow_direction > 0x01 || service_type > 0x02) {
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  // TODO: implement real logic
+  return ErrorCode::COMMAND_DISALLOWED;
+}
+
+// HCI Sniff Subrating command (Vol 4, Part E § 7.2.14).
+ErrorCode BrEdrController::SniffSubrating(uint16_t connection_handle, uint16_t max_latency,
+                                          uint16_t min_remote_timeout, uint16_t min_local_timeout) {
+  if (!connections_.HasAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  if (max_latency < 0x2 || max_latency > 0xfffe || min_remote_timeout > 0xfffe ||
+      min_local_timeout > 0xfffe) {
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  // TODO: generate HCI Sniff Subrating event to emulate sniff subrating negotiation.
+  return ErrorCode::SUCCESS;
+}
+
 // =============================================================================
-//  BR/EDR Commands
+//  Controller & Baseband commands (Vol 4, Part E § 7.3)
+// =============================================================================
+
+// HCI Reset command (Vol 4, Part E § 7.3.2).
+void BrEdrController::Reset() {
+  // Explicitly Disconnect all existing links on reset.
+  // No Disconnection Complete event should be generated from the link
+  // disconnections, as only the HCI Command Complete event is expected for the
+  // HCI Reset command.
+  DisconnectAll(ErrorCode::REMOTE_USER_TERMINATED_CONNECTION);
+
+  // DisconnectAll does not close the local connection contexts.
+  connections_.Reset([this](TaskId task_id) { CancelScheduledTask(task_id); });
+
+  host_supported_features_ = 0;
+  le_host_support_ = false;
+  secure_simple_pairing_host_support_ = false;
+  secure_connections_host_support_ = false;
+  page_scan_enable_ = false;
+  inquiry_scan_enable_ = false;
+  inquiry_scan_interval_ = 0x1000;
+  inquiry_scan_window_ = 0x0012;
+  page_timeout_ = 0x2000;
+  connection_accept_timeout_ = 0x1FA0;
+  page_scan_interval_ = 0x0800;
+  page_scan_window_ = 0x0012;
+  voice_setting_ = 0x0060;
+  authentication_enable_ = AuthenticationEnable::NOT_REQUIRED;
+  default_link_policy_settings_ = 0x0000;
+  sco_flow_control_enable_ = false;
+  local_name_.fill(0);
+  extended_inquiry_response_.fill(0);
+  class_of_device_ = 0;
+  min_encryption_key_size_ = 16;
+  event_mask_ = 0x00001fffffffffff;
+  event_mask_page_2_ = 0x0;
+  page_scan_repetition_mode_ = PageScanRepetitionMode::R0;
+  oob_id_ = 1;
+  key_id_ = 1;
+  inquiry_mode_ = InquiryType::STANDARD;
+
+  bluetooth::hci::Lap general_iac;
+  general_iac.lap_ = 0x33;  // 0x9E8B33
+  current_iac_lap_list_.clear();
+  current_iac_lap_list_.emplace_back(general_iac);
+
+  page_ = {};
+  page_scan_ = {};
+  inquiry_ = {};
+
+  lm_.reset(link_manager_create(controller_ops_));
+}
+
+// HCI Write Local Name command (Vol 4, Part E § 7.3.11).
+void BrEdrController::WriteLocalName(std::array<uint8_t, 248> const& local_name) {
+  local_name_ = local_name;
+}
+
+// HCI Read Scan Enable command (Vol 4, Part E § 7.3.17).
+void BrEdrController::ReadScanEnable(bluetooth::hci::ScanEnable* scan_enable) {
+  *scan_enable = inquiry_scan_enable_ && page_scan_enable_
+                         ? bluetooth::hci::ScanEnable::INQUIRY_AND_PAGE_SCAN
+                 : inquiry_scan_enable_ ? bluetooth::hci::ScanEnable::INQUIRY_SCAN_ONLY
+                 : page_scan_enable_    ? bluetooth::hci::ScanEnable::PAGE_SCAN_ONLY
+                                        : bluetooth::hci::ScanEnable::NO_SCANS;
+}
+
+// HCI Write Scan Enable command (Vol 4, Part E § 7.3.18).
+void BrEdrController::WriteScanEnable(bluetooth::hci::ScanEnable scan_enable) {
+  inquiry_scan_enable_ = scan_enable == bluetooth::hci::ScanEnable::INQUIRY_AND_PAGE_SCAN ||
+                         scan_enable == bluetooth::hci::ScanEnable::INQUIRY_SCAN_ONLY;
+  page_scan_enable_ = scan_enable == bluetooth::hci::ScanEnable::INQUIRY_AND_PAGE_SCAN ||
+                      scan_enable == bluetooth::hci::ScanEnable::PAGE_SCAN_ONLY;
+}
+
+// HCI Write Extended Inquiry Response command (Vol 4, Part E § 7.3.56).
+void BrEdrController::WriteExtendedInquiryResponse(
+        bool /*fec_required*/, std::array<uint8_t, 240> const& extended_inquiry_response) {
+  extended_inquiry_response_ = extended_inquiry_response;
+}
+
+// HCI Read Local OOB Data command (Vol 4, Part E § 7.3.60).
+void BrEdrController::ReadLocalOobData(std::array<uint8_t, 16>* c, std::array<uint8_t, 16>* r) {
+  *c = std::array<uint8_t, 16>({'c', ' ', 'a', 'r', 'r', 'a', 'y', ' ', '0', '0', '0', '0', '0',
+                                '0', static_cast<uint8_t>((oob_id_ % 0x10000) >> 8),
+                                static_cast<uint8_t>(oob_id_ % 0x100)});
+
+  *r = std::array<uint8_t, 16>({'r', ' ', 'a', 'r', 'r', 'a', 'y', ' ', '0', '0', '0', '0', '0',
+                                '0', static_cast<uint8_t>((oob_id_ % 0x10000) >> 8),
+                                static_cast<uint8_t>(oob_id_ % 0x100)});
+  oob_id_ += 1;
+}
+
+// HCI Read Local OOB Extended Data command (Vol 4, Part E § 7.3.95).
+void BrEdrController::ReadLocalOobExtendedData(std::array<uint8_t, 16>* c_192,
+                                               std::array<uint8_t, 16>* r_192,
+                                               std::array<uint8_t, 16>* c_256,
+                                               std::array<uint8_t, 16>* r_256) {
+  *c_192 = std::array<uint8_t, 16>({'c', ' ', 'a', 'r', 'r', 'a', 'y', ' ', '1', '9', '2', '0', '0',
+                                    '0', static_cast<uint8_t>((oob_id_ % 0x10000) >> 8),
+                                    static_cast<uint8_t>(oob_id_ % 0x100)});
+
+  *r_192 = std::array<uint8_t, 16>({'r', ' ', 'a', 'r', 'r', 'a', 'y', ' ', '1', '9', '2', '0', '0',
+                                    '0', static_cast<uint8_t>((oob_id_ % 0x10000) >> 8),
+                                    static_cast<uint8_t>(oob_id_ % 0x100)});
+
+  *c_256 = std::array<uint8_t, 16>({'c', ' ', 'a', 'r', 'r', 'a', 'y', ' ', '2', '5', '6', '0', '0',
+                                    '0', static_cast<uint8_t>((oob_id_ % 0x10000) >> 8),
+                                    static_cast<uint8_t>(oob_id_ % 0x100)});
+
+  *r_256 = std::array<uint8_t, 16>({'r', ' ', 'a', 'r', 'r', 'a', 'y', ' ', '2', '5', '6', '0', '0',
+                                    '0', static_cast<uint8_t>((oob_id_ % 0x10000) >> 8),
+                                    static_cast<uint8_t>(oob_id_ % 0x100)});
+  oob_id_ += 1;
+}
+
+// =============================================================================
+//  Status parameters (Vol 4, Part E § 7.5)
 // =============================================================================
 
 // HCI Read Rssi command (Vol 4, Part E § 7.5.4).
 ErrorCode BrEdrController::ReadRssi(uint16_t connection_handle, int8_t* rssi) {
-  if (connections_.HasAclHandle(connection_handle)) {
-    *rssi = connections_.GetAclConnection(connection_handle).GetRssi();
-    return ErrorCode::SUCCESS;
+  if (!connections_.HasAclHandle(connection_handle)) {
+    // Not documented: If the connection handle is not found, the Controller
+    // shall return the error code Unknown Connection Identifier (0x02).
+    return ErrorCode::UNKNOWN_CONNECTION;
   }
 
-  // Not documented: If the connection handle is not found, the Controller
-  // shall return the error code Unknown Connection Identifier (0x02).
-  INFO(id_, "unknown connection identifier");
-  return ErrorCode::UNKNOWN_CONNECTION;
+  *rssi = connections_.GetAclConnection(connection_handle).GetRssi();
+  return ErrorCode::SUCCESS;
 }
+
+// HCI Read Encryption Key Size command (Vol 4, Part E § 7.5.7).
+ErrorCode BrEdrController::ReadEncryptionKeySize(uint16_t connection_handle, uint8_t* key_size) {
+  if (!connections_.HasAclHandle(connection_handle)) {
+    // Not documented: If the connection handle is not found, the Controller
+    // shall return the error code Unknown Connection Identifier (0x02).
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  // TODO: The Encryption Key Size should be specific to an ACL connection.
+  *key_size = 16;
+  return ErrorCode::SUCCESS;
+}
+
+// =============================================================================
+//  BR/EDR Commands
+// =============================================================================
 
 void BrEdrController::SetSecureSimplePairingSupport(bool enable) {
   uint64_t bit = 0x1;
@@ -992,19 +1159,10 @@ void BrEdrController::SetSecureConnectionsSupport(bool enable) {
   }
 }
 
-void BrEdrController::SetLocalName(std::array<uint8_t, kLocalNameSize> const& local_name) {
-  std::copy(local_name.begin(), local_name.end(), local_name_.begin());
-}
-
 void BrEdrController::SetLocalName(std::vector<uint8_t> const& local_name) {
   ASSERT(local_name.size() <= local_name_.size());
   local_name_.fill(0);
   std::copy(local_name.begin(), local_name.end(), local_name_.begin());
-}
-
-void BrEdrController::SetExtendedInquiryResponse(
-        std::array<uint8_t, 240> const& extended_inquiry_response) {
-  extended_inquiry_response_ = extended_inquiry_response;
 }
 
 void BrEdrController::SetExtendedInquiryResponse(
@@ -1444,17 +1602,17 @@ void BrEdrController::IncomingInquiryPacket(model::packets::LinkLayerPacketView 
   switch (inquiry.GetInquiryType()) {
     case (model::packets::InquiryType::STANDARD): {
       SendLinkLayerPacket(model::packets::InquiryResponseBuilder::Create(
-              GetAddress(), peer, static_cast<uint8_t>(GetPageScanRepetitionMode()),
+              GetAddress(), peer, static_cast<uint8_t>(page_scan_repetition_mode_),
               class_of_device_, GetClockOffset()));
     } break;
     case (model::packets::InquiryType::RSSI): {
       SendLinkLayerPacket(model::packets::InquiryResponseWithRssiBuilder::Create(
-              GetAddress(), peer, static_cast<uint8_t>(GetPageScanRepetitionMode()),
+              GetAddress(), peer, static_cast<uint8_t>(page_scan_repetition_mode_),
               class_of_device_, GetClockOffset(), rssi));
     } break;
     case (model::packets::InquiryType::EXTENDED): {
       SendLinkLayerPacket(model::packets::ExtendedInquiryResponseBuilder::Create(
-              GetAddress(), peer, static_cast<uint8_t>(GetPageScanRepetitionMode()),
+              GetAddress(), peer, static_cast<uint8_t>(page_scan_repetition_mode_),
               class_of_device_, GetClockOffset(), rssi, extended_inquiry_response_));
     } break;
     default:
@@ -1993,59 +2151,6 @@ void BrEdrController::IncomingRoleSwitchResponse(model::packets::LinkLayerPacket
   }
 }
 
-void BrEdrController::ReadLocalOobData() {
-  std::array<uint8_t, 16> c_array({'c', ' ', 'a', 'r', 'r', 'a', 'y', ' ', '0', '0', '0', '0', '0',
-                                   '0', static_cast<uint8_t>((oob_id_ % 0x10000) >> 8),
-                                   static_cast<uint8_t>(oob_id_ % 0x100)});
-
-  std::array<uint8_t, 16> r_array({'r', ' ', 'a', 'r', 'r', 'a', 'y', ' ', '0', '0', '0', '0', '0',
-                                   '0', static_cast<uint8_t>((oob_id_ % 0x10000) >> 8),
-                                   static_cast<uint8_t>(oob_id_ % 0x100)});
-
-  send_event_(bluetooth::hci::ReadLocalOobDataCompleteBuilder::Create(1, ErrorCode::SUCCESS,
-                                                                      c_array, r_array));
-  oob_id_ += 1;
-}
-
-void BrEdrController::ReadLocalOobExtendedData() {
-  std::array<uint8_t, 16> c_192_array({'c', ' ', 'a', 'r', 'r', 'a', 'y', ' ', '1', '9', '2', '0',
-                                       '0', '0', static_cast<uint8_t>((oob_id_ % 0x10000) >> 8),
-                                       static_cast<uint8_t>(oob_id_ % 0x100)});
-
-  std::array<uint8_t, 16> r_192_array({'r', ' ', 'a', 'r', 'r', 'a', 'y', ' ', '1', '9', '2', '0',
-                                       '0', '0', static_cast<uint8_t>((oob_id_ % 0x10000) >> 8),
-                                       static_cast<uint8_t>(oob_id_ % 0x100)});
-
-  std::array<uint8_t, 16> c_256_array({'c', ' ', 'a', 'r', 'r', 'a', 'y', ' ', '2', '5', '6', '0',
-                                       '0', '0', static_cast<uint8_t>((oob_id_ % 0x10000) >> 8),
-                                       static_cast<uint8_t>(oob_id_ % 0x100)});
-
-  std::array<uint8_t, 16> r_256_array({'r', ' ', 'a', 'r', 'r', 'a', 'y', ' ', '2', '5', '6', '0',
-                                       '0', '0', static_cast<uint8_t>((oob_id_ % 0x10000) >> 8),
-                                       static_cast<uint8_t>(oob_id_ % 0x100)});
-
-  send_event_(bluetooth::hci::ReadLocalOobExtendedDataCompleteBuilder::Create(
-          1, ErrorCode::SUCCESS, c_192_array, r_192_array, c_256_array, r_256_array));
-  oob_id_ += 1;
-}
-
-ErrorCode BrEdrController::FlowSpecification(uint16_t handle, uint8_t flow_direction,
-                                             uint8_t service_type, uint32_t /* token_rate */,
-                                             uint32_t /* token_bucket_size */,
-                                             uint32_t /* peak_bandwidth */,
-                                             uint32_t /* access_latency */) {
-  if (!connections_.HasAclHandle(handle)) {
-    return ErrorCode::UNKNOWN_CONNECTION;
-  }
-
-  if (flow_direction > 0x01 || service_type > 0x02) {
-    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
-  }
-
-  // TODO: implement real logic
-  return ErrorCode::COMMAND_DISALLOWED;
-}
-
 ErrorCode BrEdrController::WriteLinkSupervisionTimeout(uint16_t handle, uint16_t /* timeout */) {
   if (!connections_.HasAclHandle(handle)) {
     return ErrorCode::UNKNOWN_CONNECTION;
@@ -2068,55 +2173,6 @@ void BrEdrController::DisconnectAll(ErrorCode reason) {
     SendLinkLayerPacket(model::packets::DisconnectBuilder::Create(
             connection.own_address, connection.address, static_cast<uint8_t>(reason)));
   }
-}
-
-void BrEdrController::Reset() {
-  // Explicitly Disconnect all existing links on reset.
-  // No Disconnection Complete event should be generated from the link
-  // disconnections, as only the HCI Command Complete event is expected for the
-  // HCI Reset command.
-  DisconnectAll(ErrorCode::REMOTE_USER_TERMINATED_CONNECTION);
-
-  // DisconnectAll does not close the local connection contexts.
-  connections_.Reset([this](TaskId task_id) { CancelScheduledTask(task_id); });
-
-  host_supported_features_ = 0;
-  le_host_support_ = false;
-  secure_simple_pairing_host_support_ = false;
-  secure_connections_host_support_ = false;
-  page_scan_enable_ = false;
-  inquiry_scan_enable_ = false;
-  inquiry_scan_interval_ = 0x1000;
-  inquiry_scan_window_ = 0x0012;
-  page_timeout_ = 0x2000;
-  connection_accept_timeout_ = 0x1FA0;
-  page_scan_interval_ = 0x0800;
-  page_scan_window_ = 0x0012;
-  voice_setting_ = 0x0060;
-  authentication_enable_ = AuthenticationEnable::NOT_REQUIRED;
-  default_link_policy_settings_ = 0x0000;
-  sco_flow_control_enable_ = false;
-  local_name_.fill(0);
-  extended_inquiry_response_.fill(0);
-  class_of_device_ = 0;
-  min_encryption_key_size_ = 16;
-  event_mask_ = 0x00001fffffffffff;
-  event_mask_page_2_ = 0x0;
-  page_scan_repetition_mode_ = PageScanRepetitionMode::R0;
-  oob_id_ = 1;
-  key_id_ = 1;
-  inquiry_mode_ = InquiryType::STANDARD;
-
-  bluetooth::hci::Lap general_iac;
-  general_iac.lap_ = 0x33;  // 0x9E8B33
-  current_iac_lap_list_.clear();
-  current_iac_lap_list_.emplace_back(general_iac);
-
-  page_ = {};
-  page_scan_ = {};
-  inquiry_ = {};
-
-  lm_.reset(link_manager_create(controller_ops_));
 }
 
 /// Drive the logic for the Page controller substate.
@@ -2171,10 +2227,6 @@ void BrEdrController::Inquiry() {
     inquiry_->next_inquiry_event = now + kInquiryInterval;
   }
 }
-
-void BrEdrController::SetInquiryScanEnable(bool enable) { inquiry_scan_enable_ = enable; }
-
-void BrEdrController::SetPageScanEnable(bool enable) { page_scan_enable_ = enable; }
 
 void BrEdrController::SetPageTimeout(uint16_t page_timeout) { page_timeout_ = page_timeout; }
 
