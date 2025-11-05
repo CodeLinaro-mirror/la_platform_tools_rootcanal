@@ -146,6 +146,29 @@ public:
   ErrorCode WriteLinkPolicySettings(uint16_t connection_handle, uint16_t link_policy_settings);
   ErrorCode ReadDefaultLinkPolicySettings(uint16_t* default_link_policy_settings) const;
   ErrorCode WriteDefaultLinkPolicySettings(uint16_t default_link_policy_settings);
+  ErrorCode FlowSpecification(uint16_t connection_handle, uint8_t flow_direction,
+                              uint8_t service_type, uint32_t token_rate, uint32_t token_bucket_size,
+                              uint32_t peak_bandwidth, uint32_t access_latency);
+  ErrorCode SniffSubrating(uint16_t connection_handle, uint16_t max_latency,
+                           uint16_t min_remote_timeout, uint16_t min_local_timeout);
+
+  // Controller & Baseband commands (Vol 4, Part E § 7.3).
+
+  void SetEventMask(uint64_t event_mask) { event_mask_ = event_mask; }
+  void Reset();
+  void WriteLocalName(std::array<uint8_t, 248> const& local_name);
+  void ReadScanEnable(bluetooth::hci::ScanEnable* scan_enable);
+  void WriteScanEnable(bluetooth::hci::ScanEnable scan_enable);
+  void WriteExtendedInquiryResponse(bool fec_required,
+                                    std::array<uint8_t, 240> const& extended_inquiry_response);
+  void ReadLocalOobData(std::array<uint8_t, 16>* c, std::array<uint8_t, 16>* r);
+  void ReadLocalOobExtendedData(std::array<uint8_t, 16>* c_192, std::array<uint8_t, 16>* r_192,
+                                std::array<uint8_t, 16>* c_256, std::array<uint8_t, 16>* r_256);
+
+  // Status parameters (Vol 4, Part E § 7.5).
+
+  ErrorCode ReadRssi(uint16_t connection_handle, int8_t* rssi);
+  ErrorCode ReadEncryptionKeySize(uint16_t connection_handle, uint8_t* key_size);
 
   // Internal task scheduler.
   //
@@ -204,41 +227,23 @@ public:
           const std::function<void(std::shared_ptr<model::packets::LinkLayerPacketBuilder>,
                                    Phy::Type, int8_t)>& send_to_remote);
 
-  void Reset();
   void Paging();
   void Inquiry();
 
   void InquiryTimeout();
   void SetInquiryMode(uint8_t mode);
 
-  bool GetInquiryScanEnable() const { return inquiry_scan_enable_; }
-  void SetInquiryScanEnable(bool enable);
-
-  bool GetPageScanEnable() const { return page_scan_enable_; }
-  void SetPageScanEnable(bool enable);
-
   uint16_t GetPageTimeout() const { return page_timeout_; }
   void SetPageTimeout(uint16_t page_timeout);
 
   ErrorCode CentralLinkKey(uint8_t key_flag);
-  ErrorCode FlowSpecification(uint16_t handle, uint8_t flow_direction, uint8_t service_type,
-                              uint32_t token_rate, uint32_t token_bucket_size,
-                              uint32_t peak_bandwidth, uint32_t access_latency);
   ErrorCode WriteLinkSupervisionTimeout(uint16_t handle, uint16_t timeout);
   void CheckExpiringConnection(uint16_t handle);
-
-  void ReadLocalOobData();
-  void ReadLocalOobExtendedData();
 
   // Returns true if the specified ACL connection handle is valid.
   bool HasAclConnection(uint16_t connection_handle);
 
   void HandleAcl(bluetooth::hci::AclView acl);
-
-  // BR/EDR Commands
-
-  // HCI Read Rssi command (Vol 4, Part E § 7.5.4).
-  ErrorCode ReadRssi(uint16_t connection_handle, int8_t* rssi);
 
 protected:
   void SendLinkLayerPacket(std::unique_ptr<model::packets::LinkLayerPacketBuilder> packet,
@@ -285,26 +290,14 @@ public:
   // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
   uint32_t GetClockOffset() const { return 0; }
 
-  // TODO
-  // The Page Scan Repetition Mode should be specific to an ACL connection or
-  // a paging session.
-  PageScanRepetitionMode GetPageScanRepetitionMode() const { return page_scan_repetition_mode_; }
-
-  // TODO
-  // The Encryption Key Size should be specific to an ACL connection.
-  uint8_t GetEncryptionKeySize() const { return 16; }
   void SetMinEncryptionKeySize(uint8_t min_encryption_key_size) {
     min_encryption_key_size_ = min_encryption_key_size;
   }
 
   bool GetScoFlowControlEnable() const { return sco_flow_control_enable_; }
-
   AuthenticationEnable GetAuthenticationEnable() { return authentication_enable_; }
-
   std::array<uint8_t, kLocalNameSize> const& GetLocalName() { return local_name_; }
-
   uint16_t GetConnectionAcceptTimeout() const { return connection_accept_timeout_; }
-
   uint16_t GetVoiceSetting() const { return voice_setting_; }
   uint32_t GetClassOfDevice() const { return class_of_device_; }
 
@@ -315,24 +308,15 @@ public:
   }
 
   void SetLocalName(std::vector<uint8_t> const& local_name);
-  void SetLocalName(std::array<uint8_t, kLocalNameSize> const& local_name);
-
-  void SetExtendedInquiryResponse(std::array<uint8_t, 240> const& extended_inquiry_response);
   void SetExtendedInquiryResponse(std::vector<uint8_t> const& extended_inquiry_response);
-
   void SetClassOfDevice(uint32_t class_of_device) { class_of_device_ = class_of_device; }
-
   void SetAuthenticationEnable(AuthenticationEnable enable) { authentication_enable_ = enable; }
-
   void SetScoFlowControlEnable(bool enable) { sco_flow_control_enable_ = enable; }
   void SetVoiceSetting(uint16_t voice_setting) { voice_setting_ = voice_setting; }
-  void SetEventMask(uint64_t event_mask) { event_mask_ = event_mask; }
   void SetEventMaskPage2(uint64_t event_mask) { event_mask_page_2_ = event_mask; }
-
   void SetLeHostSupport(bool enable);
   void SetSecureSimplePairingSupport(bool enable);
   void SetSecureConnectionsSupport(bool enable);
-
   void SetConnectionAcceptTimeout(uint16_t timeout) { connection_accept_timeout_ = timeout; }
 
   TaskId StartScoStream(Address address);
