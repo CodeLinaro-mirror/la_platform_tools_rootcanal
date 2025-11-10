@@ -46,12 +46,12 @@ genrule {
 rust_test_host {
     name: "rootcanal_rs_test",
     crate_name: "rootcanal_rs",
+    crate_root: "src/lib.rs",
     srcs: [
-        "src/lib.rs",
-
         ":rootcanal_hci_packets_rust_gen",
         ":rootcanal_llcp_packets_rust_gen",
         ":rootcanal_lmp_packets_rust_gen",
+        "test/**/*.in",
     ],
     auto_gen_config: true,
     edition: "2018",
