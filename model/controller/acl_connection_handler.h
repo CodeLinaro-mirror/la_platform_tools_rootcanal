@@ -31,13 +31,17 @@
 #include "phy.h"
 
 namespace rootcanal {
+
 static constexpr uint16_t kReservedHandle = 0xF00;
 static constexpr uint16_t kCisHandleRangeStart = 0xE00;
 static constexpr uint16_t kCisHandleRangeEnd = 0xEFE;
 
+using LeAclConnection = AclConnection;
+
 class AclConnectionHandler {
 public:
   AclConnectionHandler() = default;
+  AclConnectionHandler& operator=(AclConnectionHandler const&) = delete;
   virtual ~AclConnectionHandler() = default;
 
   using TaskId = uint32_t;
@@ -69,6 +73,8 @@ public:
                               bluetooth::hci::AddressWithType own_addr, bluetooth::hci::Role role);
   bool Disconnect(uint16_t handle, std::function<void(TaskId)> stopStream);
   bool HasHandle(uint16_t handle) const;
+  bool HasAclHandle(uint16_t handle) const;
+  bool HasLeAclHandle(uint16_t handle) const;
   bool HasScoHandle(uint16_t handle) const;
 
   // Return the connection handle for a classic ACL connection only.
@@ -90,6 +96,10 @@ public:
   // Return the AclConnection for the selected connection handle, asserts
   // if the handle is not currently used.
   AclConnection& GetAclConnection(uint16_t handle);
+
+  // Return the AclConnection for the selected connection handle, asserts
+  // if the handle is not currently used.
+  LeAclConnection& GetLeAclConnection(uint16_t handle);
 
   void SetRssi(uint16_t handle, int8_t rssi);
   int8_t GetRssi(uint16_t handle) const;
