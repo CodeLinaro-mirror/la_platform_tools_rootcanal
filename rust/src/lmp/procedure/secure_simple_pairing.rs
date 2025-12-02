@@ -502,7 +502,7 @@ pub async fn initiate(ctx: &impl Context) -> Result<(), ()> {
     });
 
     // Link Key Calculation
-    let link_key = [0; 16];
+    let link_key = [1; 16];
     let auth_result = authentication::send_challenge(ctx, 0, link_key).await;
     authentication::receive_challenge(ctx, link_key).await;
 
@@ -730,7 +730,7 @@ pub async fn respond(ctx: &impl Context, request: lmp::IoCapabilityReq) -> Resul
     });
 
     // Link Key Calculation
-    let link_key = [0; 16];
+    let link_key = [1; 16];
     authentication::receive_challenge(ctx, link_key).await;
     let auth_result = authentication::send_challenge(ctx, 0, link_key).await;
 
