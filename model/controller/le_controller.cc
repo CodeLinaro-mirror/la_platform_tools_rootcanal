@@ -3748,11 +3748,25 @@ void LeController::IncomingLeConnectionParameterUpdate(
         LeAclConnection& connection, model::packets::LinkLayerPacketView incoming) {
   auto update = model::packets::LeConnectionParameterUpdateView::Create(incoming);
   ASSERT(update.IsValid());
+  ErrorCode status = static_cast<ErrorCode>(update.GetStatus());
+
+  if (status == ErrorCode::SUCCESS) {
+    // Update local connection parameters on success.
+    // If this command completes successfully and the connection interval has changed, then the
+    // subrating factor shall be set to 1 and the continuation number to 0.
+    connection.parameters = LeAclConnectionParameters{
+            .conn_interval = update.GetInterval(),
+            .conn_subrate_factor = 1,
+            .conn_continuation_number = 0,
+            .conn_peripheral_latency = update.GetLatency(),
+            .conn_supervision_timeout = update.GetTimeout(),
+    };
+  }
 
   if (IsLeEventUnmasked(SubeventCode::LE_CONNECTION_UPDATE_COMPLETE)) {
     send_event_(bluetooth::hci::LeConnectionUpdateCompleteBuilder::Create(
-            static_cast<ErrorCode>(update.GetStatus()), connection.handle, update.GetInterval(),
-            update.GetLatency(), update.GetTimeout()));
+            status, connection.handle, update.GetInterval(), update.GetLatency(),
+            update.GetTimeout()));
   }
 }
 
@@ -4241,36 +4255,6 @@ ErrorCode LeController::ReadRemoteVersionInformation(uint16_t connection_handle)
   return ErrorCode::UNKNOWN_CONNECTION;
 }
 
-void LeController::LeConnectionUpdateComplete(uint16_t handle, uint16_t interval_min,
-                                              uint16_t interval_max, uint16_t latency,
-                                              uint16_t supervision_timeout) {
-  ErrorCode status = ErrorCode::SUCCESS;
-  if (!connections_.HasLeAclHandle(handle)) {
-    status = ErrorCode::UNKNOWN_CONNECTION;
-  }
-
-  auto const& connection = connections_.GetLeAclConnection(handle);
-
-  if (interval_min < 6 || interval_max > 0xC80 || interval_min > interval_max ||
-      interval_max < interval_min || latency > 0x1F3 || supervision_timeout < 0xA ||
-      supervision_timeout > 0xC80 ||
-      // The Supervision_Timeout in milliseconds (*10) shall be larger than (1 +
-      // Connection_Latency) * Connection_Interval_Max (* 5/4) * 2
-      supervision_timeout <= ((((1 + latency) * interval_max * 10) / 4) / 10)) {
-    status = ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
-  }
-  uint16_t interval = (interval_min + interval_max) / 2;
-
-  SendLeLinkLayerPacket(LeConnectionParameterUpdateBuilder::Create(
-          connection.own_address.GetAddress(), connection.address.GetAddress(),
-          static_cast<uint8_t>(ErrorCode::SUCCESS), interval, latency, supervision_timeout));
-
-  if (IsLeEventUnmasked(SubeventCode::LE_CONNECTION_UPDATE_COMPLETE)) {
-    send_event_(bluetooth::hci::LeConnectionUpdateCompleteBuilder::Create(
-            status, handle, interval, latency, supervision_timeout));
-  }
-}
-
 ErrorCode LeController::LeConnectionUpdate(uint16_t handle, uint16_t interval_min,
                                            uint16_t interval_max, uint16_t latency,
                                            uint16_t supervision_timeout) {
@@ -4288,6 +4272,7 @@ ErrorCode LeController::LeConnectionUpdate(uint16_t handle, uint16_t interval_mi
             static_cast<uint8_t>(ErrorCode::SUCCESS), interval_max, latency, supervision_timeout));
 
     if (IsLeEventUnmasked(SubeventCode::LE_CONNECTION_UPDATE_COMPLETE)) {
+      // TODO: should be delayed after the command status.
       send_event_(bluetooth::hci::LeConnectionUpdateCompleteBuilder::Create(
               ErrorCode::SUCCESS, handle, interval_max, latency, supervision_timeout));
     }
@@ -4303,20 +4288,49 @@ ErrorCode LeController::LeConnectionUpdate(uint16_t handle, uint16_t interval_mi
 }
 
 ErrorCode LeController::LeRemoteConnectionParameterRequestReply(
-        uint16_t connection_handle, uint16_t interval_min, uint16_t interval_max, uint16_t timeout,
-        uint16_t latency, uint16_t minimum_ce_length, uint16_t maximum_ce_length) {
+        uint16_t connection_handle, uint16_t interval_min, uint16_t interval_max,
+        uint16_t supervision_timeout, uint16_t latency, uint16_t minimum_ce_length,
+        uint16_t maximum_ce_length) {
   if (!connections_.HasLeAclHandle(connection_handle)) {
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
-  if ((interval_min > interval_max) || (minimum_ce_length > maximum_ce_length)) {
+  auto& connection = connections_.GetLeAclConnection(connection_handle);
+
+  if (interval_min < 6 || interval_max > 0xC80 || interval_min > interval_max ||
+      interval_max < interval_min || latency > 0x1F3 || supervision_timeout < 0xA ||
+      supervision_timeout > 0xC80 ||
+      // The Supervision_Timeout in milliseconds (*10) shall be larger than (1 +
+      // Connection_Latency) * Connection_Interval_Max (* 5/4) * 2
+      supervision_timeout <= ((((1 + latency) * interval_max * 10) / 4) / 10)) {
     return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
   }
 
-  ScheduleTask(kNoDelayMs, [this, connection_handle, interval_min, interval_max, latency,
-                            timeout]() {
-    LeConnectionUpdateComplete(connection_handle, interval_min, interval_max, latency, timeout);
-  });
+  if (minimum_ce_length > maximum_ce_length) {
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  // Update local connection parameters.
+  // If this command completes successfully and the connection interval has changed, then the
+  // subrating factor shall be set to 1 and the continuation number to 0.
+  connection.parameters = LeAclConnectionParameters{
+          .conn_interval = interval_min,
+          .conn_subrate_factor = 1,
+          .conn_continuation_number = 0,
+          .conn_peripheral_latency = latency,
+          .conn_supervision_timeout = supervision_timeout,
+  };
+
+  SendLeLinkLayerPacket(LeConnectionParameterUpdateBuilder::Create(
+          connection.own_address.GetAddress(), connection.address.GetAddress(),
+          static_cast<uint8_t>(ErrorCode::SUCCESS), interval_min, latency, supervision_timeout));
+
+  if (IsLeEventUnmasked(SubeventCode::LE_CONNECTION_UPDATE_COMPLETE)) {
+    // TODO: should be delayed after the command status.
+    send_event_(bluetooth::hci::LeConnectionUpdateCompleteBuilder::Create(
+            ErrorCode::SUCCESS, connection.handle, interval_min, latency, supervision_timeout));
+  }
+
   return ErrorCode::SUCCESS;
 }
 
@@ -4327,12 +4341,10 @@ ErrorCode LeController::LeRemoteConnectionParameterRequestNegativeReply(
   }
 
   auto const& connection = connections_.GetLeAclConnection(connection_handle);
-  uint16_t interval = 0;
-  uint16_t latency = 0;
-  uint16_t timeout = 0;
   SendLeLinkLayerPacket(LeConnectionParameterUpdateBuilder::Create(
           connection.own_address.GetAddress(), connection.address.GetAddress(),
-          static_cast<uint8_t>(reason), interval, latency, timeout));
+          static_cast<uint8_t>(reason), 0, 0, 0));
+
   return ErrorCode::SUCCESS;
 }
 
