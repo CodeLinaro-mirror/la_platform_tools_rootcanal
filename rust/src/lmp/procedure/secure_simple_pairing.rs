@@ -194,7 +194,10 @@ async fn send_commitment(ctx: &impl Context, confirm: lmp::SimplePairingConfirm)
 async fn user_confirmation_request(ctx: &impl Context) -> Result<(), ()> {
     ctx.send_hci_event(hci::UserConfirmationRequest {
         bd_addr: ctx.peer_address(),
-        numeric_value: 0,
+        // We are using a fixed numeric value here, but in a proper controller the
+        // value would be randomly generated. For the purpose of automated virtual
+        // testing it is not that important to do that.
+        numeric_value: 27,
     });
 
     match ctx
