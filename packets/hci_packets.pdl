@@ -4824,16 +4824,11 @@ packet LeSetDataRelatedAddressChangesComplete : CommandComplete (command_op_code
 }
 
 packet LeSetDefaultSubrate : Command (op_code = LE_SET_DEFAULT_SUBRATE) {
-  subrate_min : 9,
-  _reserved_ : 7,
-  subrate_max : 9,
-  _reserved_ : 7,
-  max_latency : 9,
-  _reserved_ : 7,
-  continuation_number : 9,
-  _reserved_ : 7,
-  supervision_timeout: 12,
-  _reserved_ : 4,
+  subrate_min : 16,
+  subrate_max : 16,
+  max_latency : 16,
+  continuation_number : 16,
+  supervision_timeout : 16,
 }
 
 packet LeSetDefaultSubrateComplete : CommandComplete (command_op_code = LE_SET_DEFAULT_SUBRATE) {
@@ -4843,16 +4838,11 @@ packet LeSetDefaultSubrateComplete : CommandComplete (command_op_code = LE_SET_D
 packet LeSubrateRequest : Command (op_code = LE_SUBRATE_REQUEST) {
   connection_handle : 12,
   _reserved_ : 4,
-  subrate_min : 9,
-  _reserved_ : 7,
-  subrate_max : 9,
-  _reserved_ : 7,
-  max_latency : 9,
-  _reserved_ : 7,
-  continuation_number : 9,
-  _reserved_ : 7,
-  supervision_timeout: 12,
-  _reserved_ : 4,
+  subrate_min : 16,
+  subrate_max : 16,
+  max_latency : 16,
+  continuation_number : 16,
+  supervision_timeout : 16,
 }
 
 packet LeSubrateRequestStatus : CommandStatus (command_op_code = LE_SUBRATE_REQUEST) {
