@@ -24,13 +24,12 @@
 #include <vector>
 
 #include "log.h"
+#include "packets/bredr_bb_packets.h"
 #include "packets/link_layer_packets.h"
 #include "pcap.h"
 #include "phy.h"
 
 namespace rootcanal {
-
-#include "bredr_bb.h"
 
 BaseBandSniffer::BaseBandSniffer(const std::string& filename) {
   output_.open(filename, std::ios::binary);
