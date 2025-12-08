@@ -1599,6 +1599,33 @@ void DualModeController::LeReadBufferSizeV2(CommandView command) {
           kNumCommandPackets, ErrorCode::SUCCESS, le_buffer_size, iso_buffer_size));
 }
 
+void DualModeController::LeSetDefaultSubrate(CommandView command) {
+  auto command_view = bluetooth::hci::LeSetDefaultSubrateView::Create(command);
+  CHECK_PACKET_VIEW(command_view);
+
+  DEBUG(id_, "<< LE Default Subrate");
+
+  auto status = le_controller_.LeSetDefaultSubrate(
+          command_view.GetSubrateMin(), command_view.GetSubrateMax(), command_view.GetMaxLatency(),
+          command_view.GetContinuationNumber(), command_view.GetSupervisionTimeout());
+  send_event_(
+          bluetooth::hci::LeSetDefaultSubrateCompleteBuilder::Create(kNumCommandPackets, status));
+}
+
+void DualModeController::LeSubrateRequest(CommandView command) {
+  auto command_view = bluetooth::hci::LeSubrateRequestView::Create(command);
+  CHECK_PACKET_VIEW(command_view);
+
+  DEBUG(id_, "<< LE Subrate Request");
+  DEBUG(id_, "   connection_handle=0x{:x}", command_view.GetConnectionHandle());
+
+  auto status = le_controller_.LeSubrateRequest(
+          command_view.GetConnectionHandle(), command_view.GetSubrateMin(),
+          command_view.GetSubrateMax(), command_view.GetMaxLatency(),
+          command_view.GetContinuationNumber(), command_view.GetSupervisionTimeout());
+  send_event_(bluetooth::hci::LeSubrateRequestStatusBuilder::Create(status, kNumCommandPackets));
+}
+
 void DualModeController::LeSetAddressResolutionEnable(CommandView command) {
   auto command_view = bluetooth::hci::LeSetAddressResolutionEnableView::Create(command);
   CHECK_PACKET_VIEW(command_view);
@@ -4128,9 +4155,8 @@ DualModeController::GetHciCommandHandlers() {
           //&DualModeController::LeTransmitterTestV4},
           //{OpCode::LE_SET_DATA_RELATED_ADDRESS_CHANGES,
           //&DualModeController::LeSetDataRelatedAddressChanges},
-          //{OpCode::LE_SET_DEFAULT_SUBRATE,
-          //&DualModeController::LeSetDefaultSubrate},
-          //{OpCode::LE_SUBRATE_REQUEST, &DualModeController::LeSubrateRequest},
+          {OpCode::LE_SET_DEFAULT_SUBRATE, &DualModeController::LeSetDefaultSubrate},
+          {OpCode::LE_SUBRATE_REQUEST, &DualModeController::LeSubrateRequest},
           //{OpCode::LE_SET_EXTENDED_ADVERTISING_PARAMETERS_V2,
           //&DualModeController::LeSetExtendedAdvertisingParametersV2},
           //{OpCode::LE_SET_DECISION_DATA, &DualModeController::LeSetDecisionData},
