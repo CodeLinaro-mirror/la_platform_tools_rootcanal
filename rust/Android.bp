@@ -11,6 +11,7 @@ rust_ffi {
         "src/lib.rs",
 
         ":rootcanal_hci_packets_rust_gen",
+        ":rootcanal_link_layer_packets_rust_gen",
         ":rootcanal_llcp_packets_rust_gen",
         ":rootcanal_lmp_packets_rust_gen",
     ],
@@ -49,6 +50,7 @@ rust_test_host {
     crate_root: "src/lib.rs",
     srcs: [
         ":rootcanal_hci_packets_rust_gen",
+        ":rootcanal_link_layer_packets_rust_gen",
         ":rootcanal_llcp_packets_rust_gen",
         ":rootcanal_lmp_packets_rust_gen",
         "test/**/*.in",
