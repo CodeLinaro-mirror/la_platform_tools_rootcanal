@@ -18,6 +18,12 @@ pdl_gen(
     OUTPUT llcp_packets.rs
     LANG rust)
 
+pdl_gen(
+    NAME link_layer_packets_rs
+    INPUT ${ROOTCANAL_ROOT}/packets/link_layer_packets.pdl
+    OUTPUT link_layer_packets.rs
+    LANG rust)
+
 # This will automatically register all the tests as well.
 corrosion_import_crate(MANIFEST_PATH ${ROOTCANAL_ROOT}/rust/Cargo.toml FLAGS
                        --offline --verbose --verbose)
@@ -25,13 +31,15 @@ corrosion_set_env_vars(rootcanal-rs
   LMP_PACKETS_PREBUILT=${lmp_packets_rs}
   LLCP_PACKETS_PREBUILT=${llcp_packets_rs}
   HCI_PACKETS_PREBUILT=${hci_packets_rs}
+  LL_PACKETS_PREBUILT=${link_layer_packets_rs}
   CARGO_HOME=${Rust_CARGO_HOME})
 
 android_license(TARGET rootcanal-rs LIBNAME None SPDX None LICENSE None LOCAL None)
 
 add_custom_target(lmp_rust_packets DEPENDS ${lmp_packets_rs}
                                            ${llcp_packets_rs}
-                                           ${hci_packets_rs})
+                                           ${hci_packets_rs}
+                                           ${link_layer_packets_rs})
 
 # Make sure we have the rust packets generated before we build them.
 add_dependencies(cargo-build_rootcanal-rs lmp_rust_packets)
