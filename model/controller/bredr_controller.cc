@@ -826,18 +826,48 @@ ErrorCode BrEdrController::ExitSniffMode(uint16_t connection_handle) {
 
 // HCI QoS Setup command (Vol 4, Part E § 7.2.6).
 ErrorCode BrEdrController::QosSetup(uint16_t connection_handle, uint8_t service_type,
-                                    uint32_t /* token_rate */, uint32_t /* peak_bandwidth */,
-                                    uint32_t /* latency */, uint32_t /* delay_variation */) {
+                                    uint32_t token_rate, uint32_t peak_bandwidth, uint32_t latency,
+                                    uint32_t delay_variation) {
+  // The Connection_Handle shall be a Connection_Handle for an ACL connection.
   if (!connections_.HasAclHandle(connection_handle)) {
+    INFO(id_, "unknown connection handle {}", connection_handle);
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
+  // This field indicates the level of service required. The list below defines the different
+  // services available. The default value is ‘Best effort’.
+  //  - 0x00 No traffic
+  //  - 0x01 Best effort (Default)
+  //  - 0x02 Guaranteed
   if (service_type > 0x02) {
+    INFO(id_, "invalid service_type 0x{:02x}", service_type);
     return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
   }
 
-  // TODO: implement real logic
-  return ErrorCode::COMMAND_DISALLOWED;
+  // When the Link Manager has completed the LMP messages to establish the requested QoS
+  // parameters, the BR/EDR Controller shall send an HCI_QoS_Setup_Complete event to the Host, and
+  // the event may also be generated on the remote side if there was LMP negotiation.
+  if (IsEventUnmasked(EventCode::QOS_SETUP_COMPLETE)) {
+    uint32_t selected_token_rate =
+            token_rate == 0 || token_rate == 0xffffffff ? 100000 /* Ko/s */ : token_rate;
+    uint32_t selected_peak_bandwidth = peak_bandwidth == 0 || peak_bandwidth == 0xffffffff
+                                               ? 200000 /* Ko/s */
+                                               : peak_bandwidth;
+    uint32_t selected_latency = latency == 0 || latency == 0xffffffff ? 50000 /* us */ : latency;
+    uint32_t selected_delay_variation = delay_variation == 0 || delay_variation == 0xffffffff
+                                                ? 10000 /* us */
+                                                : delay_variation;
+    ScheduleTask(kNoDelayMs, [=, this]() {
+      send_event_(bluetooth::hci::QosSetupCompleteBuilder::Create(
+              ErrorCode::SUCCESS, connection_handle, bluetooth::hci::ServiceType(service_type),
+              selected_token_rate /* Token_Rate */, selected_peak_bandwidth /* Peak_Bandwidth */,
+              selected_latency /* Latency */, selected_delay_variation /* Delay_Variation */));
+    });
+  }
+
+  // TODO: Implement LMP negotiation with peer.
+  // Right now we assume no LMP negotiation takes place.
+  return ErrorCode::SUCCESS;
 }
 
 // HCI Role Discovery command (Vol 4, Part E § 7.2.7).
