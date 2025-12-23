@@ -236,6 +236,7 @@ python_test_host {
         "test/HCI/*.py",
         "test/HCI/AEN/*.py",
         "test/LL/*.py",
+        "test/LL/BIS/BRD/*.py",
         "test/LL/CIS/CEN/*.py",
         "test/LL/CIS/PER/*.py",
         "test/LL/CON_/CEN/*.py",
