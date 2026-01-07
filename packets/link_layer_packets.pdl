@@ -60,6 +60,9 @@ enum PacketType : 8 {
 
     LL_SUBRATE_REQ = 0x53,
     LL_SUBRATE_IND = 0x54,
+
+    LL_CS_CAPABILITIES_REQ = 0xF0,
+    LL_CS_CAPABILITIES_RSP = 0xF1,
 }
 
 packet LinkLayerPacket {
@@ -396,4 +399,62 @@ packet LlSubrateInd : LinkLayerPacket (type = LL_SUBRATE_IND) {
   latency: 16,
   continuation_number: 16,
   timeout: 16,
+}
+
+packet LlCsCapabilitiesReq : LinkLayerPacket (type = LL_CS_CAPABILITIES_REQ) {
+  mode_types: 8,
+  rtt_capability: 8,
+  rtt_aa_only_n: 8,
+  rtt_sounding_n: 8,
+  rtt_random_sequence_n: 8,
+  nadm_sounding_capability: 16,
+  nadm_random_capability: 16,
+  cs_sync_phy_capability: 8,
+  num_ant: 4,
+  max_ant_path: 4,
+  role: 2,
+  rfu1_: 1,
+  no_fae: 1,
+  channel_selection_3c: 1,
+  sounding_pct_estimate: 1,
+  rfu2_: 2,
+  num_configs: 8,
+  max_procedures_supported: 16,
+  t_sw: 8,
+  t_ip1_capability: 16,
+  t_ip2_capability: 16,
+  t_fcs_capability: 16,
+  t_pm_capability: 16,
+  rfu3_: 1,
+  tx_snr_capability: 7,
+}
+
+packet LlCsCapabilitiesRsp : LinkLayerPacket (type = LL_CS_CAPABILITIES_RSP) {
+  // Not part of the LL PDU, added to emulate LL_REJECT_EXT_IND.
+  status: 8,
+  mode_types: 8,
+  rtt_capability: 8,
+  rtt_aa_only_n: 8,
+  rtt_sounding_n: 8,
+  rtt_random_sequence_n: 8,
+  nadm_sounding_capability: 16,
+  nadm_random_capability: 16,
+  cs_sync_phy_capability: 8,
+  num_ant: 4,
+  max_ant_path: 4,
+  role: 2,
+  rfu1_: 1,
+  no_fae: 1,
+  channel_selection_3c: 1,
+  sounding_pct_estimate: 1,
+  rfu2_: 2,
+  num_configs: 8,
+  max_procedures_supported: 16,
+  t_sw: 8,
+  t_ip1_capability: 16,
+  t_ip2_capability: 16,
+  t_fcs_capability: 16,
+  t_pm_capability: 16,
+  rfu3_: 1,
+  tx_snr_capability: 7,
 }

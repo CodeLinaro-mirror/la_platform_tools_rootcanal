@@ -143,6 +143,9 @@ public:
           const std::function<void(std::shared_ptr<model::packets::LinkLayerPacketBuilder>,
                                    Phy::Type, int8_t)>& send_to_remote);
 
+  void RegisterRangingEstimator(
+          std::function<unsigned(void const* cookie1, void const* cookie2)> const& callback);
+
   void Reset();
 
   void CheckExpiringConnection(uint16_t handle);
@@ -478,6 +481,19 @@ public:
                              uint16_t max_latency, uint16_t continuation_number,
                              uint16_t supervision_timeout);
 
+  // HCI LE Channel Sounding (Vol 4, Part E § 7.8.131).
+  ErrorCode LeCsReadRemoteSupportedCapabilities(uint16_t connection_handle);
+  ErrorCode LeCsWriteCachedRemoteSupportedCapabilities(
+          uint16_t connection_handle, uint8_t num_config_supported,
+          uint16_t max_consecutive_procedures_supported, uint8_t num_antennae_supported,
+          uint8_t max_antenna_paths_supported, uint8_t roles_supported, uint8_t modes_supported,
+          uint8_t rtt_capability, uint8_t rtt_aa_only_n, uint8_t rtt_sounding_n,
+          uint8_t rtt_random_sequence_n, uint16_t nadm_sounding_capability,
+          uint16_t nadm_random_capability, uint8_t cs_sync_phys_supported,
+          uint16_t subfeatures_supported, uint16_t t_ip1_times_supported,
+          uint16_t t_ip2_times_supported, uint16_t t_fcs_times_supported,
+          uint16_t t_pm_times_supported, uint8_t t_sw_time_supported, uint8_t tx_snr_capability);
+
   // LE APCF
 
   ErrorCode LeApcfEnable(bool apcf_enable);
@@ -593,6 +609,10 @@ protected:
                             model::packets::LinkLayerPacketView incoming);
   void IncomingLlSubrateInd(LeAclConnection& connection,
                             model::packets::LinkLayerPacketView incoming);
+  void IncomingLlCsCapabilitiesReq(LeAclConnection& connection,
+                                   model::packets::LinkLayerPacketView incoming);
+  void IncomingLlCsCapabilitiesRsp(LeAclConnection& connection,
+                                   model::packets::LinkLayerPacketView incoming);
 
 public:
   bool IsEventUnmasked(bluetooth::hci::EventCode event) const;
@@ -653,6 +673,7 @@ private:
   uint64_t le_host_supported_features_{0};
   bool connected_isochronous_stream_host_support_{false};
   bool connection_subrating_host_support_{false};
+  bool channel_sounding_host_support_{false};
 
   // LE Random Address (Vol 4, Part E § 7.8.4).
   Address random_address_{Address::kEmpty};
@@ -685,6 +706,9 @@ private:
   std::function<void(std::shared_ptr<bluetooth::hci::AclBuilder>)> send_acl_;
   std::function<void(std::shared_ptr<bluetooth::hci::EventBuilder>)> send_event_;
   std::function<void(std::shared_ptr<bluetooth::hci::IsoBuilder>)> send_iso_;
+
+  // Ranging estimator callback.
+  std::function<unsigned(void const* cookie1, void const* cookie2)> ranging_estimator_{};
 
   // Callback to send packets to remote devices.
   std::function<void(std::shared_ptr<model::packets::LinkLayerPacketBuilder>, Phy::Type phy_type,

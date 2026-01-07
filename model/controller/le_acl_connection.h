@@ -18,8 +18,10 @@
 
 #include <chrono>
 #include <cstdint>
+#include <optional>
 
 #include "hci/address_with_type.h"
+#include "model/controller/controller_properties.h"
 #include "packets/hci_packets.h"
 
 namespace rootcanal {
@@ -75,6 +77,8 @@ public:
 
   LeAclConnectionParameters parameters;
   LeAclSubrateParameters subrate_parameters;
+  std::optional<CsLocalSupportedCapabilities> remote_cs_capabilities;
+  std::optional<uint64_t> remote_supported_features;
 
   LeAclConnection(uint16_t handle, AddressWithType address, AddressWithType own_address,
                   AddressWithType resolved_address, bluetooth::hci::Role role,

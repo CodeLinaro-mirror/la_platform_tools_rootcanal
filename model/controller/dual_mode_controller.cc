@@ -269,6 +269,11 @@ void DualModeController::RegisterInvalidPacketHandler(
   invalid_packet_handler_ = handler;
 }
 
+void DualModeController::RegisterRangingEstimator(
+        std::function<unsigned(void const* cookie1, void const* cookie2)> const& callback) {
+  le_controller_.RegisterRangingEstimator(callback);
+}
+
 void DualModeController::RegisterEventChannel(
         const std::function<void(std::shared_ptr<std::vector<uint8_t>>)>& send_event) {
   send_event_ = [send_event](std::shared_ptr<bluetooth::hci::EventBuilder> event) {
@@ -1624,6 +1629,80 @@ void DualModeController::LeSubrateRequest(CommandView command) {
           command_view.GetSubrateMax(), command_view.GetMaxLatency(),
           command_view.GetContinuationNumber(), command_view.GetSupervisionTimeout());
   send_event_(bluetooth::hci::LeSubrateRequestStatusBuilder::Create(status, kNumCommandPackets));
+}
+
+void DualModeController::LeCsReadLocalSupportedCapabilities(CommandView command) {
+  auto command_view = bluetooth::hci::LeCsReadLocalSupportedCapabilitiesView::Create(command);
+  CHECK_PACKET_VIEW(command_view);
+
+  DEBUG(id_, "<< LE CS Read Local Supported Capabilities");
+
+  send_event_(bluetooth::hci::LeCsReadLocalSupportedCapabilitiesCompleteBuilder::Create(
+          kNumCommandPackets, ErrorCode::SUCCESS,
+          properties_.cs_local_supported_capabilities.num_config_supported,
+          properties_.cs_local_supported_capabilities.max_consecutive_procedures_supported,
+          properties_.cs_local_supported_capabilities.num_antennae_supported,
+          properties_.cs_local_supported_capabilities.max_antenna_paths_supported,
+          properties_.cs_local_supported_capabilities.roles_supported,
+          properties_.cs_local_supported_capabilities.modes_supported,
+          properties_.cs_local_supported_capabilities.rtt_capability,
+          properties_.cs_local_supported_capabilities.rtt_aa_only_n,
+          properties_.cs_local_supported_capabilities.rtt_sounding_n,
+          properties_.cs_local_supported_capabilities.rtt_random_sequence_n,
+          properties_.cs_local_supported_capabilities.nadm_sounding_capability,
+          properties_.cs_local_supported_capabilities.nadm_random_capability,
+          properties_.cs_local_supported_capabilities.cs_sync_phys_supported,
+          properties_.cs_local_supported_capabilities.subfeatures_supported,
+          properties_.cs_local_supported_capabilities.t_ip1_times_supported,
+          properties_.cs_local_supported_capabilities.t_ip2_times_supported,
+          properties_.cs_local_supported_capabilities.t_fcs_times_supported,
+          properties_.cs_local_supported_capabilities.t_pm_times_supported,
+          properties_.cs_local_supported_capabilities.t_sw_time_supported,
+          properties_.cs_local_supported_capabilities.tx_snr_capability));
+}
+
+void DualModeController::LeCsReadRemoteSupportedCapabilities(CommandView command) {
+  auto command_view = bluetooth::hci::LeCsReadRemoteSupportedCapabilitiesView::Create(command);
+  CHECK_PACKET_VIEW(command_view);
+  uint16_t connection_handle = command_view.GetConnectionHandle();
+
+  DEBUG(id_, "<< LE CS Read Remote Supported Capabilities");
+  DEBUG(id_, "   connection_handle=0x{:x}", connection_handle);
+
+  auto status = le_controller_.LeCsReadRemoteSupportedCapabilities(connection_handle);
+  send_event_(bluetooth::hci::LeCsReadRemoteSupportedCapabilitiesStatusBuilder::Create(
+          status, kNumCommandPackets));
+}
+
+void DualModeController::LeCsWriteCachedRemoteSupportedCapabilities(CommandView command) {
+  auto command_view =
+          bluetooth::hci::LeCsWriteCachedRemoteSupportedCapabilitiesView::Create(command);
+  CHECK_PACKET_VIEW(command_view);
+  uint16_t connection_handle = command_view.GetConnectionHandle();
+
+  DEBUG(id_, "<< LE CS Write Cached Remote Supported Capabilities");
+  DEBUG(id_, "   connection_handle=0x{:x}", connection_handle);
+
+  auto status = le_controller_.LeCsWriteCachedRemoteSupportedCapabilities(
+          connection_handle, command_view.GetNumConfigSupported(),
+          command_view.GetMaxConsecutiveProceduresSupported(),
+          command_view.GetNumAntennaeSupported(), command_view.GetMaxAntennaPathsSupported(),
+          command_view.GetRolesSupported(),
+          command_view.GetModesSupported(),
+          command_view.GetRttCapability(), command_view.GetRttAaOnlyN(),
+          command_view.GetRttSoundingN(), command_view.GetRttRandomSequenceN(),
+          command_view.GetNadmSoundingCapability(), command_view.GetNadmRandomCapability(),
+          command_view.GetCsSyncPhysSupported(),
+          command_view.GetSubfeaturesSupported(),
+          command_view.GetTIp1TimesSupported(),
+          command_view.GetTIp2TimesSupported(),
+          command_view.GetTFcsTimesSupported(),
+          command_view.GetTPmTimesSupported(),
+          command_view.GetTSwTimeSupported(),
+          command_view.GetTxSnrCapability());
+
+  send_event_(bluetooth::hci::LeCsWriteCachedRemoteSupportedCapabilitiesCompleteBuilder::Create(
+          kNumCommandPackets, status, connection_handle));
 }
 
 void DualModeController::LeSetAddressResolutionEnable(CommandView command) {
@@ -4176,12 +4255,12 @@ DualModeController::GetHciCommandHandlers() {
           //&DualModeController::LeReadAllLocalSupportedFeatures},
           //{OpCode::LE_READ_ALL_REMOTE_FEATURES,
           //&DualModeController::LeReadAllRemoteFeatures},
-          //{OpCode::LE_CS_READ_LOCAL_SUPPORTED_CAPABILITIES,
-          //&DualModeController::LeCsReadLocalSupportedCapabilities},
-          //{OpCode::LE_CS_READ_REMOTE_SUPPORTED_CAPABILITIES,
-          //&DualModeController::LeCsReadRemoteSupportedCapabilities},
-          //{OpCode::LE_CS_WRITE_CACHED_REMOTE_SUPPORTED_CAPABILITIES,
-          //&DualModeController::LeCsWriteCachedRemoteSupportedCapabilities},
+          {OpCode::LE_CS_READ_LOCAL_SUPPORTED_CAPABILITIES,
+           &DualModeController::LeCsReadLocalSupportedCapabilities},
+          {OpCode::LE_CS_READ_REMOTE_SUPPORTED_CAPABILITIES,
+           &DualModeController::LeCsReadRemoteSupportedCapabilities},
+          {OpCode::LE_CS_WRITE_CACHED_REMOTE_SUPPORTED_CAPABILITIES,
+           &DualModeController::LeCsWriteCachedRemoteSupportedCapabilities},
           //{OpCode::LE_CS_SECURITY_ENABLE, &DualModeController::LeCsSecurityEnable},
           //{OpCode::LE_CS_SET_DEFAULT_SETTINGS, &DualModeController::LeCsSetDefaultSettings},
           //{OpCode::LE_CS_READ_REMOTE_FAE_TABLE,

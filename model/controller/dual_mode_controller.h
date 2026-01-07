@@ -106,6 +106,9 @@ public:
   void RegisterIsoChannel(
           const std::function<void(std::shared_ptr<std::vector<uint8_t>>)>& send_iso);
 
+  void RegisterRangingEstimator(
+          std::function<unsigned(void const* cookie1, void const* cookie2)> const& callback);
+
   // Controller commands. For error codes, see the Bluetooth Core Specification,
   // Version 4.2, Volume 2, Part D (page 370).
 
@@ -526,6 +529,11 @@ public:
   // 7.8.123 - 7.8.124
   void LeSetDefaultSubrate(CommandView command);
   void LeSubrateRequest(CommandView command);
+
+  // 7.8.130 - 7.8.132
+  void LeCsReadLocalSupportedCapabilities(CommandView command);
+  void LeCsReadRemoteSupportedCapabilities(CommandView command);
+  void LeCsWriteCachedRemoteSupportedCapabilities(CommandView command);
 
   // Vendor-specific Commands
   void LeGetVendorCapabilities(CommandView command);
