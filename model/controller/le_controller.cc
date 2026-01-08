@@ -2308,20 +2308,149 @@ ErrorCode LeController::LeCsReadRemoteSupportedCapabilities(uint16_t connection_
   if (connection.remote_cs_capabilities.has_value()) {
     auto const& caps = connection.remote_cs_capabilities.value();
     if (IsLeEventUnmasked(SubeventCode::LE_CS_READ_REMOTE_SUPPORTED_CAPABILITIES_COMPLETE)) {
-      send_event_(bluetooth::hci::LeCsReadRemoteSupportedCapabilitiesCompleteBuilder::Create(
-              ErrorCode::SUCCESS, connection.handle, caps.num_config_supported,
-              caps.max_consecutive_procedures_supported, caps.num_antennae_supported,
-              caps.max_antenna_paths_supported, caps.roles_supported, caps.modes_supported,
-              caps.rtt_capability, caps.rtt_aa_only_n, caps.rtt_sounding_n,
-              caps.rtt_random_sequence_n, caps.nadm_sounding_capability,
-              caps.nadm_random_capability, caps.cs_sync_phys_supported, caps.subfeatures_supported,
-              caps.t_ip1_times_supported, caps.t_ip2_times_supported, caps.t_fcs_times_supported,
-              caps.t_pm_times_supported, caps.t_sw_time_supported, caps.tx_snr_capability));
+      ScheduleTask(kNoDelayMs, [this, connection_handle = connection.handle, caps]() {
+        send_event_(bluetooth::hci::LeCsReadRemoteSupportedCapabilitiesCompleteBuilder::Create(
+                ErrorCode::SUCCESS, connection_handle, caps.num_config_supported,
+                caps.max_consecutive_procedures_supported, caps.num_antennae_supported,
+                caps.max_antenna_paths_supported, caps.roles_supported, caps.modes_supported,
+                caps.rtt_capability, caps.rtt_aa_only_n, caps.rtt_sounding_n,
+                caps.rtt_random_sequence_n, caps.nadm_sounding_capability,
+                caps.nadm_random_capability, caps.cs_sync_phys_supported, caps.subfeatures_supported,
+                caps.t_ip1_times_supported, caps.t_ip2_times_supported, caps.t_fcs_times_supported,
+                caps.t_pm_times_supported, caps.t_sw_time_supported, caps.tx_snr_capability));
+      });
     }
     return ErrorCode::SUCCESS;
   }
 
   SendLeLinkLayerPacket(CreateCsCapabilitiesRequest(properties_, connection));
+
+  return ErrorCode::SUCCESS;
+}
+
+ErrorCode LeController::LeCsSetDefaultSettings(uint16_t connection_handle, uint8_t role_enable,
+                                               uint8_t cs_sync_antenna_selection,
+                                               int8_t max_tx_power) {
+  // If the Host sends this command with a Connection_Handle that does not exist, or the
+  // Connection_Handle is not for an ACL, then the Controller shall return the error code Unknown
+  // Connection Identifier (0x02).
+  if (!connections_.HasLeAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  auto& connection = connections_.GetLeAclConnection(connection_handle);
+
+  // If the Host issues this command to disable a Role for which a valid
+  // CS configuration is present, then the Controller shall return the error
+  // code Invalid HCI Command Parameters (0x12).
+  // TODO: Add check for existing CS configuration.
+
+  // If the Role_Enable parameter is used to enable an unsupported role or the
+  // CS_SYNC_Antenna_Selection parameter indicates an unsupported antenna
+  // identifier, then the Controller shall return the error code Unsupported
+  // Feature or Parameter Value (0x11).
+  if ((role_enable & ~properties_.cs_local_supported_capabilities.roles_supported) != 0) {
+    return ErrorCode::UNSUPPORTED_FEATURE_OR_PARAMETER_VALUE;
+  }
+
+  uint8_t num_antennas = properties_.cs_local_supported_capabilities.num_antennae_supported;
+  switch (static_cast<bluetooth::hci::CsSyncAntennaSelection>(cs_sync_antenna_selection)) {
+    case bluetooth::hci::CsSyncAntennaSelection::ANTENNA_1:
+    case bluetooth::hci::CsSyncAntennaSelection::ANTENNA_2:
+    case bluetooth::hci::CsSyncAntennaSelection::ANTENNA_3:
+    case bluetooth::hci::CsSyncAntennaSelection::ANTENNA_4:
+      if (cs_sync_antenna_selection > num_antennas) {
+        return ErrorCode::UNSUPPORTED_FEATURE_OR_PARAMETER_VALUE;
+      }
+      break;
+    case bluetooth::hci::CsSyncAntennaSelection::ANTENNAS_IN_ORDER:
+    case bluetooth::hci::CsSyncAntennaSelection::ANTENNAS_IN_REPETITIVE_ORDER:
+    case bluetooth::hci::CsSyncAntennaSelection::NO_RECOMMENDATION:
+      break;
+    default:
+      return ErrorCode::UNSUPPORTED_FEATURE_OR_PARAMETER_VALUE;
+  }
+
+  connection.cs_default_settings = {.role_enable = role_enable,
+                                    .cs_sync_antenna_selection = cs_sync_antenna_selection,
+                                    .max_tx_power = max_tx_power};
+  return ErrorCode::SUCCESS;
+}
+
+ErrorCode LeController::LeCsReadRemoteFaeTable(uint16_t connection_handle) {
+  // If the Host sends this command with a Connection_Handle that does not exist, or the
+  // Connection_Handle is not for an ACL, then the Controller shall return the error code Unknown
+  // Connection Identifier (0x02).
+  if (!connections_.HasLeAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  // If the Host issues this command when the Channel Sounding (Host Support) feature bit (see [Vol
+  // 6] Part B, Section 4.6.33.4) is not set, then the Controller shall return the error code
+  // Command Disallowed (0x0C).
+  if (!channel_sounding_host_support_) {
+    return bluetooth::hci::ErrorCode::COMMAND_DISALLOWED;
+  }
+
+  LeAclConnection const& connection = connections_.GetLeAclConnection(connection_handle);
+
+  // If the remote Controller supports a Frequency Actuation Error of zero relative to its mode-0
+  // transmissions in the reflector role (No_FAE bit set as described in [Vol 6] Part B, Section
+  // 2.4.2.44), then the Controller shall return the error code Unsupported Feature or Parameter
+  // Value (0x11).
+  if (connection.remote_cs_capabilities.has_value() &&
+      (connection.remote_cs_capabilities->subfeatures_supported & 0x02) != 0) {
+    return ErrorCode::UNSUPPORTED_FEATURE_OR_PARAMETER_VALUE;
+  }
+
+  if (connection.remote_fae_table.has_value()) {
+    if (IsLeEventUnmasked(SubeventCode::LE_CS_READ_REMOTE_FAE_TABLE_COMPLETE)) {
+      ScheduleTask(kNoDelayMs, [this, connection_handle = connection.handle,
+                                 remote_fae_table = connection.remote_fae_table.value()]() {
+        send_event_(bluetooth::hci::LeCsReadRemoteFaeTableCompleteBuilder::Create(
+                ErrorCode::SUCCESS, connection_handle, remote_fae_table));
+      });
+    }
+    return ErrorCode::SUCCESS;
+  }
+
+  SendLeLinkLayerPacket(model::packets::LlCsFaeReqBuilder::Create(
+          connection.own_address.GetAddress(), connection.address.GetAddress()));
+
+  return ErrorCode::SUCCESS;
+}
+
+ErrorCode LeController::LeCsWriteCachedRemoteFaeTable(uint16_t connection_handle,
+                                                      std::array<uint8_t, 72> remote_fae_table) {
+  // If the Host sends this command with a Connection_Handle that does not exist, or the
+  // Connection_Handle is not for an ACL, then the Controller shall return the error code Unknown
+  // Connection Identifier (0x02).
+  if (!connections_.HasLeAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  auto& connection = connections_.GetLeAclConnection(connection_handle);
+
+  // If the remote Controller supports a Frequency Actuation Error of zero relative to its mode-0
+  // transmissions in the reflector role (No_FAE bit set as described in [Vol 6] Part B,
+  // Section 2.4.2.44), then the Controller shall return the error code Unsupported Feature or
+  // Parameter Value (0x11).
+  if (connection.remote_cs_capabilities.has_value() &&
+      (connection.remote_cs_capabilities->subfeatures_supported & 0x02) != 0) {
+    return ErrorCode::UNSUPPORTED_FEATURE_OR_PARAMETER_VALUE;
+  }
+
+  // If the Host issues this command after an LL_CS_FAE_RSP PDU has been received from the remote
+  // Controller, then the Controller shall return the error code Command Disallowed (0x0C).
+  if (connection.remote_fae_table.has_value()) {
+    return bluetooth::hci::ErrorCode::COMMAND_DISALLOWED;
+  }
+
+  // TODO: If the Host issues this command after a CS configuration has been
+  // created in the local Controller, then the Controller shall return the
+  // error code Command Disallowed (0x0C).
+
+  connection.remote_fae_table = remote_fae_table;
 
   return ErrorCode::SUCCESS;
 }
@@ -2409,6 +2538,8 @@ void LeController::IncomingLlCsCapabilitiesReq(LeAclConnection& connection,
     status = ErrorCode::UNSUPPORTED_REMOTE_OR_LMP_FEATURE;
   }
 
+  constexpr uint16_t kNoFaeMask = 0x0002;
+  constexpr uint16_t kDefaultSubfeatures = 0;
   connection.remote_cs_capabilities = CsLocalSupportedCapabilities{
           .num_config_supported = req.GetNumConfigs(),
           .max_consecutive_procedures_supported = req.GetMaxProceduresSupported(),
@@ -2423,7 +2554,7 @@ void LeController::IncomingLlCsCapabilitiesReq(LeAclConnection& connection,
           .nadm_sounding_capability = req.GetNadmSoundingCapability(),
           .nadm_random_capability = req.GetNadmRandomCapability(),
           .cs_sync_phys_supported = req.GetCsSyncPhyCapability(),
-          .subfeatures_supported = 0,
+          .subfeatures_supported = req.GetNoFae() ? kNoFaeMask : kDefaultSubfeatures,
           .t_ip1_times_supported = req.GetTIp1Capability(),
           .t_ip2_times_supported = req.GetTIp2Capability(),
           .t_fcs_times_supported = req.GetTFcsCapability(),
@@ -2471,6 +2602,9 @@ void LeController::IncomingLlCsCapabilitiesRsp(LeAclConnection& connection,
     return;
   }
 
+  constexpr uint16_t kNoFaeMask = 0x0002;
+  constexpr uint16_t kDefaultSubfeatures = 0;
+
   connection.remote_cs_capabilities = CsLocalSupportedCapabilities{
           .num_config_supported = rsp.GetNumConfigs(),
           .max_consecutive_procedures_supported = rsp.GetMaxProceduresSupported(),
@@ -2485,7 +2619,7 @@ void LeController::IncomingLlCsCapabilitiesRsp(LeAclConnection& connection,
           .nadm_sounding_capability = rsp.GetNadmSoundingCapability(),
           .nadm_random_capability = rsp.GetNadmRandomCapability(),
           .cs_sync_phys_supported = rsp.GetCsSyncPhyCapability(),
-          .subfeatures_supported = 0,
+          .subfeatures_supported = rsp.GetNoFae() ? kNoFaeMask : kDefaultSubfeatures,
           .t_ip1_times_supported = rsp.GetTIp1Capability(),
           .t_ip2_times_supported = rsp.GetTIp2Capability(),
           .t_fcs_times_supported = rsp.GetTFcsCapability(),
@@ -2503,6 +2637,54 @@ void LeController::IncomingLlCsCapabilitiesRsp(LeAclConnection& connection,
             0,  // subfeatures_supported
             rsp.GetTIp1Capability(), rsp.GetTIp2Capability(), rsp.GetTFcsCapability(),
             rsp.GetTPmCapability(), rsp.GetTSw(), rsp.GetTxSnrCapability()));
+  }
+}
+
+void LeController::IncomingLlCsFaeReq(LeAclConnection& connection,
+                                      model::packets::LinkLayerPacketView incoming) {
+  auto req = model::packets::LlCsFaeReqView::Create(incoming);
+  ASSERT(req.IsValid());
+
+  // If a remote Link Layer sends an LL_CS_FAE_REQ PDU when the Channel Sounding (Host Support)
+  // feature bit is not set in the local Link Layer, then the local Link Layer shall send an
+  // LL_REJECT_EXT_IND PDU with the error code Unsupported Remote Feature / Unsupported LMP
+  // Feature (0x1A).
+  if (!channel_sounding_host_support_) {
+    INFO(id_, "Rejecting LL_CS_FAE_REQ because CS Host Support is disabled");
+    SendLeLinkLayerPacket(model::packets::LlCsFaeRspBuilder::Create(
+            connection.own_address.GetAddress(), connection.address.GetAddress(),
+            static_cast<uint8_t>(ErrorCode::UNSUPPORTED_REMOTE_OR_LMP_FEATURE),
+            {} /* remote_fae_table */));
+    return;
+  }
+
+  std::array<uint8_t, 72> remote_fae_table;
+  for (size_t i = 0; i < remote_fae_table.size(); i++) {
+    remote_fae_table[i] = i + 1;
+  }
+  SendLeLinkLayerPacket(model::packets::LlCsFaeRspBuilder::Create(
+          connection.own_address.GetAddress(), connection.address.GetAddress(),
+          static_cast<uint8_t>(ErrorCode::SUCCESS), remote_fae_table));
+}
+
+void LeController::IncomingLlCsFaeRsp(LeAclConnection& connection,
+                                      model::packets::LinkLayerPacketView incoming) {
+  auto rsp = model::packets::LlCsFaeRspView::Create(incoming);
+  ASSERT(rsp.IsValid());
+
+  if (rsp.GetStatus() != static_cast<uint8_t>(ErrorCode::SUCCESS)) {
+    INFO(id_, "CS FAE Table Request failed with status 0x{:x}", rsp.GetStatus());
+    if (IsLeEventUnmasked(SubeventCode::LE_CS_READ_REMOTE_FAE_TABLE_COMPLETE)) {
+      send_event_(bluetooth::hci::LeCsReadRemoteFaeTableCompleteBuilder::Create(
+              static_cast<ErrorCode>(rsp.GetStatus()), connection.handle,
+              {} /* remote_fae_table */));
+    }
+    return;
+  }
+
+  if (IsLeEventUnmasked(SubeventCode::LE_CS_READ_REMOTE_FAE_TABLE_COMPLETE)) {
+    send_event_(bluetooth::hci::LeCsReadRemoteFaeTableCompleteBuilder::Create(
+            ErrorCode::SUCCESS, connection.handle, rsp.GetRemoteFaeTable()));
   }
 }
 

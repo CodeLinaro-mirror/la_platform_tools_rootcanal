@@ -63,6 +63,8 @@ enum PacketType : 8 {
 
     LL_CS_CAPABILITIES_REQ = 0xF0,
     LL_CS_CAPABILITIES_RSP = 0xF1,
+    LL_CS_FAE_REQ = 0xF2,
+    LL_CS_FAE_RSP = 0xF3,
 }
 
 packet LinkLayerPacket {
@@ -457,4 +459,13 @@ packet LlCsCapabilitiesRsp : LinkLayerPacket (type = LL_CS_CAPABILITIES_RSP) {
   t_pm_capability: 16,
   rfu3_: 1,
   tx_snr_capability: 7,
+}
+
+packet LlCsFaeReq : LinkLayerPacket (type = LL_CS_FAE_REQ) {
+}
+
+packet LlCsFaeRsp : LinkLayerPacket (type = LL_CS_FAE_RSP) {
+  // Not part of the LL PDU, added to emulate LL_REJECT_EXT_IND.
+  status: 8,
+  remote_fae_table : 8[72],
 }

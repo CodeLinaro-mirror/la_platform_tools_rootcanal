@@ -535,6 +535,11 @@ public:
   void LeCsReadRemoteSupportedCapabilities(CommandView command);
   void LeCsWriteCachedRemoteSupportedCapabilities(CommandView command);
 
+  // 7.8.134 - 7.8.136
+  void LeCsSetDefaultSettings(CommandView command);
+  void LeCsReadRemoteFaeTable(CommandView command);
+  void LeCsWriteCachedRemoteFaeTable(CommandView command);
+
   // Vendor-specific Commands
   void LeGetVendorCapabilities(CommandView command);
   void LeBatchScan(CommandView command);

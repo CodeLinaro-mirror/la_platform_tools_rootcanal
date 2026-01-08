@@ -1705,6 +1705,49 @@ void DualModeController::LeCsWriteCachedRemoteSupportedCapabilities(CommandView 
           kNumCommandPackets, status, connection_handle));
 }
 
+void DualModeController::LeCsSetDefaultSettings(CommandView command) {
+  auto command_view = bluetooth::hci::LeCsSetDefaultSettingsView::Create(command);
+  CHECK_PACKET_VIEW(command_view);
+  uint16_t connection_handle = command_view.GetConnectionHandle();
+
+  DEBUG(id_, "<< LE CS Default Settings");
+  DEBUG(id_, "   connection_handle=0x{:x}", connection_handle);
+
+  auto status = le_controller_.LeCsSetDefaultSettings(
+          connection_handle, command_view.GetRoleEnable(),
+          static_cast<uint8_t>(command_view.GetCsSyncAntennaSelection()),
+          command_view.GetMaxTxPower());
+  send_event_(bluetooth::hci::LeCsSetDefaultSettingsCompleteBuilder::Create(
+          kNumCommandPackets, status, connection_handle));
+}
+
+void DualModeController::LeCsReadRemoteFaeTable(CommandView command) {
+  auto command_view = bluetooth::hci::LeCsReadRemoteFaeTableView::Create(command);
+  CHECK_PACKET_VIEW(command_view);
+  uint16_t connection_handle = command_view.GetConnectionHandle();
+
+  DEBUG(id_, "<< LE CS Read Remote Fae Table");
+  DEBUG(id_, "   connection_handle=0x{:x}", connection_handle);
+
+  auto status = le_controller_.LeCsReadRemoteFaeTable(connection_handle);
+  send_event_(
+          bluetooth::hci::LeCsReadRemoteFaeTableStatusBuilder::Create(status, kNumCommandPackets));
+}
+
+void DualModeController::LeCsWriteCachedRemoteFaeTable(CommandView command) {
+  auto command_view = bluetooth::hci::LeCsWriteCachedRemoteFaeTableView::Create(command);
+  CHECK_PACKET_VIEW(command_view);
+  uint16_t connection_handle = command_view.GetConnectionHandle();
+
+  DEBUG(id_, "<< LE CS Write Cached Remote Fae Table");
+  DEBUG(id_, "   connection_handle=0x{:x}", connection_handle);
+
+  auto status = le_controller_.LeCsWriteCachedRemoteFaeTable(connection_handle,
+                                                             command_view.GetRemoteFaeTable());
+  send_event_(bluetooth::hci::LeCsWriteCachedRemoteFaeTableCompleteBuilder::Create(
+          kNumCommandPackets, status, connection_handle));
+}
+
 void DualModeController::LeSetAddressResolutionEnable(CommandView command) {
   auto command_view = bluetooth::hci::LeSetAddressResolutionEnableView::Create(command);
   CHECK_PACKET_VIEW(command_view);
@@ -4262,11 +4305,10 @@ DualModeController::GetHciCommandHandlers() {
           {OpCode::LE_CS_WRITE_CACHED_REMOTE_SUPPORTED_CAPABILITIES,
            &DualModeController::LeCsWriteCachedRemoteSupportedCapabilities},
           //{OpCode::LE_CS_SECURITY_ENABLE, &DualModeController::LeCsSecurityEnable},
-          //{OpCode::LE_CS_SET_DEFAULT_SETTINGS, &DualModeController::LeCsSetDefaultSettings},
-          //{OpCode::LE_CS_READ_REMOTE_FAE_TABLE,
-          //&DualModeController::LeCsReadRemoteFaeTable},
-          //{OpCode::LE_CS_WRITE_CACHED_REMOTE_FAE_TABLE,
-          //&DualModeController::LeCsWriteCachedRemoteFaeTable},
+          {OpCode::LE_CS_SET_DEFAULT_SETTINGS, &DualModeController::LeCsSetDefaultSettings},
+          {OpCode::LE_CS_READ_REMOTE_FAE_TABLE, &DualModeController::LeCsReadRemoteFaeTable},
+          {OpCode::LE_CS_WRITE_CACHED_REMOTE_FAE_TABLE,
+           &DualModeController::LeCsWriteCachedRemoteFaeTable},
           //{OpCode::LE_CS_CREATE_CONFIG, &DualModeController::LeCsCreateConfig},
           //{OpCode::LE_CS_REMOVE_CONFIG, &DualModeController::LeCsRemoveConfig},
           //{OpCode::LE_CS_SET_CHANNEL_CLASSIFICATION,
