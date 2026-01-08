@@ -1225,7 +1225,8 @@ ErrorCode LeController::LeSetScanEnable(bool enable, bool filter_duplicates) {
 
   if (!enable) {
     scanner_.scan_enable = false;
-    scanner_.pending_scan_requests.clear();
+    scanner_.pending_scan_request = {};
+    scanner_.pending_scan_request_timeout = {};
     scanner_.history.clear();
     return ErrorCode::SUCCESS;
   }
@@ -1252,7 +1253,8 @@ ErrorCode LeController::LeSetScanEnable(bool enable, bool filter_duplicates) {
   scanner_.history.clear();
   scanner_.timeout = {};
   scanner_.periodical_timeout = {};
-  scanner_.pending_scan_requests.clear();
+  scanner_.pending_scan_request = {};
+  scanner_.pending_scan_request_timeout = {};
   scanner_.filter_duplicates = filter_duplicates ? bluetooth::hci::FilterDuplicates::ENABLED
                                                  : bluetooth::hci::FilterDuplicates::DISABLED;
   return ErrorCode::SUCCESS;
@@ -1379,7 +1381,8 @@ ErrorCode LeController::LeSetExtendedScanEnable(bool enable,
 
   if (!enable) {
     scanner_.scan_enable = false;
-    scanner_.pending_scan_requests.clear();
+    scanner_.pending_scan_request = {};
+    scanner_.pending_scan_request_timeout = {};
     scanner_.history.clear();
     return ErrorCode::SUCCESS;
   }
@@ -1433,7 +1436,8 @@ ErrorCode LeController::LeSetExtendedScanEnable(bool enable,
   scanner_.history.clear();
   scanner_.timeout = {};
   scanner_.periodical_timeout = {};
-  scanner_.pending_scan_requests.clear();
+  scanner_.pending_scan_request = {};
+  scanner_.pending_scan_request_timeout = {};
   scanner_.filter_duplicates = filter_duplicates;
   scanner_.duration = duration_ms;
   scanner_.period = period_ms;
@@ -2771,8 +2775,7 @@ void LeController::ScanIncomingLeLegacyAdvertisingPdu(
           "Not sending LE Scan request to advertising address {} because "
           "the scanner is passive",
           advertising_address);
-  } else if (scanner_.pending_scan_requests.find(advertising_address) !=
-             scanner_.pending_scan_requests.end()) {
+  } else if (scanner_.pending_scan_request) {
     DEBUG(id_,
           "Not sending LE Scan request to advertising address {} because "
           "an LE Scan request is already pending",
@@ -2820,13 +2823,12 @@ void LeController::ScanIncomingLeLegacyAdvertisingPdu(
 
     // Save the original advertising type to report if the advertising
     // is connectable in the scan response report.
-    scanner_.pending_scan_requests[advertising_address] = Scanner::ScanRequest{
-            .connectable = connectable_advertising,
-            .extended = false,
-            .primary_phy = model::packets::PhyType::LE_1M,
-            .secondary_phy = model::packets::PhyType::NO_PACKETS,
-            .timeout = std::chrono::steady_clock::now() + kScanRequestTimeout,
-    };
+    scanner_.connectable_scan_response = connectable_advertising;
+    scanner_.extended_scan_response = false;
+    scanner_.primary_scan_response_phy = model::packets::PhyType::LE_1M;
+    scanner_.secondary_scan_response_phy = model::packets::PhyType::NO_PACKETS;
+    scanner_.pending_scan_request = advertising_address;
+    scanner_.pending_scan_request_timeout = std::chrono::steady_clock::now() + kScanRequestTimeout;
 
     INFO(id_,
          "Sending LE Scan request to advertising address {} with scanning "
@@ -3189,8 +3191,7 @@ void LeController::ScanIncomingLeExtendedAdvertisingPdu(
           "Not sending LE Scan request to advertising address {} because "
           "the scanner is passive",
           advertising_address);
-  } else if (scanner_.pending_scan_requests.find(advertising_address) !=
-             scanner_.pending_scan_requests.end()) {
+  } else if (scanner_.pending_scan_request) {
     DEBUG(id_,
           "Not sending LE Scan request to advertising address {} because "
           "an LE Scan request is already pending",
@@ -3239,13 +3240,11 @@ void LeController::ScanIncomingLeExtendedAdvertisingPdu(
 
     // Save the original advertising type to report if the advertising
     // is connectable in the scan response report.
-    scanner_.pending_scan_requests[advertising_address] = Scanner::ScanRequest{
-            .connectable = connectable_advertising,
-            .extended = true,
-            .primary_phy = primary_phy,
-            .secondary_phy = secondary_phy,
-            .timeout = std::chrono::steady_clock::now() + kScanRequestTimeout,
-    };
+    scanner_.connectable_scan_response = connectable_advertising;
+    scanner_.extended_scan_response = true;
+    scanner_.primary_scan_response_phy = primary_phy;
+    scanner_.secondary_scan_response_phy = secondary_phy;
+    scanner_.pending_scan_request = advertising_address;
 
     INFO(id_,
          "Sending LE Scan request to advertising address {} with scanning "
@@ -4359,6 +4358,13 @@ void LeController::IncomingLeScanResponsePacket(model::packets::LinkLayerPacketV
     return;
   }
 
+  if (!scanner_.pending_scan_request) {
+    DEBUG(id_,
+          "LE Scan response ignored by scanner because no request is currently "
+          "pending");
+    return;
+  }
+
   AddressWithType advertising_address{
           scan_response.GetSourceAddress(),
           static_cast<AddressType>(scan_response.GetAdvertisingAddressType())};
@@ -4367,12 +4373,11 @@ void LeController::IncomingLeScanResponsePacket(model::packets::LinkLayerPacketV
   // address (AdvA field) in the scan response PDU shall be the same as the
   // advertiser’s device address (AdvA field) in the scan request PDU to which
   // it is responding.
-  if (scanner_.pending_scan_requests.find(advertising_address) ==
-      scanner_.pending_scan_requests.end()) {
+  if (advertising_address != scanner_.pending_scan_request) {
     DEBUG(id_,
-          "LE Scan response ignored by scanner because no request is currently "
-          "pending for the advertising address {}",
-          advertising_address);
+          "LE Scan response ignored by scanner because the advertising address "
+          "{} does not match the pending request {}",
+          advertising_address, scanner_.pending_scan_request.value());
     return;
   }
 
@@ -4386,8 +4391,7 @@ void LeController::IncomingLeScanResponsePacket(model::packets::LinkLayerPacketV
 
   INFO(id_, "Accepting LE Scan response from advertising address {}", resolved_advertising_address);
 
-  auto scan_request = scanner_.pending_scan_requests[advertising_address];
-  scanner_.pending_scan_requests.erase(advertising_address);
+  scanner_.pending_scan_request = {};
 
   bool should_send_advertising_report = true;
   if (scanner_.filter_duplicates != bluetooth::hci::FilterDuplicates::DISABLED) {
@@ -4415,13 +4419,14 @@ void LeController::IncomingLeScanResponsePacket(model::packets::LinkLayerPacketV
     response.address_ = resolved_advertising_address.GetAddress();
     response.address_type_ = static_cast<bluetooth::hci::DirectAdvertisingAddressType>(
             resolved_advertising_address.GetAddressType());
-    response.connectable_ = scan_request.connectable;
+    response.connectable_ = scanner_.connectable_scan_response;
     response.scannable_ = true;
-    response.legacy_ = !scan_request.extended;
+    response.legacy_ = !scanner_.extended_scan_response;
     response.scan_response_ = true;
-    response.primary_phy_ = static_cast<bluetooth::hci::PrimaryPhyType>(scan_request.primary_phy);
+    response.primary_phy_ =
+            static_cast<bluetooth::hci::PrimaryPhyType>(scanner_.primary_scan_response_phy);
     response.secondary_phy_ =
-            static_cast<bluetooth::hci::SecondaryPhyType>(scan_request.secondary_phy);
+            static_cast<bluetooth::hci::SecondaryPhyType>(scanner_.secondary_scan_response_phy);
     // TODO: SID should be set in scan response PDU
     response.advertising_sid_ = 0xFF;
     response.tx_power_ = 0x7F;
@@ -4469,7 +4474,7 @@ void LeController::LeScanning() {
     // an HCI_LE_Scan_Timeout event shall be generated.
     INFO(id_, "Extended Scan Timeout");
     scanner_.scan_enable = false;
-    scanner_.pending_scan_requests.clear();
+    scanner_.pending_scan_request = {};
     scanner_.history.clear();
     if (IsLeEventUnmasked(SubeventCode::LE_SCAN_TIMEOUT)) {
       send_event_(bluetooth::hci::LeScanTimeoutBuilder::Create());
@@ -4493,10 +4498,13 @@ void LeController::LeScanning() {
   }
 
   // Pending scan timeout.
-  // Cancel pending scan requests. This may condition may be triggered
+  // Cancel the pending scan request. This may condition may be triggered
   // when the advertiser is stopped before sending the scan request.
-  std::erase_if(scanner_.pending_scan_requests,
-                [=](const auto& item) { return now >= item.second.timeout; });
+  if (scanner_.pending_scan_request_timeout.has_value() &&
+      now >= scanner_.pending_scan_request_timeout.value()) {
+    scanner_.pending_scan_request = {};
+    scanner_.pending_scan_request_timeout = {};
+  }
 }
 
 void LeController::LeSynchronization() {
