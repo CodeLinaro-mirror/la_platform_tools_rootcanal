@@ -802,12 +802,15 @@ private:
     PhyParameters le_coded_phy;
 
     // Save information about the advertising PDU being scanned.
-    bool connectable_scan_response;
-    bool extended_scan_response;
-    model::packets::PhyType primary_scan_response_phy;
-    model::packets::PhyType secondary_scan_response_phy;
-    std::optional<AddressWithType> pending_scan_request{};
-    std::optional<std::chrono::steady_clock::time_point> pending_scan_request_timeout{};
+    struct ScanRequest {
+      bool connectable;
+      bool extended;
+      model::packets::PhyType primary_phy;
+      model::packets::PhyType secondary_phy;
+      std::chrono::steady_clock::time_point timeout;
+    };
+
+    std::unordered_map<AddressWithType, ScanRequest> pending_scan_requests{};
 
     // Time keeping
     std::optional<std::chrono::steady_clock::time_point> timeout;
