@@ -4986,8 +4986,19 @@ void LeController::LeScanning() {
   // Pending scan timeout.
   // Cancel pending scan requests. This may condition may be triggered
   // when the advertiser is stopped before sending the scan request.
+#if __cplusplus >= 202002L
   std::erase_if(scanner_.pending_scan_requests,
                 [=](const auto& item) { return now >= item.second.timeout; });
+#else
+  for (auto it = scanner_.pending_scan_requests.begin();
+       it != scanner_.pending_scan_requests.end();) {
+    if (now >= it->second.timeout) {
+      it = scanner_.pending_scan_requests.erase(it);
+    } else {
+      ++it;
+    }
+  }
+#endif  // __cplusplus >= 202002L
 }
 
 void LeController::LeSynchronization() {
