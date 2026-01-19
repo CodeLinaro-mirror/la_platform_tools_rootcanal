@@ -1215,51 +1215,6 @@ impl IsoManager {
             num_hci_command_packets: 1,
         };
 
-        // If the Host attempts to set a data path with a Connection Handle that does not
-        // exist or that is not for a CIS, CIS configuration, or BIS, the Controller shall
-        // return the error code Unknown Connection Identifier (0x02).
-        let Some(cis) = self.cis_connections.get_mut(&connection_handle) else {
-            println!("the CIS connection handle 0x{:x} is not assigned", connection_handle);
-            return self.send_hci_event(command_complete(hci::ErrorCode::CommandDisallowed));
-        };
-
-        let (c_to_p_direction, p_to_c_direction) = if cis.role == hci::Role::Central {
-            (hci::DataPathDirection::Output, hci::DataPathDirection::Input)
-        } else {
-            (hci::DataPathDirection::Input, hci::DataPathDirection::Output)
-        };
-
-        // If the Host issues this command more than once for the same
-        // Connection_Handle and direction before issuing the HCI_LE_Remove_ISO_Data_-
-        // Path command for that Connection_Handle and direction, the Controller shall
-        // return the error code Command Disallowed (0x0C).
-        if cis.iso_data_path_c_to_p.is_some() && packet.data_path_direction() == c_to_p_direction {
-            println!("C->P ISO data path already configured for ({}, {})", cis.cig_id, cis.cis_id);
-            return self.send_hci_event(command_complete(hci::ErrorCode::CommandDisallowed));
-        }
-        if cis.iso_data_path_p_to_c.is_some() && packet.data_path_direction() == p_to_c_direction {
-            println!("P->C ISO data path already configured for ({}, {})", cis.cig_id, cis.cis_id);
-            return self.send_hci_event(command_complete(hci::ErrorCode::CommandDisallowed));
-        }
-
-        // If the Host issues this command for a CIS on a Peripheral before it has issued
-        // the HCI_LE_Accept_CIS_Request command for that CIS, then the Controller
-        // shall return the error code Command Disallowed (0x0C).
-        if cis.role == hci::Role::Peripheral && cis.state == CisState::PendingAccept {
-            println!("setup ISO data path sent before accepting the CIS request");
-            return self.send_hci_event(command_complete(hci::ErrorCode::CommandDisallowed));
-        }
-
-        // If the Host issues this command for a vendor-specific data transport path that
-        // has not been configured using the HCI_Configure_Data_Path command, the
-        // Controller shall return the error code Command Disallowed (0x0C).
-
-        // If the Host attempts to set an output data path using a connection handle that is
-        // for an Isochronous Broadcaster, for an input data path on a Synchronized
-        // Receiver, or for a data path for the direction on a unidirectional CIS where BN
-        // is set to 0, the Controller shall return the error code Command Disallowed
-        // (0x0C).
-
         // If the Host issues this command with Codec_Configuration_Length non-zero
         // and Codec_ID set to transparent air mode, the Controller shall return the error
         // code Invalid HCI Command Parameters (0x12).
@@ -1269,15 +1224,103 @@ impl IsoManager {
                 .send_hci_event(command_complete(hci::ErrorCode::InvalidHciCommandParameters));
         }
 
-        // If the Host issues this command with codec-related parameters that exceed the
-        // bandwidth and latency allowed on the established CIS or BIS identified by the
-        // Connection_Handle parameter, the Controller shall return the error code
-        // Invalid HCI Command Parameters (0x12).
+        // If the Host attempts to set a data path with a Connection Handle that does not
+        // exist or that is not for a CIS, CIS configuration, or BIS, the Controller shall
+        // return the error code Unknown Connection Identifier (0x02).
+        if let Some(cis) = self.cis_connections.get_mut(&connection_handle) {
+            let (c_to_p_direction, p_to_c_direction) = if cis.role == hci::Role::Central {
+                (hci::DataPathDirection::Output, hci::DataPathDirection::Input)
+            } else {
+                (hci::DataPathDirection::Input, hci::DataPathDirection::Output)
+            };
 
-        if packet.data_path_direction() == c_to_p_direction {
-            cis.iso_data_path_c_to_p = Some(IsoDataPath::Hci);
+            // If the Host issues this command more than once for the same
+            // Connection_Handle and direction before issuing the HCI_LE_Remove_ISO_Data_-
+            // Path command for that Connection_Handle and direction, the Controller shall
+            // return the error code Command Disallowed (0x0C).
+            if cis.iso_data_path_c_to_p.is_some()
+                && packet.data_path_direction() == c_to_p_direction
+            {
+                println!(
+                    "C->P ISO data path already configured for ({}, {})",
+                    cis.cig_id, cis.cis_id
+                );
+                return self.send_hci_event(command_complete(hci::ErrorCode::CommandDisallowed));
+            }
+            if cis.iso_data_path_p_to_c.is_some()
+                && packet.data_path_direction() == p_to_c_direction
+            {
+                println!(
+                    "P->C ISO data path already configured for ({}, {})",
+                    cis.cig_id, cis.cis_id
+                );
+                return self.send_hci_event(command_complete(hci::ErrorCode::CommandDisallowed));
+            }
+
+            // If the Host issues this command for a CIS on a Peripheral before it has issued
+            // the HCI_LE_Accept_CIS_Request command for that CIS, then the Controller
+            // shall return the error code Command Disallowed (0x0C).
+            if cis.role == hci::Role::Peripheral && cis.state == CisState::PendingAccept {
+                println!("setup ISO data path sent before accepting the CIS request");
+                return self.send_hci_event(command_complete(hci::ErrorCode::CommandDisallowed));
+            }
+
+            // If the Host issues this command for a vendor-specific data transport path that
+            // has not been configured using the HCI_Configure_Data_Path command, the
+            // Controller shall return the error code Command Disallowed (0x0C).
+
+            // If the Host attempts to set an output data path using a connection handle that is
+            // for an Isochronous Broadcaster, for an input data path on a Synchronized
+            // Receiver, or for a data path for the direction on a unidirectional CIS where BN
+            // is set to 0, the Controller shall return the error code Command Disallowed
+            // (0x0C).
+
+            // If the Host issues this command with codec-related parameters that exceed the
+            // bandwidth and latency allowed on the established CIS or BIS identified by the
+            // Connection_Handle parameter, the Controller shall return the error code
+            // Invalid HCI Command Parameters (0x12).
+
+            if packet.data_path_direction() == c_to_p_direction {
+                cis.iso_data_path_c_to_p = Some(IsoDataPath::Hci);
+            } else {
+                cis.iso_data_path_p_to_c = Some(IsoDataPath::Hci);
+            }
+        } else if let Some(bis) = self.bis_connections.get_mut(&connection_handle) {
+            // If the Host attempts to set an output data path using a connection handle that is
+            // for an Isochronous Broadcaster, for an input data path on a Synchronized
+            // Receiver, or for a data path for the direction on a unidirectional CIS where BN
+            // is set to 0, the Controller shall return the error code Command Disallowed
+            // (0x0C).
+            if (bis.role == hci::Role::Central
+                && packet.data_path_direction() == hci::DataPathDirection::Output)
+                || (bis.role == hci::Role::Peripheral
+                    && packet.data_path_direction() == hci::DataPathDirection::Input)
+            {
+                println!("Attempt to set an invalid data path direction for BIS (Role: {:?}, Direction: {:?}).", bis.role, packet.data_path_direction());
+                return self.send_hci_event(command_complete(hci::ErrorCode::CommandDisallowed));
+            }
+
+            // If the Host issues this command more than once for the same
+            // Connection_Handle and direction before issuing the HCI_LE_Remove_ISO_Data_-
+            // Path command for that Connection_Handle and direction, the Controller shall
+            // return the error code Command Disallowed (0x0C).
+            if bis.iso_data_path.is_some() {
+                println!(
+                    "ISO data path already configured for ({}, {})",
+                    bis.big_handle, bis.bis_connection_handle
+                );
+                return self.send_hci_event(command_complete(hci::ErrorCode::CommandDisallowed));
+            }
+
+            // If the Host issues this command with codec-related parameters that exceed the
+            // bandwidth and latency allowed on the established CIS or BIS identified by the
+            // Connection_Handle parameter, the Controller shall return the error code
+            // Invalid HCI Command Parameters (0x12).
+
+            bis.iso_data_path = Some(IsoDataPath::Hci);
         } else {
-            cis.iso_data_path_p_to_c = Some(IsoDataPath::Hci);
+            println!("the connection handle 0x{:x} is not assigned", connection_handle);
+            return self.send_hci_event(command_complete(hci::ErrorCode::UnknownConnection));
         }
 
         self.send_hci_event(command_complete(hci::ErrorCode::Success))
@@ -1297,34 +1340,44 @@ impl IsoManager {
         // If the Host issues this command with a Connection_Handle that does not exist
         // or is not for a CIS, CIS configuration, or BIS, the Controller shall return the
         // error code Unknown Connection Identifier (0x02).
-        let Some(cis) = self.cis_connections.get_mut(&connection_handle) else {
-            println!("the CIS connection handle 0x{:x} is not assigned", connection_handle);
-            return self.send_hci_event(command_complete(hci::ErrorCode::CommandDisallowed));
-        };
+        if let Some(cis) = self.cis_connections.get_mut(&connection_handle) {
+            let (remove_c_to_p, remove_p_to_c) = if cis.role == hci::Role::Central {
+                (remove_output_data_path, remove_input_data_path)
+            } else {
+                (remove_input_data_path, remove_output_data_path)
+            };
+            // If the Host issues this command for a data path that has not been set up (using
+            // the HCI_LE_Setup_ISO_Data_Path command), the Controller shall return the
+            // error code Command Disallowed (0x0C)
+            if cis.iso_data_path_c_to_p.is_none() && remove_c_to_p {
+                println!("attempted to remove Iso Data Path C->P but it is not configured");
+                return self.send_hci_event(command_complete(hci::ErrorCode::CommandDisallowed));
+            }
+            if cis.iso_data_path_p_to_c.is_none() && remove_p_to_c {
+                println!("attempted to remove Iso Data Path P->C but it is not configured");
+                return self.send_hci_event(command_complete(hci::ErrorCode::CommandDisallowed));
+            }
+            if remove_c_to_p {
+                cis.iso_data_path_c_to_p = None;
+            }
+            if remove_p_to_c {
+                cis.iso_data_path_p_to_c = None;
+            }
+        } else if let Some(bis) = self.bis_connections.get_mut(&connection_handle) {
+            // If the Host issues this command for a data path that has not been set up (using
+            // the HCI_LE_Setup_ISO_Data_Path command), the Controller shall return the
+            // error code Command Disallowed (0x0C)
+            if bis.iso_data_path.is_none() || remove_output_data_path {
+                println!("attempted to remove Iso Data Path but it is not configured");
+                return self.send_hci_event(command_complete(hci::ErrorCode::CommandDisallowed));
+            }
 
-        let (remove_c_to_p, remove_p_to_c) = if cis.role == hci::Role::Central {
-            (remove_output_data_path, remove_input_data_path)
+            if remove_input_data_path {
+                bis.iso_data_path = None;
+            }
         } else {
-            (remove_input_data_path, remove_output_data_path)
-        };
-
-        // If the Host issues this command for a data path that has not been set up (using
-        // the HCI_LE_Setup_ISO_Data_Path command), the Controller shall return the
-        // error code Command Disallowed (0x0C)
-        if cis.iso_data_path_c_to_p.is_none() && remove_c_to_p {
-            println!("attempted to remove Iso Data Path C->P but it is not configured");
-            return self.send_hci_event(command_complete(hci::ErrorCode::CommandDisallowed));
-        }
-        if cis.iso_data_path_p_to_c.is_none() && remove_p_to_c {
-            println!("attempted to remove Iso Data Path P->C but it is not configured");
-            return self.send_hci_event(command_complete(hci::ErrorCode::CommandDisallowed));
-        }
-
-        if remove_c_to_p {
-            cis.iso_data_path_c_to_p = None;
-        }
-        if remove_p_to_c {
-            cis.iso_data_path_p_to_c = None;
+            println!("the connection handle 0x{:x} is not assigned", connection_handle);
+            return self.send_hci_event(command_complete(hci::ErrorCode::UnknownConnection));
         }
 
         self.send_hci_event(command_complete(hci::ErrorCode::Success))
