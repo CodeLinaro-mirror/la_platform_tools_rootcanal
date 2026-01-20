@@ -4112,6 +4112,8 @@ void LeController::IncomingPacket(model::packets::LinkLayerPacketView incoming, 
       return IncomingLeConnectPacket(incoming);
     case model::packets::PacketType::LE_CONNECT_COMPLETE:
       return IncomingLeConnectCompletePacket(incoming);
+    case model::packets::PacketType::LE_BROADCAST_ISOCHRONOUS_PDU:
+      return IncomingLeBroadcastIsochronousPdu(incoming);
     default:
       break;
   }
@@ -5355,6 +5357,46 @@ void LeController::IncomingLlcpPacket(model::packets::LinkLayerPacketView incomi
   ASSERT(link_layer_ingest_llcp(ll_.get(), *acl_connection_handle, packet.data(), packet.size()));
 }
 
+void LeController::IncomingLeBroadcastIsochronousPdu(LinkLayerPacketView incoming) {
+  auto pdu = model::packets::LeBroadcastIsochronousPduView::Create(incoming);
+  ASSERT(pdu.IsValid());
+  auto data = pdu.GetData();
+  auto packet = std::vector(data.begin(), data.end());
+  uint8_t big_id = pdu.GetBigId();
+  uint8_t bis_id = pdu.GetBisId();
+  uint16_t bis_connection_handle = 0;
+  uint16_t iso_sdu_length = packet.size();
+
+  if (!link_layer_get_bis_connection_handle(ll_.get(), big_id, bis_id, &bis_connection_handle)) {
+    INFO(id_, "Ignoring BIS pdu since BIG big_id={} bis_id={} is not synchronized", big_id, bis_id);
+    return;
+  }
+
+  // Fragment the ISO SDU if larger than the maximum payload size (4095).
+  constexpr size_t kMaxPayloadSize = 4095 - 4;  // remove sequence_number and
+                                                // iso_sdu_length
+  size_t remaining_size = packet.size();
+  size_t offset = 0;
+  auto packet_boundary_flag = remaining_size <= kMaxPayloadSize
+                                      ? bluetooth::hci::IsoPacketBoundaryFlag::COMPLETE_SDU
+                                      : bluetooth::hci::IsoPacketBoundaryFlag::FIRST_FRAGMENT;
+
+  do {
+    size_t fragment_size = std::min(kMaxPayloadSize, remaining_size);
+    std::vector<uint8_t> fragment(packet.data() + offset, packet.data() + offset + fragment_size);
+
+    send_iso_(bluetooth::hci::IsoWithoutTimestampBuilder::Create(
+            bis_connection_handle, packet_boundary_flag, pdu.GetSequenceNumber(), iso_sdu_length,
+            bluetooth::hci::IsoPacketStatusFlag::VALID, std::move(fragment)));
+
+    remaining_size -= fragment_size;
+    offset += fragment_size;
+    packet_boundary_flag = remaining_size <= kMaxPayloadSize
+                                   ? bluetooth::hci::IsoPacketBoundaryFlag::LAST_FRAGMENT
+                                   : bluetooth::hci::IsoPacketBoundaryFlag::CONTINUATION_FRAGMENT;
+  } while (remaining_size > 0);
+}
+
 void LeController::IncomingLeConnectedIsochronousPdu(LinkLayerPacketView incoming) {
   auto pdu = model::packets::LeConnectedIsochronousPduView::Create(incoming);
   ASSERT(pdu.IsValid());
@@ -5431,14 +5473,14 @@ void LeController::HandleAcl(bluetooth::hci::AclView acl) {
 }
 
 void LeController::HandleIso(bluetooth::hci::IsoView iso) {
-  uint16_t cis_connection_handle = iso.GetConnectionHandle();
+  uint16_t connection_handle = iso.GetConnectionHandle();
   auto pb_flag = iso.GetPbFlag();
   auto ts_flag = iso.GetTsFlag();
   auto iso_data_load = iso.GetPayload();
 
-  ScheduleTask(kNoDelayMs, [this, cis_connection_handle]() {
+  ScheduleTask(kNoDelayMs, [this, connection_handle]() {
     send_event_(bluetooth::hci::NumberOfCompletedPacketsBuilder::Create(
-            {bluetooth::hci::CompletedPackets(cis_connection_handle, 1)}));
+            {bluetooth::hci::CompletedPackets(connection_handle, 1)}));
   });
 
   // In the Host to Controller direction, ISO_Data_Load_Length
@@ -5461,28 +5503,12 @@ void LeController::HandleIso(bluetooth::hci::IsoView iso) {
           "expected");
   }
 
-  uint8_t cig_id = 0;
-  uint8_t cis_id = 0;
-  uint16_t acl_connection_handle = -1;
-  uint16_t packet_sequence_number = 0;
-  uint16_t max_sdu_length = 0;
-
-  if (!link_layer_get_cis_information(ll_.get(), cis_connection_handle, &acl_connection_handle,
-                                      &cig_id, &cis_id, &max_sdu_length)) {
-    INFO(id_, "Ignoring CIS pdu received on disconnected CIS handle={}", cis_connection_handle);
-    return;
-  }
-
-  if (!connections_.HasLeAclHandle(acl_connection_handle)) {
-    ERROR(id_, "Invalid LE-ACL connection handle returned from ISO manager");
-    return;
-  }
-
   if (pb_flag == bluetooth::hci::IsoPacketBoundaryFlag::FIRST_FRAGMENT ||
       pb_flag == bluetooth::hci::IsoPacketBoundaryFlag::COMPLETE_SDU) {
     iso_sdu_.clear();
   }
 
+  uint16_t packet_sequence_number = 0;
   switch (ts_flag) {
     case bluetooth::hci::TimeStampFlag::PRESENT: {
       auto iso_with_timestamp = bluetooth::hci::IsoWithTimestampView::Create(iso);
@@ -5502,23 +5528,76 @@ void LeController::HandleIso(bluetooth::hci::IsoView iso) {
       break;
     }
   }
+  if (IsCisConnectionHandle(connection_handle)) {
+    uint8_t cig_id = 0;
+    uint8_t cis_id = 0;
+    uint16_t acl_connection_handle = -1;
+    uint16_t max_sdu_length = 0;
 
-  if (pb_flag == bluetooth::hci::IsoPacketBoundaryFlag::LAST_FRAGMENT ||
-      pb_flag == bluetooth::hci::IsoPacketBoundaryFlag::COMPLETE_SDU) {
-    // Validate that the Host stack is not sending ISO SDUs that are larger
-    // that what was configured for the CIS.
-    if (iso_sdu_.size() > max_sdu_length) {
-      WARNING(id_,
-              "attempted to send an SDU of length {} that exceeds the configure "
-              "Max_SDU_Length ({})",
-              iso_sdu_.size(), max_sdu_length);
+    if (!link_layer_get_cis_information(ll_.get(), connection_handle, &acl_connection_handle,
+                                        &cig_id, &cis_id, &max_sdu_length)) {
+      INFO(id_, "Ignoring CIS pdu received on disconnected CIS handle={}", connection_handle);
       return;
     }
 
-    auto const& connection = connections_.GetLeAclConnection(acl_connection_handle);
-    SendLeLinkLayerPacket(model::packets::LeConnectedIsochronousPduBuilder::Create(
-            connection.own_address.GetAddress(), connection.address.GetAddress(), cig_id, cis_id,
-            packet_sequence_number, std::move(iso_sdu_)));
+    if (!connections_.HasLeAclHandle(acl_connection_handle)) {
+      ERROR(id_, "Invalid LE-ACL connection handle returned from ISO manager");
+      return;
+    }
+
+    if (pb_flag == bluetooth::hci::IsoPacketBoundaryFlag::LAST_FRAGMENT ||
+        pb_flag == bluetooth::hci::IsoPacketBoundaryFlag::COMPLETE_SDU) {
+      // Validate that the Host stack is not sending ISO SDUs that are larger
+      // that what was configured for the CIS.
+      if (iso_sdu_.size() > max_sdu_length) {
+        WARNING(id_,
+                "attempted to send an SDU of length {} that exceeds the configure "
+                "Max_SDU_Length ({})",
+                iso_sdu_.size(), max_sdu_length);
+        return;
+      }
+
+      auto const& connection = connections_.GetLeAclConnection(acl_connection_handle);
+      SendLeLinkLayerPacket(model::packets::LeConnectedIsochronousPduBuilder::Create(
+              connection.own_address.GetAddress(), connection.address.GetAddress(), cig_id, cis_id,
+              packet_sequence_number, std::move(iso_sdu_)));
+    }
+  } else if (IsBisConnectionHandle(connection_handle)) {
+    uint8_t big_id = 0;
+    uint8_t bis_id = 0;
+    uint8_t advertising_handle = 0;
+    uint16_t max_sdu_length = 0;
+
+    if (!link_layer_get_bis_information(ll_.get(), connection_handle, &big_id, &bis_id,
+                                        &advertising_handle, &max_sdu_length)) {
+      INFO(id_, "Ignoring BIS pdu received on disconnected BIS handle={}", connection_handle);
+      return;
+    }
+
+    if (pb_flag == bluetooth::hci::IsoPacketBoundaryFlag::LAST_FRAGMENT ||
+        pb_flag == bluetooth::hci::IsoPacketBoundaryFlag::COMPLETE_SDU) {
+      // Validate that the Host stack is not sending ISO SDUs that are larger
+      // that what was configured for the CIS.
+      if (iso_sdu_.size() > max_sdu_length) {
+        WARNING(id_,
+                "attempted to send an SDU of length {} that exceeds the configure "
+                "Max_SDU_Length ({})",
+                iso_sdu_.size(), max_sdu_length);
+        return;
+      }
+      auto advertiser = extended_advertisers_.find(advertising_handle);
+      if (advertiser == extended_advertisers_.end()) {
+        ERROR(id_, "Invalid advertising handle returned from ISO manager");
+        return;
+      }
+
+      SendLeLinkLayerPacket(model::packets::LeBroadcastIsochronousPduBuilder::Create(
+              advertiser->second.advertising_address.GetAddress(), Address::kEmpty, big_id, bis_id,
+              packet_sequence_number, std::move(iso_sdu_)));
+      iso_sdu_.clear();
+    }
+  } else {
+    ERROR(id_, "Invalid connection handle returned from ISO manager");
   }
 }
 
