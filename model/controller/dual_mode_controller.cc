@@ -2609,6 +2609,56 @@ void DualModeController::LeRemoteConnectionParameterRequestNegativeReply(Command
                   kNumCommandPackets, status, command_view.GetConnectionHandle()));
 }
 
+void DualModeController::RootcanalCommand(CommandView command) {
+  auto command_view = bluetooth::hci::RootcanalCommandView::Create(command);
+  CHECK_PACKET_VIEW(command_view);
+
+  using bluetooth::hci::RootcanalOpCode;
+  auto subop_code = command_view.GetSubopCode();
+  auto status = ErrorCode::SUCCESS;
+
+  switch (subop_code) {
+    case RootcanalOpCode::SEND_HCI_EVENT: {
+      auto subcommand_view =
+              bluetooth::hci::RootcanalSendHciEventView::Create(command_view);
+      CHECK_PACKET_VIEW(subcommand_view);
+
+      auto event_code = subcommand_view.GetEventCode();
+      auto payload = subcommand_view.GetPayload();
+      bredr_controller_.ScheduleTask(
+              std::chrono::milliseconds(5), [=, this, payload = std::move(payload)]() {
+                send_event_(bluetooth::hci::EventBuilder::Create(
+                        event_code, std::move(payload)));
+              });
+      break;
+    }
+    case RootcanalOpCode::SEND_HCI_ACL_DATA: {
+      auto subcommand_view =
+              bluetooth::hci::RootcanalSendHciAclDataView::Create(command_view);
+      CHECK_PACKET_VIEW(subcommand_view);
+
+      auto handle = subcommand_view.GetHandle();
+      auto packet_boundary_flag = subcommand_view.GetPacketBoundaryFlag();
+      auto broadcast_flag = subcommand_view.GetBroadcastFlag();
+      auto payload = subcommand_view.GetPayload();
+      bredr_controller_.ScheduleTask(
+              std::chrono::milliseconds(5), [=, this, payload = std::move(payload)]() {
+                send_acl_(bluetooth::hci::AclBuilder::Create(
+                        handle, packet_boundary_flag, broadcast_flag, std::move(payload)));
+              });
+
+      break;
+    }
+    default: {
+      status = ErrorCode::UNKNOWN_HCI_COMMAND;
+      break;
+    }
+  }
+
+  send_event_(bluetooth::hci::RootcanalCommandCompleteBuilder::Create(kNumCommandPackets, status,
+                                                                      subop_code));
+}
+
 void DualModeController::LeGetVendorCapabilities(CommandView command) {
   auto command_view = bluetooth::hci::LeGetVendorCapabilitiesView::Create(command);
   CHECK_PACKET_VIEW(command_view);
@@ -2924,7 +2974,7 @@ void DualModeController::GetControllerDebugInfo(CommandView command) {
 // used specifically by the PTS tool to pass certification tests.
 void DualModeController::CsrVendorCommand(CommandView command) {
   if (!properties_.supports_csr_vendor_command) {
-    SendCommandCompleteUnknownOpCodeEvent(OpCode(CSR_VENDOR));
+    SendCommandCompleteUnknownOpCodeEvent(OpCode::CSR_OPCODE);
     return;
   }
 
@@ -4331,7 +4381,8 @@ DualModeController::GetHciCommandHandlers() {
           //{OpCode::LE_FRAME_SPACE_UPDATE, &DualModeController::LeFrameSpaceUpdate},
 
           // VENDOR
-          {OpCode(CSR_VENDOR), &DualModeController::CsrVendorCommand},
+          {OpCode::CSR_OPCODE, &DualModeController::CsrVendorCommand},
+          {OpCode::ROOTCANAL_OPCODE, &DualModeController::RootcanalCommand},
           {OpCode::LE_GET_VENDOR_CAPABILITIES, &DualModeController::LeGetVendorCapabilities},
           {OpCode::LE_BATCH_SCAN, &DualModeController::LeBatchScan},
           {OpCode::LE_APCF, &DualModeController::LeApcf},

@@ -399,6 +399,17 @@ enum OpCode : 16 {
   LE_FRAME_SPACE_UPDATE = 0x209D,
 
   // VENDOR_SPECIFIC
+
+  // Reserved opcode for sending CSR test commands.
+  // The test commands are used by the PTS tool to control
+  // the local controller capabilities.
+  CSR_OPCODE = 0xFC00,
+
+  // Reserved opcode for sending RootCanal test commands.
+  // The test commands may be used to trigger specific events in the
+  // controller for test purposes.
+  ROOTCANAL_OPCODE = 0xFC01,
+
   // MSFT_OPCODE_xxxx below is needed for the tests.
   MSFT_OPCODE_INTEL = 0xFC1E,
   INTEL_DDC_CONFIG_READ = 0xFC8C,
@@ -882,6 +893,7 @@ enum VseSubeventCode : 8 {
   LE_ADVERTISEMENT_TRACKING = 0x56,
   CONTROLLER_DEBUG_INFO = 0x57,
   BLUETOOTH_QUALITY_REPORT = 0x58,
+  OTHER = ..
 }
 
 packet Event {
@@ -6360,6 +6372,39 @@ enum GapDataType : 8 {
   BROADCAST_CODE = 0x2D,
   THREE_D_INFORMATION_DATA = 0x3D,
   MANUFACTURER_SPECIFIC_DATA = 0xFF,
+}
+
+// -----------------------------------------------------------------------------
+//  RootCanal test commands.
+// -----------------------------------------------------------------------------
+
+enum RootcanalOpCode : 8 {
+  SEND_HCI_EVENT = 0x01,
+  SEND_HCI_ACL_DATA = 0x02,
+}
+
+packet RootcanalCommand : Command (op_code = ROOTCANAL_OPCODE) {
+  subop_code: RootcanalOpCode,
+  _payload_,
+}
+
+packet RootcanalCommandComplete : CommandComplete (command_op_code = ROOTCANAL_OPCODE) {
+  status: ErrorCode,
+  subop_code: RootcanalOpCode,
+}
+
+packet RootcanalSendHciEvent : RootcanalCommand (subop_code = SEND_HCI_EVENT) {
+  event_code : EventCode,
+  _size_(_payload_) : 8,
+  _payload_,
+}
+
+packet RootcanalSendHciAclData : RootcanalCommand (subop_code = SEND_HCI_ACL_DATA) {
+  handle : 12,
+  packet_boundary_flag : PacketBoundaryFlag,
+  broadcast_flag : BroadcastFlag,
+  _size_(_payload_) : 16,
+  _payload_,
 }
 
 // -----------------------------------------------------------------------------
