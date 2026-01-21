@@ -2670,7 +2670,7 @@ void DualModeController::LeGetVendorCapabilities(CommandView command) {
 
   DEBUG(id_, "<< LE Get Vendor Capabilities");
 
-  bluetooth::hci::VendorCapabilities_V_0_98 vendor_capabilities;
+  bluetooth::hci::VendorCapabilities_V_1_06 vendor_capabilities;
   vendor_capabilities.total_scan_results_storage_ = 0;
   vendor_capabilities.max_irk_list_sz_ = 16;
   vendor_capabilities.filtering_support_ = properties_.supports_le_apcf_vendor_command;
@@ -2681,6 +2681,14 @@ void DualModeController::LeGetVendorCapabilities(CommandView command) {
   vendor_capabilities.debug_logging_supported_ = 0;
   vendor_capabilities.a2dp_source_offload_capability_mask_ = 0;
   vendor_capabilities.bluetooth_quality_report_support_ = 0;
+  vendor_capabilities.dynamic_audio_buffer_support_ = 0;
+  vendor_capabilities.a2dp_offload_v2_support_ = 0;
+  vendor_capabilities.iso_link_feedback_support_ = 0;
+  vendor_capabilities.sniff_offload_support_ = 0;
+  vendor_capabilities.vendor_connection_handle_min_ =
+          ConnectionHandle::kVendorSpecificEventRangeStart;
+  vendor_capabilities.vendor_connection_handle_max_ =
+          ConnectionHandle::kVendorSpecificEventRangeEnd;
 
   send_event_(bluetooth::hci::LeGetVendorCapabilitiesCompleteBuilder::Create(
           kNumCommandPackets, ErrorCode::SUCCESS, vendor_capabilities.SerializeToBytes()));

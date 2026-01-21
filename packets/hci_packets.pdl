@@ -6474,6 +6474,29 @@ struct VendorCapabilities_V_1_03 {
   dynamic_audio_buffer_support: 32,
 }
 
+struct VendorCapabilities_V_1_06 {
+  _reserved_ : 8,
+  _reserved_ : 8,
+  total_scan_results_storage: 16,
+  max_irk_list_sz: 8,
+  filtering_support: 8,
+  max_filter: 8,
+  activity_energy_info_support: 8,
+  _fixed_ = 0x0106 : 16, // v1.03
+  total_num_of_advt_tracked: 16,
+  extended_scan_support: 8,
+  debug_logging_supported: 8,
+  _reserved_ : 8,
+  a2dp_source_offload_capability_mask: 32,
+  bluetooth_quality_report_support: 8,
+  dynamic_audio_buffer_support: 32,
+  a2dp_offload_v2_support: 8,
+  iso_link_feedback_support: 8,
+  sniff_offload_support: 8,
+  vendor_connection_handle_min : 16,
+  vendor_connection_handle_max : 16,
+}
+
 // -----------------------------------------------------------------------------
 //  LE Batch Scan Command
 //  https://source.android.com/docs/core/connect/bluetooth/hci_requirements#le_batch_scan_command
