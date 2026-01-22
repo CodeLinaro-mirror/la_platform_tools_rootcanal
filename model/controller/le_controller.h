@@ -143,6 +143,9 @@ public:
           const std::function<void(std::shared_ptr<model::packets::LinkLayerPacketBuilder>,
                                    Phy::Type, int8_t)>& send_to_remote);
 
+  void RegisterRangingEstimator(
+          std::function<unsigned(void const* cookie1, void const* cookie2)> const& callback);
+
   void Reset();
 
   void CheckExpiringConnection(uint16_t handle);
@@ -478,6 +481,24 @@ public:
                              uint16_t max_latency, uint16_t continuation_number,
                              uint16_t supervision_timeout);
 
+  // HCI LE Channel Sounding (Vol 4, Part E § 7.8.131).
+  ErrorCode LeCsReadRemoteSupportedCapabilities(uint16_t connection_handle);
+  ErrorCode LeCsWriteCachedRemoteSupportedCapabilities(
+          uint16_t connection_handle, uint8_t num_config_supported,
+          uint16_t max_consecutive_procedures_supported, uint8_t num_antennae_supported,
+          uint8_t max_antenna_paths_supported, uint8_t roles_supported, uint8_t modes_supported,
+          uint8_t rtt_capability, uint8_t rtt_aa_only_n, uint8_t rtt_sounding_n,
+          uint8_t rtt_random_sequence_n, uint16_t nadm_sounding_capability,
+          uint16_t nadm_random_capability, uint8_t cs_sync_phys_supported,
+          uint16_t subfeatures_supported, uint16_t t_ip1_times_supported,
+          uint16_t t_ip2_times_supported, uint16_t t_fcs_times_supported,
+          uint16_t t_pm_times_supported, uint8_t t_sw_time_supported, uint8_t tx_snr_capability);
+
+  ErrorCode LeCsSetDefaultSettings(uint16_t connection_handle, uint8_t role_enable,
+                                   uint8_t cs_sync_antenna_selection, int8_t max_tx_power);
+  ErrorCode LeCsReadRemoteFaeTable(uint16_t connection_handle);
+  ErrorCode LeCsWriteCachedRemoteFaeTable(uint16_t connection_handle,
+                                          std::array<uint8_t, 72> remote_fae_table);
   // LE APCF
 
   ErrorCode LeApcfEnable(bool apcf_enable);
@@ -593,6 +614,14 @@ protected:
                             model::packets::LinkLayerPacketView incoming);
   void IncomingLlSubrateInd(LeAclConnection& connection,
                             model::packets::LinkLayerPacketView incoming);
+  void IncomingLlCsCapabilitiesReq(LeAclConnection& connection,
+                                   model::packets::LinkLayerPacketView incoming);
+  void IncomingLlCsCapabilitiesRsp(LeAclConnection& connection,
+                                   model::packets::LinkLayerPacketView incoming);
+  void IncomingLlCsFaeReq(LeAclConnection& connection,
+                          model::packets::LinkLayerPacketView incoming);
+  void IncomingLlCsFaeRsp(LeAclConnection& connection,
+                          model::packets::LinkLayerPacketView incoming);
 
 public:
   bool IsEventUnmasked(bluetooth::hci::EventCode event) const;
@@ -653,6 +682,7 @@ private:
   uint64_t le_host_supported_features_{0};
   bool connected_isochronous_stream_host_support_{false};
   bool connection_subrating_host_support_{false};
+  bool channel_sounding_host_support_{false};
 
   // LE Random Address (Vol 4, Part E § 7.8.4).
   Address random_address_{Address::kEmpty};
@@ -685,6 +715,9 @@ private:
   std::function<void(std::shared_ptr<bluetooth::hci::AclBuilder>)> send_acl_;
   std::function<void(std::shared_ptr<bluetooth::hci::EventBuilder>)> send_event_;
   std::function<void(std::shared_ptr<bluetooth::hci::IsoBuilder>)> send_iso_;
+
+  // Ranging estimator callback.
+  std::function<unsigned(void const* cookie1, void const* cookie2)> ranging_estimator_{};
 
   // Callback to send packets to remote devices.
   std::function<void(std::shared_ptr<model::packets::LinkLayerPacketBuilder>, Phy::Type phy_type,
@@ -769,12 +802,15 @@ private:
     PhyParameters le_coded_phy;
 
     // Save information about the advertising PDU being scanned.
-    bool connectable_scan_response;
-    bool extended_scan_response;
-    model::packets::PhyType primary_scan_response_phy;
-    model::packets::PhyType secondary_scan_response_phy;
-    std::optional<AddressWithType> pending_scan_request{};
-    std::optional<std::chrono::steady_clock::time_point> pending_scan_request_timeout{};
+    struct ScanRequest {
+      bool connectable;
+      bool extended;
+      model::packets::PhyType primary_phy;
+      model::packets::PhyType secondary_phy;
+      std::chrono::steady_clock::time_point timeout;
+    };
+
+    std::unordered_map<AddressWithType, ScanRequest> pending_scan_requests{};
 
     // Time keeping
     std::optional<std::chrono::steady_clock::time_point> timeout;
