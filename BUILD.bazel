@@ -68,13 +68,15 @@ cc_library(
 rust_library(
     name = "rootcanal_rs",
     srcs = glob(["rust/src/**/*.rs"]) + [
-        ":netsim_hci_packets_rust_gen",
-        ":netsim_llcp_packets_rust_gen",
-        ":netsim_lmp_packets_rust_gen",
+        ":hci_packets_rust_gen",
+        ":ll_packets_rust_gen",
+        ":llcp_packets_rust_gen",
+        ":lmp_packets_rust_gen",
     ],
     edition = "2021",
     proc_macro_deps = ["@num-derive"],
     rustc_env = {"OUT_DIR": "../../packets"},
+    visibility = ["//visibility:public"],
     deps = [
         "@bytes",
         "@num-bigint",
@@ -240,7 +242,7 @@ genrule(
 )
 
 genrule(
-    name = "netsim_hci_packets_rust_gen",
+    name = "hci_packets_rust_gen",
     srcs = ["packets/hci_packets.pdl"],
     outs = ["packets/hci_packets.rs"],
     cmd = "$(location @pdl-compiler//:pdlc) --output-format rust $(SRCS) > $(OUTS)",
@@ -248,7 +250,7 @@ genrule(
 )
 
 genrule(
-    name = "netsim_lmp_packets_rust_gen",
+    name = "lmp_packets_rust_gen",
     srcs = ["rust/lmp_packets.pdl"],
     outs = ["packets/lmp_packets.rs"],
     cmd = "$(location @pdl-compiler//:pdlc) --output-format rust $(SRCS) > $(OUTS)",
@@ -256,9 +258,17 @@ genrule(
 )
 
 genrule(
-    name = "netsim_llcp_packets_rust_gen",
+    name = "llcp_packets_rust_gen",
     srcs = ["rust/llcp_packets.pdl"],
     outs = ["packets/llcp_packets.rs"],
+    cmd = "$(location @pdl-compiler//:pdlc) --output-format rust $(SRCS) > $(OUTS)",
+    tools = ["@pdl-compiler//:pdlc"],
+)
+
+genrule(
+    name = "ll_packets_rust_gen",
+    srcs = ["packets/link_layer_packets.pdl"],
+    outs = ["packets/link_layer_packets.rs"],
     cmd = "$(location @pdl-compiler//:pdlc) --output-format rust $(SRCS) > $(OUTS)",
     tools = ["@pdl-compiler//:pdlc"],
 )
