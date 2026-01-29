@@ -249,6 +249,12 @@ class Controller:
             self.evt_queue_event.clear()
         return self.evt_queue.popleft()
 
+    async def receive_acl(self):
+        while not self.acl_queue:
+            await self.acl_queue_event.wait()
+            self.acl_queue_event.clear()
+        return self.acl_queue.popleft()
+
     async def receive_iso(self):
         while not self.iso_queue:
             await self.iso_queue_event.wait()
@@ -347,6 +353,18 @@ class ControllerTest(unittest.IsolatedAsyncioTestCase):
         assert evt.status == ErrorCode.SUCCESS
         assert evt.num_hci_command_packets == 1
         return evt
+
+    async def expect_acl(self, expected_acl: hci.Acl, timeout: int = 3):
+        packet = await asyncio.wait_for(self.controller.receive_acl(), timeout=timeout)
+        acl = hci.Acl.parse_all(packet)
+
+        if acl != expected_acl:
+            print("received unexpected acl packet")
+            print("expected packet:")
+            expected_acl.show()
+            print("received packet:")
+            acl.show()
+            self.assertTrue(False)
 
     async def expect_iso(self, expected_iso: hci.Iso, timeout: int = 3):
         packet = await asyncio.wait_for(self.controller.receive_iso(), timeout=timeout)
