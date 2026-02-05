@@ -19,7 +19,10 @@ load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_proto//proto:defs.bzl", "proto_library")
 load("@rules_rust//rust:defs.bzl", "rust_library")
 
-exports_files(["packets/link_layer_packets.pdl"])
+exports_files([
+    "packets/link_layer_packets.pdl",
+    "proto/rootcanal/configuration.proto",
+])
 
 proto_library(
     name = "rootcanal-configuration-proto",
