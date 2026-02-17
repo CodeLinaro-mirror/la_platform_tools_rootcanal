@@ -45,6 +45,8 @@ enum ConnectionHandle : uint16_t {
   kScoRangeEnd = 0x1FF,
   kLeAclRangeStart = 0x200,
   kLeAclRangeEnd = 0x2FF,
+  kVendorSpecificEventRangeStart = 0x300,
+  kVendorSpecificEventRangeEnd = 0x3FF,
   kCisRangeStart = 0xE00,
   kCisRangeEnd = 0xEFF,
 };

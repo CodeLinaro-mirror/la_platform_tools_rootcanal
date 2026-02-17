@@ -118,6 +118,7 @@ static constexpr uint64_t LlFeatures() {
           LLFeaturesBits::CONNECTED_ISOCHRONOUS_STREAM_CENTRAL,
           LLFeaturesBits::CONNECTED_ISOCHRONOUS_STREAM_PERIPHERAL,
           LLFeaturesBits::CONNECTION_SUBRATING,
+          LLFeaturesBits::CHANNEL_SOUNDING,
   };
 
   uint64_t value = 0;
@@ -444,6 +445,20 @@ static std::array<uint8_t, 64> SupportedCommands() {
           // OpCodeIndex::LE_SET_DATA_RELATED_ADDRESS_CHANGES,
           OpCodeIndex::LE_SET_DEFAULT_SUBRATE,
           OpCodeIndex::LE_SUBRATE_REQUEST,
+          OpCodeIndex::LE_CS_READ_LOCAL_SUPPORTED_CAPABILITIES,
+          OpCodeIndex::LE_CS_READ_REMOTE_SUPPORTED_CAPABILITIES,
+          OpCodeIndex::LE_CS_WRITE_CACHED_REMOTE_SUPPORTED_CAPABILITIES,
+          OpCodeIndex::LE_CS_SECURITY_ENABLE,
+          OpCodeIndex::LE_CS_SET_DEFAULT_SETTINGS,
+          OpCodeIndex::LE_CS_READ_REMOTE_FAE_TABLE,
+          OpCodeIndex::LE_CS_WRITE_CACHED_REMOTE_FAE_TABLE,
+          OpCodeIndex::LE_CS_CREATE_CONFIG,
+          OpCodeIndex::LE_CS_REMOVE_CONFIG,
+          OpCodeIndex::LE_CS_SET_CHANNEL_CLASSIFICATION,
+          OpCodeIndex::LE_CS_SET_PROCEDURE_PARAMETERS,
+          OpCodeIndex::LE_CS_PROCEDURE_ENABLE,
+          OpCodeIndex::LE_CS_TEST,
+          OpCodeIndex::LE_CS_TEST_END,
   };
 
   std::array<uint8_t, 64> value{};
@@ -1061,6 +1076,15 @@ bool ControllerProperties::CheckSupportedCommands() const {
   // C64: Optional if the Controller supports
   // transmitting packets, otherwise excluded.
   auto c64 = optional;
+  // C75: Mandatory if LE Feature (Channel Sounding) is supported,
+  // otherwise excluded.
+  auto c75 = mandatory_or_excluded(SupportsLLFeature(LLFeaturesBits::CHANNEL_SOUNDING));
+  // C76: Mandatory if LE Feature (Channel Sounding) and initiator role are
+  // supported, otherwise excluded.
+  auto c76 = mandatory_or_excluded(
+          SupportsLLFeature(LLFeaturesBits::CHANNEL_SOUNDING) &&
+                                   (cs_local_supported_capabilities.roles_supported &
+                                    static_cast<uint8_t>(CsRolesSupported::INITIATOR)));
   // C94: Mandatory if the LE Create Connection or LE Extended Create Connection
   // command is supported, otherwise excluded.
   auto c94 = mandatory_or_excluded(SupportsCommand(OpCodeIndex::LE_CREATE_CONNECTION) ||
@@ -1356,6 +1380,20 @@ bool ControllerProperties::CheckSupportedCommands() const {
   check_command_(LE_CREATE_CIS, excluded, c39);
   check_command_(LE_CREATE_CONNECTION_CANCEL, excluded, c94);
   check_command_(LE_CREATE_CONNECTION, excluded, c59);
+  check_command_(LE_CS_CREATE_CONFIG, excluded, c75);
+  check_command_(LE_CS_PROCEDURE_ENABLE, excluded, c75);
+  check_command_(LE_CS_READ_LOCAL_SUPPORTED_CAPABILITIES, excluded, c75);
+  check_command_(LE_CS_READ_REMOTE_FAE_TABLE, excluded, c75);
+  check_command_(LE_CS_READ_REMOTE_SUPPORTED_CAPABILITIES, excluded, c75);
+  check_command_(LE_CS_REMOVE_CONFIG, excluded, c75);
+  check_command_(LE_CS_SECURITY_ENABLE, excluded, c75);
+  check_command_(LE_CS_SET_CHANNEL_CLASSIFICATION, excluded, c75);
+  check_command_(LE_CS_SET_DEFAULT_SETTINGS, excluded, c75);
+  check_command_(LE_CS_SET_PROCEDURE_PARAMETERS, excluded, c75);
+  check_command_(LE_CS_TEST, excluded, c75);
+  check_command_(LE_CS_TEST_END, excluded, c75);
+  check_command_(LE_CS_WRITE_CACHED_REMOTE_FAE_TABLE, excluded, c76);
+  check_command_(LE_CS_WRITE_CACHED_REMOTE_SUPPORTED_CAPABILITIES, excluded, c75);
   check_command_(LE_START_ENCRYPTION, excluded, c60);
   check_command_(LE_ENCRYPT, excluded, c4);
   // Table 3.1: Alphabetical list of commands and events (Sheet 12 of 49)
@@ -1735,6 +1773,24 @@ static std::vector<OpCodeIndex> connection_subrating_commands_ = {
         OpCodeIndex::LE_SUBRATE_REQUEST,
 };
 
+// Commands enabled by Channel Sounding feature bit.
+static std::vector<OpCodeIndex> channel_sounding_commands_ = {
+        OpCodeIndex::LE_CS_READ_LOCAL_SUPPORTED_CAPABILITIES,
+        OpCodeIndex::LE_CS_READ_REMOTE_SUPPORTED_CAPABILITIES,
+        OpCodeIndex::LE_CS_WRITE_CACHED_REMOTE_SUPPORTED_CAPABILITIES,
+        OpCodeIndex::LE_CS_SECURITY_ENABLE,
+        OpCodeIndex::LE_CS_SET_DEFAULT_SETTINGS,
+        OpCodeIndex::LE_CS_READ_REMOTE_FAE_TABLE,
+        OpCodeIndex::LE_CS_WRITE_CACHED_REMOTE_FAE_TABLE,
+        OpCodeIndex::LE_CS_CREATE_CONFIG,
+        OpCodeIndex::LE_CS_REMOVE_CONFIG,
+        OpCodeIndex::LE_CS_SET_CHANNEL_CLASSIFICATION,
+        OpCodeIndex::LE_CS_SET_PROCEDURE_PARAMETERS,
+        OpCodeIndex::LE_CS_PROCEDURE_ENABLE,
+        OpCodeIndex::LE_CS_TEST,
+        OpCodeIndex::LE_CS_TEST_END,
+};
+
 static void SetLLFeatureBit(uint64_t& le_features, LLFeaturesBits bit, bool set) {
   if (set) {
     le_features |= static_cast<uint64_t>(bit);
@@ -1905,6 +1961,12 @@ ControllerProperties::ControllerProperties(rootcanal::configuration::Controller 
                       features.le_connected_isochronous_stream());
       SetSupportedCommandBits(supported_commands, connection_subrating_commands_,
                               features.le_connection_subrating());
+    }
+    if (features.has_le_channel_sounding()) {
+      SetLLFeatureBit(le_features, LLFeaturesBits::CHANNEL_SOUNDING,
+                      features.le_channel_sounding());
+      SetSupportedCommandBits(supported_commands, channel_sounding_commands_,
+                              features.le_channel_sounding());
     }
   }
 
