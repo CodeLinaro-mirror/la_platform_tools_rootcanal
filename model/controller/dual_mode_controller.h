@@ -541,6 +541,7 @@ public:
   void LeCsWriteCachedRemoteFaeTable(CommandView command);
 
   // Vendor-specific Commands
+  void RootcanalCommand(CommandView command);
   void LeGetVendorCapabilities(CommandView command);
   void LeBatchScan(CommandView command);
   void LeApcf(CommandView command);
