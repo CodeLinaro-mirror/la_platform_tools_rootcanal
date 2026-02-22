@@ -4983,6 +4983,9 @@ uint16_t LeController::HandleLeConnection(AddressWithType address, AddressWithTy
                                     .conn_supervision_timeout = supervision_timeout},
           default_subrate_parameters_);
 
+  // Start the keepalive timer for the connection.
+  CheckExpiringConnection(handle);
+
   if (IsLeEventUnmasked(SubeventCode::LE_ENHANCED_CONNECTION_COMPLETE_V1)) {
     AddressWithType peer_resolved_address = resolved_address;
     Address peer_resolvable_private_address;
@@ -6056,11 +6059,11 @@ void LeController::Reset() {
 }
 
 void LeController::CheckExpiringConnection(uint16_t handle) {
-  if (!connections_.HasAclHandle(handle)) {
+  if (!connections_.HasLeAclHandle(handle)) {
     return;
   }
 
-  auto& connection = connections_.GetAclConnection(handle);
+  auto& connection = connections_.GetLeAclConnection(handle);
 
   if (connection.HasExpired()) {
     Disconnect(handle, ErrorCode::CONNECTION_TIMEOUT, ErrorCode::CONNECTION_TIMEOUT);
@@ -6068,8 +6071,8 @@ void LeController::CheckExpiringConnection(uint16_t handle) {
   }
 
   if (connection.IsNearExpiring()) {
-    SendLeLinkLayerPacket(
-            model::packets::PingRequestBuilder::Create(connection.own_address, connection.address));
+    SendLeLinkLayerPacket(model::packets::PingRequestBuilder::Create(
+            connection.own_address.GetAddress(), connection.address.GetAddress()));
     ScheduleTask(std::chrono::duration_cast<milliseconds>(connection.TimeUntilExpired()),
                  [this, handle] { CheckExpiringConnection(handle); });
     return;
