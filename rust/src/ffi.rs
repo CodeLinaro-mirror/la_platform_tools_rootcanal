@@ -47,6 +47,30 @@ pub struct ControllerOps {
         advertising_handle: u8,
         periodic_enabled: *mut bool,
     ) -> bool,
+    // SAFETY:
+    // - `user` must be exactly the value `ControllerOps::user_pointer`.
+    is_sync_handle_valid: unsafe extern "C" fn(user: *mut (), sync_handle: u16) -> bool,
+    // SAFETY:
+    // - `user` must be exactly the value `ControllerOps::user_pointer`.
+    // - `num_bis`, `nse`, `iso_interval`, `bn`, `pto`, `irc`, `max_pdu`,
+    //   `sdu_interval`, `max_sdu`, `phy`, `framing`, `encryption` must be
+    //   valid non-null pointers for writes.
+    get_sync_big_info: unsafe extern "C" fn(
+        user: *mut (),
+        sync_handle: u16,
+        num_bis: *mut u8,
+        nse: *mut u8,
+        iso_interval: *mut u16,
+        bn: *mut u8,
+        pto: *mut u8,
+        irc: *mut u8,
+        max_pdu: *mut u16,
+        sdu_interval: *mut u32,
+        max_sdu: *mut u16,
+        phy: *mut u8,
+        framing: *mut u8,
+        encryption: *mut u8,
+    ) -> bool,
 }
 
 impl ControllerOps {
@@ -109,6 +133,60 @@ impl ControllerOps {
         //    enforced by requirements on ControllerOps.
         unsafe {
             (self.get_advertiser_info)(self.user_pointer, advertising_handle, periodic_enabled)
+        }
+    }
+
+    pub(crate) fn is_sync_handle_valid(&self, sync_handle: u16) -> bool {
+        // SAFETY:
+        // - `self.user_pointer` is the value provided when the callbacks are registered.
+        //    The value is not manipulated in the rust module.
+        // - `self.is_sync_handle_valid` is a valid function pointer
+        //    enforced by requirements on ControllerOps.
+        unsafe { (self.is_sync_handle_valid)(self.user_pointer, sync_handle) }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn get_sync_big_info(
+        &self,
+        sync_handle: u16,
+        num_bis: &mut u8,
+        nse: &mut u8,
+        iso_interval: &mut u16,
+        bn: &mut u8,
+        pto: &mut u8,
+        irc: &mut u8,
+        max_pdu: &mut u16,
+        sdu_interval: &mut u32,
+        max_sdu: &mut u16,
+        phy: &mut u8,
+        framing: &mut u8,
+        encryption: &mut u8,
+    ) -> bool {
+        // SAFETY:
+        // - `self.user_pointer` is the value provided when the callbacks are registered.
+        //    The value is not manipulated in the rust module.
+        // - `num_bis`, `nse`, `iso_interval`, `bn`, `pto`, `irc`, `max_pdu`,
+        //   `sdu_interval`, `max_sdu`, `phy`, `framing`, `encryption` are
+        //   valid references.
+        // - `self.get_sync_big_info` is a valid function pointer
+        //    enforced by requirements on ControllerOps.
+        unsafe {
+            (self.get_sync_big_info)(
+                self.user_pointer,
+                sync_handle,
+                num_bis,
+                nse,
+                iso_interval,
+                bn,
+                pto,
+                irc,
+                max_pdu,
+                sdu_interval,
+                max_sdu,
+                phy,
+                framing,
+                encryption,
+            )
         }
     }
 }
