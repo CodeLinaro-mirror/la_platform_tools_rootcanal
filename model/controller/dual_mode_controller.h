@@ -540,6 +540,9 @@ public:
   void LeCsWriteCachedRemoteFaeTable(CommandView command);
   void LeCsCreateConfig(CommandView command);
   void LeCsRemoveConfig(CommandView command);
+  // 7.8.140 - 7.8.141
+  void LeCsSetProcedureParameters(CommandView command);
+  void LeCsProcedureEnable(CommandView command);
 
 
   // Vendor-specific Commands

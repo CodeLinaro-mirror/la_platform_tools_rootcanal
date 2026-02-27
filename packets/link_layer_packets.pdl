@@ -69,6 +69,11 @@ enum PacketType : 8 {
     LL_CS_CONFIG_RSP = 0xF5,
     LL_CS_SEC_REQ = 0xF6,
     LL_CS_SEC_RSP = 0xF7,
+    LL_CS_REQ = 0xF8,
+    LL_CS_RSP = 0xF9,
+    LL_CS_IND = 0xFA,
+    LL_CS_TERMINATE_REQ = 0xFB,
+    LL_CS_TERMINATE_RSP = 0xFC,
 }
 
 packet LinkLayerPacket {
@@ -518,4 +523,74 @@ packet LlCsSecurityEnableRsp : LinkLayerPacket (type = LL_CS_SEC_RSP) {
   cs_iv_p : 64,
   cs_in_p : 32,
   cs_pv_p : 64,
+}
+
+packet LlCsReq : LinkLayerPacket (type = LL_CS_REQ) {
+  config_id: 6,
+  _reserved_: 2,
+  conn_event_count: 16,
+  offset_min: 24,
+  offset_max: 24,
+  max_procedure_len: 16,
+  event_interval: 16,
+  subevents_per_event: 8,
+  subevent_interval: 16,
+  subevent_len: 24,
+  procedure_interval: 16,
+  procedure_count: 16,
+  aci: 8,
+  preferred_peer_ant: 8,
+  phy: 8,
+  pwr_delta: 8,
+  tx_snr_i: 4,
+  tx_snr_r: 4,
+}
+
+packet LlCsRsp : LinkLayerPacket (type = LL_CS_RSP) {
+  // Not part of the LL PDU, added to emulate LL_REJECT_EXT_IND.
+  status: 8,
+  config_id: 6,
+  _reserved_: 2,
+  conn_event_count: 16,
+  offset_min: 24,
+  offset_max: 24,
+  event_interval: 16,
+  subevents_per_event: 8,
+  subevent_interval: 16,
+  subevent_len: 24,
+  aci: 8,
+  phy: 8,
+  pwr_delta: 8,
+  _reserved_: 8,
+}
+
+packet LlCsInd : LinkLayerPacket (type = LL_CS_IND) {
+  // Not part of the LL PDU, added to emulate LL_REJECT_EXT_IND.
+  status: 8,
+  config_id: 6,
+  _reserved_: 2,
+  conn_event_count: 16,
+  offset: 24,
+  event_interval: 16,
+  subevents_per_event: 8,
+  subevent_interval: 16,
+  subevent_len: 24,
+  aci: 8,
+  phy: 8,
+  pwr_delta: 8,
+  _reserved_: 8,
+}
+
+packet LlCsTerminateReq : LinkLayerPacket (type = LL_CS_TERMINATE_REQ) {
+  config_id: 6,
+  _reserved_: 2,
+  procedure_count : 16,
+  error_code : 8,
+}
+
+packet LlCsTerminateRsp : LinkLayerPacket (type = LL_CS_TERMINATE_RSP) {
+  config_id: 6,
+  _reserved_: 2,
+  procedure_count : 16,
+  error_code : 8,
 }
