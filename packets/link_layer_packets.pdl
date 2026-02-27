@@ -74,6 +74,7 @@ enum PacketType : 8 {
     LL_CS_IND = 0xFA,
     LL_CS_TERMINATE_REQ = 0xFB,
     LL_CS_TERMINATE_RSP = 0xFC,
+    LL_CS_CHANNEL_MAP_IND = 0xFD,
 }
 
 packet LinkLayerPacket {
@@ -593,4 +594,9 @@ packet LlCsTerminateRsp : LinkLayerPacket (type = LL_CS_TERMINATE_RSP) {
   _reserved_: 2,
   procedure_count : 16,
   error_code : 8,
+}
+
+packet LlCsChannelMapInd : LinkLayerPacket (type = LL_CS_CHANNEL_MAP_IND) {
+  channel_map : 8[10],
+  instant : 16,
 }

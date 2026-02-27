@@ -95,20 +95,6 @@ std::unique_ptr<model::packets::LinkLayerPacketBuilder> CreateCsCapabilitiesRequ
 std::unique_ptr<model::packets::LinkLayerPacketBuilder> CreateCsCapabilitiesResponse(
         const ControllerProperties& properties, const LeAclConnection& connection,
         ErrorCode status) {
-  if (status != bluetooth::hci::ErrorCode::SUCCESS) {
-    return model::packets::LlCsCapabilitiesRspBuilder::Create(
-            connection.own_address.GetAddress(), connection.address.GetAddress(),
-            static_cast<uint8_t>(status), 0 /* modes_supported */, 0 /* rtt_capability */,
-            0 /* rtt_aa_only_n */, 0 /* rtt_sounding_n */, 0 /* rtt_random_sequence_n */,
-            0 /* nadm_sounding_capability */, 0 /* nadm_random_capability */,
-            0 /* cs_sync_phys_supported */, 0 /* num_antennae_supported */,
-            0 /* max_antenna_paths_supported */, 0 /* roles_supported */, 0 /* no fae */,
-            0 /* channel_selection_3c */, 0 /* sounding_pct_estimate */,
-            0 /* num_config_supported */, 0 /* max_consecutive_procedures_supported */,
-            0 /* t_sw_time_supported */, 0 /* t_ip1_times_supported */,
-            0 /* t_ip2_times_supported */, 0 /* t_fcs_times_supported */,
-            0 /* t_pm_times_supported */, 0 /* tx_snr_capability */);
-  }
   return model::packets::LlCsCapabilitiesRspBuilder::Create(
           connection.own_address.GetAddress(), connection.address.GetAddress(),
           static_cast<uint8_t>(status), properties.cs_local_supported_capabilities.modes_supported,
@@ -2831,6 +2817,54 @@ ErrorCode LeController::LeCsCreateConfig(
   return ErrorCode::SUCCESS;
 }
 
+ErrorCode LeController::LeCsSetChannelClassification(
+        std::array<uint8_t, 10> channel_classification) {
+  // If the Host issues this command less than 1 second after the previous time it issued this
+  // command, then the Controller shall return the error code Command Disallowed (0x0C).
+  auto now = std::chrono::steady_clock::now();
+  if (now < last_le_cs_set_channel_classification_time_ + std::chrono::seconds(1)) {
+    return ErrorCode::COMMAND_DISALLOWED;
+  }
+
+  std::array<uint8_t, 10> reserved_mask = {0x03, 0x00, 0x80, 0x03, 0x00,
+                                           0x00, 0x00, 0x00, 0x00, 0xE0};
+  int num_channels = 0;
+  for (size_t i = 0; i < 10; ++i) {
+    if ((channel_classification[i] & reserved_mask[i]) != 0) {
+      return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+    }
+    num_channels += __builtin_popcount(channel_classification[i]);
+  }
+
+  // If the Channel_Classification parameter enables channels that are reserved for future use or
+  // enables fewer than 15 channels, then the Controller shall return the error code Invalid HCI
+  // Command Parameters (0x12).
+  if (num_channels < 15) {
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  le_cs_channel_classification_ = channel_classification;
+  last_le_cs_set_channel_classification_time_ = now;
+
+  // Update all ongoing CS procedures where we are the initiator.
+  std::vector<uint16_t> le_acl_handles = connections_.GetLeAclHandles();
+  for (auto handle : le_acl_handles) {
+    auto& connection = connections_.GetLeAclConnection(handle);
+    for (auto& [_, config] : connection.cs_parameters.config_map) {
+      if (config.enabled &&
+          config.role == static_cast<uint8_t>(bluetooth::hci::CsRole::INITIATOR)) {
+        // TODO: combine with local classification (assume all enabled for now)
+        config.channel_map = channel_classification;
+        SendLeLinkLayerPacket(model::packets::LlCsChannelMapIndBuilder::Create(
+                connection.own_address.GetAddress(), connection.address.GetAddress(),
+                config.channel_map, 0 /* instant */));
+      }
+    }
+  }
+
+  return ErrorCode::SUCCESS;
+}
+
 ErrorCode LeController::LeCsRemoveConfig(uint16_t connection_handle, uint8_t config_id) {
   // If the Host sends this command with a Connection_Handle that does not exist, or the
   // Connection_Handle is not for an ACL, then the Controller shall return the error code Unknown
@@ -3740,6 +3774,18 @@ void LeController::IncomingLlCsRsp(LeAclConnection& connection,
   }
 }
 
+void LeController::IncomingLlCsChannelMapInd(LeAclConnection& connection,
+                                             model::packets::LinkLayerPacketView incoming) {
+  auto ind = model::packets::LlCsChannelMapIndView::Create(incoming);
+  ASSERT(ind.IsValid());
+
+  for (auto& [_, config] : connection.cs_parameters.config_map) {
+    if (config.enabled) {
+      config.channel_map = ind.GetChannelMap();
+    }
+  }
+}
+
 void LeController::IncomingLlCsInd(LeAclConnection& connection,
                                    model::packets::LinkLayerPacketView incoming) {
   if (!channel_sounding_host_support_) {
@@ -4087,6 +4133,9 @@ void LeController::IncomingPacket(model::packets::LinkLayerPacketView incoming, 
       break;
     case model::packets::PacketType::LL_CS_IND:
       IncomingLlCsInd(connection, incoming);
+      break;
+    case model::packets::PacketType::LL_CS_CHANNEL_MAP_IND:
+      IncomingLlCsChannelMapInd(connection, incoming);
       break;
     default:
       WARNING(id_, "Dropping unhandled packet of type {}",
@@ -6471,6 +6520,8 @@ void LeController::Reset() {
   default_tx_phys_ = properties_.LeSupportedPhys();
   default_rx_phys_ = properties_.LeSupportedPhys();
   default_subrate_parameters_ = LeAclSubrateParameters{};
+  le_cs_channel_classification_ = {0xfc, 0xff, 0x7f, 0xfc, 0xff, 0xff, 0xff, 0xff, 0xff, 0x1f};
+  last_le_cs_set_channel_classification_time_ = std::chrono::steady_clock::time_point::min();
 
   ll_.reset(link_layer_create(controller_ops_));
 }

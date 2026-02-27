@@ -1775,6 +1775,18 @@ void DualModeController::LeCsRemoveConfig(CommandView command) {
   send_event_(bluetooth::hci::LeCsRemoveConfigStatusBuilder::Create(status, kNumCommandPackets));
 }
 
+void DualModeController::LeCsSetChannelClassification(CommandView command) {
+  auto command_view = bluetooth::hci::LeCsSetChannelClassificationView::Create(command);
+  CHECK_PACKET_VIEW(command_view);
+
+  DEBUG(id_, "<< LE CS Set Channel Classification");
+
+  auto status =
+          le_controller_.LeCsSetChannelClassification(command_view.GetChannelClassification());
+  send_event_(bluetooth::hci::LeCsSetChannelClassificationCompleteBuilder::Create(
+          kNumCommandPackets, status));
+}
+
 void DualModeController::LeCsSecurityEnable(CommandView command) {
   auto command_view = bluetooth::hci::LeCsSecurityEnableView::Create(command);
   CHECK_PACKET_VIEW(command_view);
@@ -4438,8 +4450,8 @@ DualModeController::GetHciCommandHandlers() {
            &DualModeController::LeCsWriteCachedRemoteFaeTable},
           {OpCode::LE_CS_CREATE_CONFIG, &DualModeController::LeCsCreateConfig},
           {OpCode::LE_CS_REMOVE_CONFIG, &DualModeController::LeCsRemoveConfig},
-          //{OpCode::LE_CS_SET_CHANNEL_CLASSIFICATION,
-          //&DualModeController::LeCsSetChannelClassification},
+          {OpCode::LE_CS_SET_CHANNEL_CLASSIFICATION,
+           &DualModeController::LeCsSetChannelClassification},
           {OpCode::LE_CS_SET_PROCEDURE_PARAMETERS, &DualModeController::LeCsSetProcedureParameters},
           {OpCode::LE_CS_PROCEDURE_ENABLE, &DualModeController::LeCsProcedureEnable},
           //{OpCode::LE_CS_TEST, &DualModeController::LeCsTest},

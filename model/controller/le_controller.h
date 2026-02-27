@@ -500,18 +500,20 @@ public:
   ErrorCode LeCsReadRemoteFaeTable(uint16_t connection_handle);
   ErrorCode LeCsWriteCachedRemoteFaeTable(uint16_t connection_handle,
                                           std::array<uint8_t, 72> remote_fae_table);
-  ErrorCode LeCsCreateConfig(
-          uint16_t connection_handle, uint8_t config_id,
-          bluetooth::hci::CsCreateContext create_context,
-          bluetooth::hci::CsMainModeType main_mode_type,
-          bluetooth::hci::CsSubModeType sub_mode_type, uint8_t min_main_mode_steps,
-          uint8_t max_main_mode_steps, uint8_t main_mode_repetition, uint8_t mode_0_steps,
-          bluetooth::hci::CsRole role, bluetooth::hci::CsRttType rtt_type,
-          bluetooth::hci::CsSyncPhy cs_sync_phy, std::array<uint8_t, 10> channel_map,
-          uint8_t channel_map_repetition,
-          bluetooth::hci::CsChannelSelectionType channel_selection_type,
-          bluetooth::hci::CsCh3cShape ch3c_shape, uint8_t ch3c_jump, uint8_t reserved_);
+  ErrorCode LeCsCreateConfig(uint16_t connection_handle, uint8_t config_id,
+                             bluetooth::hci::CsCreateContext create_context,
+                             bluetooth::hci::CsMainModeType main_mode_type,
+                             bluetooth::hci::CsSubModeType sub_mode_type,
+                             uint8_t min_main_mode_steps, uint8_t max_main_mode_steps,
+                             uint8_t main_mode_repetition, uint8_t mode_0_steps,
+                             bluetooth::hci::CsRole role, bluetooth::hci::CsRttType rtt_type,
+                             bluetooth::hci::CsSyncPhy cs_sync_phy,
+                             std::array<uint8_t, 10> channel_map, uint8_t channel_map_repetition,
+                             bluetooth::hci::CsChannelSelectionType channel_selection_type,
+                             bluetooth::hci::CsCh3cShape ch3c_shape, uint8_t ch3c_jump,
+                             uint8_t reserved_);
   ErrorCode LeCsRemoveConfig(uint16_t connection_handle, uint8_t config_id);
+  ErrorCode LeCsSetChannelClassification(std::array<uint8_t, 10> channel_classification);
   ErrorCode LeCsSetProcedureParameters(
           uint16_t connection_handle, uint8_t config_id, uint16_t max_procedure_len,
           uint16_t min_procedure_interval, uint16_t max_procedure_interval,
@@ -664,6 +666,8 @@ protected:
                                 model::packets::LinkLayerPacketView incoming);
   void IncomingLlCsTerminateRsp(LeAclConnection& connection,
                                 model::packets::LinkLayerPacketView incoming);
+  void IncomingLlCsChannelMapInd(LeAclConnection& connection,
+                                 model::packets::LinkLayerPacketView incoming);
 
 public:
   bool IsEventUnmasked(bluetooth::hci::EventCode event) const;
@@ -747,6 +751,12 @@ private:
 
   // LE Default Subrate parameters (Vol 4, Part E § 7.8.123).
   LeAclSubrateParameters default_subrate_parameters_{};
+
+  // LE CS Channel Classification (Vol 4, Part E § 7.8.139).
+  std::array<uint8_t, 10> le_cs_channel_classification_{0xfc, 0xff, 0x7f, 0xfc, 0xff,
+                                                        0xff, 0xff, 0xff, 0xff, 0x1f};
+  std::chrono::steady_clock::time_point last_le_cs_set_channel_classification_time_{
+          std::chrono::steady_clock::time_point::min()};
 
   // Resolvable Private Address Timeout (Vol 4, Part E § 7.8.45).
   std::chrono::seconds resolvable_private_address_timeout_{0x0384};
