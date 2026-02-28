@@ -38,6 +38,21 @@ struct LeCsDefaultSettings {
   int8_t max_tx_power{20};
 };
 
+struct LeCsProcedureParameters {
+  uint16_t max_procedure_len;
+  uint16_t min_procedure_interval;
+  uint16_t max_procedure_interval;
+  uint16_t max_procedure_count;
+  uint32_t min_subevent_len;
+  uint32_t max_subevent_len;
+  uint8_t tone_antenna_config_selection;
+  bluetooth::hci::CsPhy phy;
+  uint8_t tx_power_delta;
+  bluetooth::hci::CsPreferredPeerAntenna preferred_peer_antenna;
+  bluetooth::hci::CsSnrControl snr_control_initiator;
+  bluetooth::hci::CsSnrControl snr_control_reflector;
+};
+
 struct LeCsConfig {
   uint8_t config_id;
   std::array<uint8_t, 10> channel_map;
@@ -54,6 +69,8 @@ struct LeCsConfig {
   uint8_t channel_selection_type;
   uint8_t ch3c_shape;
   uint8_t ch3c_jump;
+  bool enabled{};
+  std::optional<LeCsProcedureParameters> procedure_parameters;
 };
 
 struct LeCsParameters {
