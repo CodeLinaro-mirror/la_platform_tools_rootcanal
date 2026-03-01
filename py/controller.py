@@ -141,7 +141,8 @@ class Controller:
         # Create a c++ controller instance.
         self.instance = rootcanal.ffi_controller_new(c_char_p(address.address),
                                                      self.send_hci_callback, self.send_ll_callback,
-                                                     None, self.ranging_estimator_callback, None)
+                                                     None, self.ranging_estimator_callback, None,
+                                                     None, 0)
 
         self.address = address
         self.evt_queue = collections.deque()
