@@ -2770,7 +2770,6 @@ void DualModeController::LeGetVendorCapabilities(CommandView command) {
           ConnectionHandle::kVendorSpecificEventRangeStart;
   vendor_capabilities.vendor_connection_handle_max_ =
           ConnectionHandle::kVendorSpecificEventRangeEnd;
-  vendor_capabilities.big_set_channel_map_classification_support_ = 0;
 
   send_event_(bluetooth::hci::LeGetVendorCapabilitiesCompleteBuilder::Create(
           kNumCommandPackets, ErrorCode::SUCCESS, vendor_capabilities.SerializeToBytes()));
