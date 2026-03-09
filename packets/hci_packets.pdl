@@ -953,6 +953,7 @@ enum ErrorCode: 8 {
   TRANSACTION_RESPONSE_TIMEOUT = 0x22,
   LINK_LAYER_COLLISION = 0x23,
   ENCRYPTION_MODE_NOT_ACCEPTABLE = 0x25,
+  INSUFFICIENT_SECURITY = 0x2F,
   ROLE_SWITCH_FAILED = 0x35,
   HOST_BUSY = 0x38,
   CONTROLLER_BUSY = 0x3A,
@@ -5176,7 +5177,7 @@ packet LeCsConfigComplete : LeMetaEvent (subevent_code = LE_CS_CONFIG_COMPLETE) 
   channel_selection_type : CsChannelSelectionType,
   ch3c_shape : CsCh3cShape,
   ch3c_jump : 8,
-  _reserved_ : 8,
+  reserved : 8,
   t_ip1_time : 8,
   t_ip2_time : 8,
   t_fcs_time : 8,
@@ -5202,7 +5203,7 @@ packet LeCsCreateConfig : Command (op_code = LE_CS_CREATE_CONFIG) {
   channel_selection_type : CsChannelSelectionType,
   ch3c_shape : CsCh3cShape,
   ch3c_jump : 8,
-  _reserved_ : 8,
+  reserved : 8,
 }
 
 packet LeCsCreateConfigStatus : CommandStatus (command_op_code = LE_CS_CREATE_CONFIG) {

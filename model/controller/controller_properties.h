@@ -68,6 +68,7 @@ struct CsLocalSupportedCapabilities {
   uint8_t cs_sync_phys_supported{
           static_cast<uint8_t>(bluetooth::hci::CsSyncPhysSupported::LE_2M_PHY)};
   uint16_t subfeatures_supported{
+          static_cast<uint16_t>(bluetooth::hci::CsSubfeaturesSupported::CHANNEL_SELECTION_ALGORITHM) |
           static_cast<uint16_t>(bluetooth::hci::CsSubfeaturesSupported::PHASE_BASED_RANGING)};
   uint16_t t_ip1_times_supported{
           static_cast<uint16_t>(bluetooth::hci::CsTIp1TimesSupported::SUPPORT_10_MICROSECOND)};
