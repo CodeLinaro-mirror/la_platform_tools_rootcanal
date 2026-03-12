@@ -1929,6 +1929,21 @@ ErrorCode LeController::LeExtendedCreateConnection(
   return ErrorCode::SUCCESS;
 }
 
+// HCI LE Set Transmit Power Reporting Enable command (Vol 4, Part E § 7.8.121).
+ErrorCode LeController::LeSetTransmitPowerReportingEnable(uint16_t connection_handle,
+                                                          uint8_t /*local_enable*/,
+                                                          uint8_t /*remote_enable*/) {
+  // If the Connection_Handle parameter does not identify a current ACL connection, the
+  // Controller shall return the error code Unknown Connection Identifier (0x02).
+  if (!connections_.HasLeAclHandle(connection_handle)) {
+    INFO(id_, "unknown connection_handle (0x{:06x})", connection_handle);
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  // TODO: RootCanal does not emulate transmit power, there is no active reporting yet.
+  return ErrorCode::SUCCESS;
+}
+
 // =============================================================================
 //  LE Connection Subrating
 // =============================================================================

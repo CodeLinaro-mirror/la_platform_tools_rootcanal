@@ -526,6 +526,9 @@ public:
   // 7.8.115
   void LeSetHostFeatureV1(CommandView command);
 
+  // 7.8.121
+  void LeSetTransmitPowerReportingEnable(CommandView command);
+
   // 7.8.123 - 7.8.124
   void LeSetDefaultSubrate(CommandView command);
   void LeSubrateRequest(CommandView command);

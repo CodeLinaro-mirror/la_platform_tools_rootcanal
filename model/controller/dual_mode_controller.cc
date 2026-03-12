@@ -1604,6 +1604,22 @@ void DualModeController::LeReadBufferSizeV2(CommandView command) {
           kNumCommandPackets, ErrorCode::SUCCESS, le_buffer_size, iso_buffer_size));
 }
 
+void DualModeController::LeSetTransmitPowerReportingEnable(CommandView command) {
+  auto command_view = bluetooth::hci::LeSetTransmitPowerReportingEnableView::Create(command);
+  CHECK_PACKET_VIEW(command_view);
+  uint16_t connection_handle = command_view.GetConnectionHandle();
+
+  DEBUG(id_, "<< LE Set Transmit Power Reporting Enable");
+  DEBUG(id_, "   connection_handle=0x{:x}", connection_handle);
+  DEBUG(id_, "   local_enable={}", command_view.GetLocalEnable());
+  DEBUG(id_, "   remote_enable={}", command_view.GetRemoteEnable());
+
+  auto status = le_controller_.LeSetTransmitPowerReportingEnable(
+          connection_handle, command_view.GetLocalEnable(), command_view.GetRemoteEnable());
+  send_event_(bluetooth::hci::LeSetTransmitPowerReportingEnableCompleteBuilder::Create(
+          kNumCommandPackets, status, connection_handle));
+}
+
 void DualModeController::LeSetDefaultSubrate(CommandView command) {
   auto command_view = bluetooth::hci::LeSetDefaultSubrateView::Create(command);
   CHECK_PACKET_VIEW(command_view);
@@ -4411,8 +4427,8 @@ DualModeController::GetHciCommandHandlers() {
           //&DualModeController::LeSetPathLossReportingParameters},
           //{OpCode::LE_SET_PATH_LOSS_REPORTING_ENABLE,
           //&DualModeController::LeSetPathLossReportingEnable},
-          //{OpCode::LE_SET_TRANSMIT_POWER_REPORTING_ENABLE,
-          //&DualModeController::LeSetTransmitPowerReportingEnable},
+          {OpCode::LE_SET_TRANSMIT_POWER_REPORTING_ENABLE,
+           &DualModeController::LeSetTransmitPowerReportingEnable},
           //{OpCode::LE_TRANSMITTER_TEST_V4,
           //&DualModeController::LeTransmitterTestV4},
           //{OpCode::LE_SET_DATA_RELATED_ADDRESS_CHANGES,
