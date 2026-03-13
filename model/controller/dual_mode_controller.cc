@@ -1604,6 +1604,21 @@ void DualModeController::LeReadBufferSizeV2(CommandView command) {
           kNumCommandPackets, ErrorCode::SUCCESS, le_buffer_size, iso_buffer_size));
 }
 
+void DualModeController::LeReadRemoteTransmitPowerLevel(CommandView command) {
+  auto command_view = bluetooth::hci::LeReadRemoteTransmitPowerLevelView::Create(command);
+  CHECK_PACKET_VIEW(command_view);
+  uint16_t connection_handle = command_view.GetConnectionHandle();
+
+  DEBUG(id_, "<< LE Read Remote Transmit Power Level");
+  DEBUG(id_, "   connection_handle=0x{:x}", connection_handle);
+  DEBUG(id_, "   phy={}", command_view.GetPhy());
+
+  auto status =
+          le_controller_.LeReadRemoteTransmitPowerLevel(connection_handle, command_view.GetPhy());
+  send_event_(bluetooth::hci::LeReadRemoteTransmitPowerLevelStatusBuilder::Create(
+          status, kNumCommandPackets));
+}
+
 void DualModeController::LeSetTransmitPowerReportingEnable(CommandView command) {
   auto command_view = bluetooth::hci::LeSetTransmitPowerReportingEnableView::Create(command);
   CHECK_PACKET_VIEW(command_view);
@@ -4421,8 +4436,8 @@ DualModeController::GetHciCommandHandlers() {
           //&DualModeController::LeReadIsoLinkQuality},
           //{OpCode::LE_ENHANCED_READ_TRANSMIT_POWER_LEVEL,
           //&DualModeController::LeEnhancedReadTransmitPowerLevel},
-          //{OpCode::LE_READ_REMOTE_TRANSMIT_POWER_LEVEL,
-          //&DualModeController::LeReadRemoteTransmitPowerLevel},
+          {OpCode::LE_READ_REMOTE_TRANSMIT_POWER_LEVEL,
+           &DualModeController::LeReadRemoteTransmitPowerLevel},
           //{OpCode::LE_SET_PATH_LOSS_REPORTING_PARAMETERS,
           //&DualModeController::LeSetPathLossReportingParameters},
           //{OpCode::LE_SET_PATH_LOSS_REPORTING_ENABLE,

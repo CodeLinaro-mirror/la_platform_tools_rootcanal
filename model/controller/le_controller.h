@@ -255,6 +255,7 @@ public:
   ErrorCode LeReadPhy(uint16_t connection_handle, bluetooth::hci::PhyType* tx_phy,
                       bluetooth::hci::PhyType* rx_phy);
 
+  ErrorCode LeReadRemoteTransmitPowerLevel(uint16_t connection_handle, uint8_t phy);
   ErrorCode LeSetTransmitPowerReportingEnable(uint16_t connection_handle, uint8_t local_enable,
                                               uint8_t remote_enable);
 
