@@ -517,6 +517,9 @@ public:
   // 7.8.66
   void LeExtendedCreateConnectionV1(CommandView command);
 
+  // 7.8.74
+  void LeReadTransmitPower(CommandView command);
+
   // 7.8.77
   void LeSetPrivacyMode(CommandView command);
 
@@ -525,6 +528,9 @@ public:
 
   // 7.8.115
   void LeSetHostFeatureV1(CommandView command);
+
+  // 7.8.117
+  void LeEnhancedReadTransmitPowerLevel(CommandView command);
 
   // 7.8.118
   void LeReadRemoteTransmitPowerLevel(CommandView command);
