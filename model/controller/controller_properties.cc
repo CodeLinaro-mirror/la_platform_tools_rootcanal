@@ -1967,7 +1967,7 @@ ControllerProperties::ControllerProperties(rootcanal::configuration::Controller 
     }
     if (features.has_le_connection_subrating()) {
       SetLLFeatureBit(le_features, LLFeaturesBits::CONNECTION_SUBRATING,
-                      features.le_connected_isochronous_stream());
+                      features.le_connection_subrating());
       SetSupportedCommandBits(supported_commands, connection_subrating_commands_,
                               features.le_connection_subrating());
     }
