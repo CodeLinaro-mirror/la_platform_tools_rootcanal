@@ -2766,6 +2766,7 @@ void DualModeController::LeGetVendorCapabilities(CommandView command) {
   vendor_capabilities.a2dp_offload_v2_support_ = 0;
   vendor_capabilities.iso_link_feedback_support_ = 0;
   vendor_capabilities.sniff_offload_support_ = 0;
+  vendor_capabilities.big_set_channel_map_classification_support_ = 0x0000;
   vendor_capabilities.vendor_connection_handle_min_ =
           ConnectionHandle::kVendorSpecificEventRangeStart;
   vendor_capabilities.vendor_connection_handle_max_ =
