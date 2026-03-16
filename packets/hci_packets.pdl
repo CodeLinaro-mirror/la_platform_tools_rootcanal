@@ -4727,6 +4727,7 @@ packet LeRemoveIsoDataPathComplete : CommandComplete (command_op_code = LE_REMOV
 enum LeHostFeatureBits : 8 {
   CONNECTED_ISO_STREAM_HOST_SUPPORT = 32,
   CONNECTION_SUBRATING_HOST_SUPPORT = 38,
+  CHANNEL_SOUNDING_HOST_SUPPORT = 47,
 }
 
 packet LeSetHostFeatureV1 : Command (op_code = LE_SET_HOST_FEATURE_V1) {
@@ -4983,7 +4984,7 @@ packet LeCsReadRemoteSupportedCapabilitiesComplete : LeMetaEvent (subevent_code 
   _reserved_ : 4,
   num_config_supported : 8,
   max_consecutive_procedures_supported : 16,
-  num_antennas_supported : 8,
+  num_antennae_supported : 8,
   max_antenna_paths_supported : 8,
   roles_supported : 8,
   modes_supported : 8,
