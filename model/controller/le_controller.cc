@@ -1929,48 +1929,6 @@ ErrorCode LeController::LeExtendedCreateConnection(
   return ErrorCode::SUCCESS;
 }
 
-// HCI LE Read Remote Transmit Power Level (Vol 4, Part E § 7.8.118).
-ErrorCode LeController::LeReadRemoteTransmitPowerLevel(uint16_t connection_handle, uint8_t phy) {
-  // If the Connection_Handle parameter does not identify a current ACL connection, the
-  // Controller shall return the error code Unknown Connection Identifier (0x02).
-  if (!connections_.HasLeAclHandle(connection_handle)) {
-    INFO(id_, "unknown connection_handle (0x{:06x})", connection_handle);
-    return ErrorCode::UNKNOWN_CONNECTION;
-  }
-
-  // If the Host sets PHY to a value that the Controller does not support, including a value that
-  // is reserved for future use, the Controller shall return the error code Unsupported Feature or
-  // Parameter Value (0x11).
-  // TODO
-
-  // TODO: RootCanal does not emulate transmit power, there is no active reporting yet.
-  ScheduleTask(kNoDelayMs, [=, this]() {
-    send_event_(bluetooth::hci::LeTransmitPowerReportingBuilder::Create(
-            ErrorCode::SUCCESS, connection_handle,
-            bluetooth::hci::ReportingReason::READ_COMMAND_COMPLETE, phy,
-            /*transmit_power_level*/ -30,
-            /*transmit_power_level_flag*/ 0,
-            /*delta*/ 0x7f));
-  });
-
-  return ErrorCode::SUCCESS;
-}
-
-// HCI LE Set Transmit Power Reporting Enable command (Vol 4, Part E § 7.8.121).
-ErrorCode LeController::LeSetTransmitPowerReportingEnable(uint16_t connection_handle,
-                                                          uint8_t /*local_enable*/,
-                                                          uint8_t /*remote_enable*/) {
-  // If the Connection_Handle parameter does not identify a current ACL connection, the
-  // Controller shall return the error code Unknown Connection Identifier (0x02).
-  if (!connections_.HasLeAclHandle(connection_handle)) {
-    INFO(id_, "unknown connection_handle (0x{:06x})", connection_handle);
-    return ErrorCode::UNKNOWN_CONNECTION;
-  }
-
-  // TODO: RootCanal does not emulate transmit power, there is no active reporting yet.
-  return ErrorCode::SUCCESS;
-}
-
 // =============================================================================
 //  LE Connection Subrating
 // =============================================================================

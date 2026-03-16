@@ -255,10 +255,6 @@ public:
   ErrorCode LeReadPhy(uint16_t connection_handle, bluetooth::hci::PhyType* tx_phy,
                       bluetooth::hci::PhyType* rx_phy);
 
-  ErrorCode LeReadRemoteTransmitPowerLevel(uint16_t connection_handle, uint8_t phy);
-  ErrorCode LeSetTransmitPowerReportingEnable(uint16_t connection_handle, uint8_t local_enable,
-                                              uint8_t remote_enable);
-
   // HCI LE Set Default Phy command (Vol 4, Part E § 7.8.48).
   ErrorCode LeSetDefaultPhy(bool all_phys_no_transmit_preference,
                             bool all_phys_no_receive_preference, uint8_t tx_phys, uint8_t rx_phys);
