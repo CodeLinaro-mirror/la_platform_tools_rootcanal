@@ -452,6 +452,16 @@ class ControllerTest(unittest.IsolatedAsyncioTestCase):
         await self.expect_evt(
             hci.LeSetHostFeatureV1Complete(status=ErrorCode.SUCCESS, num_hci_command_packets=1))
 
+    async def enable_channel_sounding_host_support(self):
+        """Enable Channel Sounding Host Support in the LE Feature mask."""
+        self.controller.send_cmd(
+            hci.LeSetHostFeatureV1(
+                bit_number=hci.LeHostFeatureBits.CHANNEL_SOUNDING_HOST_SUPPORT,
+                bit_value=hci.Enable.ENABLED))
+
+        await self.expect_evt(
+            hci.LeSetHostFeatureV1Complete(status=ErrorCode.SUCCESS, num_hci_command_packets=1))
+
     async def establish_le_connection_central(self, peer_address: hci.Address) -> int:
         """Establish a connection with the selected peer as Central.
         Returns the ACL connection handle for the opened link."""
