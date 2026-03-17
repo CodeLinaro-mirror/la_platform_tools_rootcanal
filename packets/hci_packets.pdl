@@ -6531,9 +6531,9 @@ struct VendorCapabilities_V_1_06 {
   a2dp_offload_v2_support: 8,
   iso_link_feedback_support: 8,
   sniff_offload_support: 8,
+  big_set_channel_map_classification_support: 16,
   vendor_connection_handle_min : 16,
   vendor_connection_handle_max : 16,
-  big_set_channel_map_classification_support: 16,
 }
 
 // -----------------------------------------------------------------------------
