@@ -20,9 +20,11 @@
 #include <chrono>
 #include <cstdint>
 #include <optional>
+#include <vector>
 
 #include "hci/address_with_type.h"
 #include "model/controller/controller_properties.h"
+#include "model/controller/le_cs_parameters.h"
 #include "packets/hci_packets.h"
 
 namespace rootcanal {
@@ -67,13 +69,6 @@ struct LeAclSubrateParameters {
   uint16_t supervision_timeout{0x0c80};
 };
 
-struct LeCsDefaultSettings {
-  uint8_t role_enable{};
-  uint8_t cs_sync_antenna_selection{
-          static_cast<uint8_t>(bluetooth::hci::CsSyncAntennaSelection::ANTENNA_1)};
-  int8_t max_tx_power{20};
-};
-
 // Model the LE connection of a device to the controller.
 class LeAclConnection final {
 public:
@@ -84,11 +79,9 @@ public:
   const bluetooth::hci::Role role;
 
   LeAclConnectionParameters parameters;
-  LeAclSubrateParameters subrate_parameters;
-  std::optional<CsLocalSupportedCapabilities> remote_cs_capabilities;
   std::optional<uint64_t> remote_supported_features;
-  std::optional<std::array<uint8_t, 72>> remote_fae_table;
-  LeCsDefaultSettings cs_default_settings;
+  LeAclSubrateParameters subrate_parameters;
+  LeCsParameters cs_parameters;
 
   LeAclConnection(uint16_t handle, AddressWithType address, AddressWithType own_address,
                   AddressWithType resolved_address, bluetooth::hci::Role role,

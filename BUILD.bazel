@@ -112,6 +112,7 @@ cc_library(
         "model/controller/le_advertiser.h",
         "model/controller/le_controller.cc",
         "model/controller/le_controller.h",
+        "model/controller/le_cs_parameters.h",
         "model/controller/sco_connection.cc",
         "model/controller/sco_connection.h",
         "model/controller/vendor_commands/csr.h",

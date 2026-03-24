@@ -494,11 +494,37 @@ public:
           uint16_t t_ip2_times_supported, uint16_t t_fcs_times_supported,
           uint16_t t_pm_times_supported, uint8_t t_sw_time_supported, uint8_t tx_snr_capability);
 
+  ErrorCode LeCsSecurityEnable(uint16_t connection_handle);
   ErrorCode LeCsSetDefaultSettings(uint16_t connection_handle, uint8_t role_enable,
                                    uint8_t cs_sync_antenna_selection, int8_t max_tx_power);
   ErrorCode LeCsReadRemoteFaeTable(uint16_t connection_handle);
   ErrorCode LeCsWriteCachedRemoteFaeTable(uint16_t connection_handle,
                                           std::array<uint8_t, 72> remote_fae_table);
+  ErrorCode LeCsCreateConfig(uint16_t connection_handle, uint8_t config_id,
+                             bluetooth::hci::CsCreateContext create_context,
+                             bluetooth::hci::CsMainModeType main_mode_type,
+                             bluetooth::hci::CsSubModeType sub_mode_type,
+                             uint8_t min_main_mode_steps, uint8_t max_main_mode_steps,
+                             uint8_t main_mode_repetition, uint8_t mode_0_steps,
+                             bluetooth::hci::CsRole role, bluetooth::hci::CsRttType rtt_type,
+                             bluetooth::hci::CsSyncPhy cs_sync_phy,
+                             std::array<uint8_t, 10> channel_map, uint8_t channel_map_repetition,
+                             bluetooth::hci::CsChannelSelectionType channel_selection_type,
+                             bluetooth::hci::CsCh3cShape ch3c_shape, uint8_t ch3c_jump,
+                             uint8_t reserved_);
+  ErrorCode LeCsRemoveConfig(uint16_t connection_handle, uint8_t config_id);
+  ErrorCode LeCsSetChannelClassification(std::array<uint8_t, 10> channel_classification);
+  ErrorCode LeCsSetProcedureParameters(
+          uint16_t connection_handle, uint8_t config_id, uint16_t max_procedure_len,
+          uint16_t min_procedure_interval, uint16_t max_procedure_interval,
+          uint16_t max_procedure_count, uint32_t min_subevent_len, uint32_t max_subevent_len,
+          uint8_t tone_antenna_config_selection, bluetooth::hci::CsPhy phy, uint8_t tx_power_delta,
+          bluetooth::hci::CsPreferredPeerAntenna preferred_peer_antenna,
+          bluetooth::hci::CsSnrControl snr_control_initiator,
+          bluetooth::hci::CsSnrControl snr_control_reflector);
+  ErrorCode LeCsProcedureEnable(uint16_t connection_handle, uint8_t config_id,
+                                bluetooth::hci::Enable enable);
+
   // LE APCF
 
   ErrorCode LeApcfEnable(bool apcf_enable);
@@ -622,6 +648,26 @@ protected:
                           model::packets::LinkLayerPacketView incoming);
   void IncomingLlCsFaeRsp(LeAclConnection& connection,
                           model::packets::LinkLayerPacketView incoming);
+  void IncomingLlCsConfigReq(LeAclConnection& connection,
+                             model::packets::LinkLayerPacketView incoming);
+  void IncomingLlCsConfigRsp(LeAclConnection& connection,
+                             model::packets::LinkLayerPacketView incoming);
+  void IncomingLlCsSecurityReq(LeAclConnection& connection,
+                               model::packets::LinkLayerPacketView incoming);
+  void IncomingLlCsSecurityRsp(LeAclConnection& connection,
+                               model::packets::LinkLayerPacketView incoming);
+  void IncomingLlCsReq(LeAclConnection& connection,
+                               model::packets::LinkLayerPacketView incoming);
+  void IncomingLlCsRsp(LeAclConnection& connection,
+                               model::packets::LinkLayerPacketView incoming);
+  void IncomingLlCsInd(LeAclConnection& connection,
+                               model::packets::LinkLayerPacketView incoming);
+  void IncomingLlCsTerminateReq(LeAclConnection& connection,
+                                model::packets::LinkLayerPacketView incoming);
+  void IncomingLlCsTerminateRsp(LeAclConnection& connection,
+                                model::packets::LinkLayerPacketView incoming);
+  void IncomingLlCsChannelMapInd(LeAclConnection& connection,
+                                 model::packets::LinkLayerPacketView incoming);
 
 public:
   bool IsEventUnmasked(bluetooth::hci::EventCode event) const;
@@ -705,6 +751,12 @@ private:
 
   // LE Default Subrate parameters (Vol 4, Part E § 7.8.123).
   LeAclSubrateParameters default_subrate_parameters_{};
+
+  // LE CS Channel Classification (Vol 4, Part E § 7.8.139).
+  std::array<uint8_t, 10> le_cs_channel_classification_{0xfc, 0xff, 0x7f, 0xfc, 0xff,
+                                                        0xff, 0xff, 0xff, 0xff, 0x1f};
+  std::chrono::steady_clock::time_point last_le_cs_set_channel_classification_time_{
+          std::chrono::steady_clock::time_point::min()};
 
   // Resolvable Private Address Timeout (Vol 4, Part E § 7.8.45).
   std::chrono::seconds resolvable_private_address_timeout_{0x0384};

@@ -530,15 +530,19 @@ public:
   void LeSetDefaultSubrate(CommandView command);
   void LeSubrateRequest(CommandView command);
 
-  // 7.8.130 - 7.8.132
+  // 7.8.130 - 7.8.141
   void LeCsReadLocalSupportedCapabilities(CommandView command);
   void LeCsReadRemoteSupportedCapabilities(CommandView command);
   void LeCsWriteCachedRemoteSupportedCapabilities(CommandView command);
-
-  // 7.8.134 - 7.8.136
+  void LeCsSecurityEnable(CommandView command);
   void LeCsSetDefaultSettings(CommandView command);
   void LeCsReadRemoteFaeTable(CommandView command);
   void LeCsWriteCachedRemoteFaeTable(CommandView command);
+  void LeCsCreateConfig(CommandView command);
+  void LeCsRemoveConfig(CommandView command);
+  void LeCsSetChannelClassification(CommandView command);
+  void LeCsSetProcedureParameters(CommandView command);
+  void LeCsProcedureEnable(CommandView command);
 
   // Vendor-specific Commands
   void RootcanalCommand(CommandView command);
