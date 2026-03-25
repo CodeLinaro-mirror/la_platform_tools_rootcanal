@@ -165,7 +165,7 @@ class Test(ControllerTest):
             )
         )
 
-        connection_complete_1 = await self.expect_evt(
+        await self.expect_evt(
             hci.ConnectionComplete(
                 status=ErrorCode.SUCCESS,
                 connection_handle=self.Any,
@@ -179,29 +179,4 @@ class Test(ControllerTest):
             hci.AcceptConnectionRequestStatus(
                 status=ErrorCode.SUCCESS, num_hci_command_packets=1
             )
-        )
-
-        await self.expect_ll(
-            ll.PageResponse(
-                source_address=controller.address,
-                destination_address=peer_address,
-                try_role_switch=False,
-            )
-        )
-
-        connection_complete_2 = await self.expect_evt(
-            hci.ConnectionComplete(
-                status=ErrorCode.SUCCESS,
-                connection_handle=self.Any,
-                bd_addr=peer_address,
-                link_type=hci.LinkType.ACL,
-                encryption_enabled=hci.Enable.DISABLED,
-            )
-        )
-
-        # Incorrect assertion: either the second HCI Connection Complete event is suppressed or it reports
-        # the same information as the first event.
-        self.assertNotEqual(
-            connection_complete_1.connection_handle,
-            connection_complete_2.connection_handle,
         )
