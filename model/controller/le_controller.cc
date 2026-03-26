@@ -4179,6 +4179,12 @@ void LeController::IncomingPacket(model::packets::LinkLayerPacketView incoming, 
     case model::packets::PacketType::LL_CS_CHANNEL_MAP_IND:
       IncomingLlCsChannelMapInd(connection, incoming);
       break;
+    case model::packets::PacketType::LL_CS_TERMINATE_REQ:
+      IncomingLlCsTerminateReq(connection, incoming);
+      break;
+    case model::packets::PacketType::LL_CS_TERMINATE_RSP:
+      IncomingLlCsTerminateRsp(connection, incoming);
+      break;
     default:
       WARNING(id_, "Dropping unhandled packet of type {}",
               model::packets::PacketTypeText(incoming.GetType()));
