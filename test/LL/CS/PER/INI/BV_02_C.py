@@ -1,4 +1,4 @@
-# Copyright 2024 Google LLC
+# Copyright 2026 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -35,7 +35,7 @@ class Test(ControllerTest):
         "no_fae": 0,
         "channel_selection_3c": 0,
         "sounding_pct_estimate": 0,
-        "num_configs": 1,
+        "num_configs": 3,
         "max_procedures_supported": 1,
         "t_sw": 10,
         "t_ip1_capability": 1,
