@@ -326,28 +326,36 @@ class ControllerTest(unittest.IsolatedAsyncioTestCase):
         evt = await self.expect_cmd_complete(hci.LeReadLocalSupportedFeaturesPage0Complete)
         controller.le_features = LeFeatures(evt.le_features)
 
-    async def expect_evt(self,
-                         expected_evt: typing.Union[hci.Event, type],
-                         timeout: int = 3) -> hci.Event:
-        packet = await asyncio.wait_for(self.controller.receive_evt(), timeout=timeout)
-        evt = hci.Event.parse_all(packet)
+    async def expect_evt(
+        self,
+        expected_events: typing.Union[list, typing.Union[hci.Event, type]],
+        timeout: int = 3,
+    ) -> hci.Event:
+        if not isinstance(expected_events, list):
+            expected_events = [expected_events]
 
-        if isinstance(expected_evt, type) and not isinstance(evt, expected_evt):
-            print("received unexpected event")
-            print(f"expected event: {expected_evt.__class__.__name__}")
-            print("received event:")
-            evt.show()
-            self.assertTrue(False)
+        async with asyncio.timeout(timeout):
+            while True:
+                packet = await self.controller.receive_evt()
+                evt = hci.Event.parse_all(packet)
 
-        if isinstance(expected_evt, hci.Event) and evt != expected_evt:
-            print("received unexpected event")
-            print(f"expected event:")
-            expected_evt.show()
-            print("received event:")
-            evt.show()
-            self.assertTrue(False)
+                for expected_evt in expected_events:
+                    if isinstance(expected_evt, type) and isinstance(evt, expected_evt):
+                        return evt
+                    if isinstance(expected_evt, hci.Event) and evt == expected_evt:
+                        return evt
 
-        return evt
+                print("received unexpected event:")
+                evt.show()
+                print("expected events:")
+                for expected_evt in expected_events:
+                    if isinstance(expected_evt, type):
+                        print(f"- {expected_evt.__name__}")
+                    if isinstance(expected_evt, hci.Event):
+                        print(f"- {expected_evt.__class__.__name__}")
+                        expected_evt.show()
+
+                self.assertTrue(False)
 
     async def expect_cmd_complete(self, expected_evt: type, timeout: int = 3) -> hci.Event:
         evt = await self.expect_evt(expected_evt, timeout=timeout)
@@ -533,6 +541,51 @@ class ControllerTest(unittest.IsolatedAsyncioTestCase):
                 channel_selection_algorithm=hci.ChannelSelectionAlgorithm.ALGORITHM_1))
 
         return acl_connection_handle
+
+    async def le_start_encryption(self, acl_connection_handle: int, peer_address: hci.Address):
+        """Start LE encryption procedure."""
+        controller = self.controller
+        controller.send_cmd(
+            hci.LeStartEncryption(
+                connection_handle=acl_connection_handle,
+                rand=[0] * 8,
+                ediv=0,
+                ltk=[1] * 16,
+            )
+        )
+        await self.expect_evt(
+            hci.LeStartEncryptionStatus(
+                status=ErrorCode.SUCCESS, num_hci_command_packets=1
+            )
+        )
+        await self.expect_ll(
+            ll.LeEncryptConnection(
+                source_address=controller.address,
+                destination_address=peer_address,
+                rand=[0] * 8,
+                ediv=0,
+                ltk=[1] * 16,
+            )
+        )
+        controller.send_ll(
+            ll.LeEncryptConnectionResponse(
+                source_address=peer_address,
+                destination_address=controller.address,
+                rand=[0] * 8,
+                ediv=0,
+                ltk=[1] * 16,
+            )
+        )
+
+        await self.expect_evt([
+            hci.EncryptionChange(
+                status=ErrorCode.SUCCESS,
+                connection_handle=acl_connection_handle,
+                encryption_enabled=hci.EncryptionEnabled.ON),
+            hci.EncryptionKeyRefreshComplete(
+                status=ErrorCode.SUCCESS,
+                connection_handle=acl_connection_handle)
+        ])
 
     async def establish_le_connection_peripheral(self, peer_address: hci.Address) -> int:
         """Establish a connection with the selected peer as Peripheral.
