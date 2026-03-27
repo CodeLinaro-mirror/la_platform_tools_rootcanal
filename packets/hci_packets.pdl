@@ -6534,6 +6534,7 @@ struct VendorCapabilities_V_1_06 {
   big_set_channel_map_classification_support: 16,
   vendor_connection_handle_min : 16,
   vendor_connection_handle_max : 16,
+  connection_proximity_threshold_support : 8,
 }
 
 // -----------------------------------------------------------------------------
