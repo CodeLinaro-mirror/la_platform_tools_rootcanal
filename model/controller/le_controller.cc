@@ -2718,7 +2718,7 @@ ErrorCode LeController::LeCsCreateConfig(
   bool remote_supports_role = false;
   local_supports_role = (local_caps.roles_supported & (1 << static_cast<uint8_t>(role)));
   remote_supports_role =
-          (remote_caps.roles_supported & (role == bluetooth::hci::CsRole::INITIATOR ? 0x01 : 0x02));
+          (remote_caps.roles_supported & (role == bluetooth::hci::CsRole::INITIATOR ? 0x02 : 0x01));
 
   if (!local_supports_role || !remote_supports_role) {
     return ErrorCode::UNSUPPORTED_FEATURE_OR_PARAMETER_VALUE;
@@ -2729,6 +2729,10 @@ ErrorCode LeController::LeCsCreateConfig(
   // Check if modes are supported by local and remote
   // Modes_Supported: Bit 0 = Mode-3.
   auto check_mode_supported = [](bluetooth::hci::CsMainModeType mode, uint8_t supported_mask) {
+    if (mode == bluetooth::hci::CsMainModeType::MODE_1 ||
+        mode == bluetooth::hci::CsMainModeType::MODE_2) {
+      return true;
+    }
     if (mode == bluetooth::hci::CsMainModeType::MODE_3) {
       return (supported_mask & 0x01) != 0;
     }
@@ -2738,11 +2742,16 @@ ErrorCode LeController::LeCsCreateConfig(
   };
 
   auto check_sub_mode_supported = [](bluetooth::hci::CsSubModeType mode, uint8_t supported_mask) {
-    if (mode == bluetooth::hci::CsSubModeType::MODE_3) {
-      return (supported_mask & 0x01) != 0;
+    switch (mode) {
+      case bluetooth::hci::CsSubModeType::UNUSED:
+      case bluetooth::hci::CsSubModeType::MODE_1:
+      case bluetooth::hci::CsSubModeType::MODE_2:
+        return true;
+      case bluetooth::hci::CsSubModeType::MODE_3:
+        return (supported_mask & 0x01) != 0;
+      default:
+        return false;
     }
-    // Mode 1 and 2 are not represented in the Modes_Supported bitmask
-    // (reserved bits).
     return false;
   };
 
