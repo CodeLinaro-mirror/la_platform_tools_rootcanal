@@ -297,6 +297,7 @@ python_test_host {
         "test/LL/CS/*.py",
         "test/LL/CS/CEN/INI/*.py",
         "test/LL/CS/PER/INI/*.py",
+        "test/LL/CS/PER/REF/*.py",
         "test/LL/DDI/ADV/*.py",
         "test/LL/DDI/SCN/*.py",
         "test/LL/SEC/ADV/*.py",
