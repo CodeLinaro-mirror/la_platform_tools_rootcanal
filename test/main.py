@@ -36,6 +36,7 @@ tests = [
     "LL.CON_.INI.BV_11_C",
     "LL.CON_.PER.BV_40_C",
     "LL.CON_.PER.BV_42_C",
+    "LL.CS.CEN.BV_01_C",
     "LL.CS.CEN.INI.BV_01_C",
     "LL.CS.CEN.INI.BV_03_C",
     "LL.CS.PER.INI.BV_01_C",
