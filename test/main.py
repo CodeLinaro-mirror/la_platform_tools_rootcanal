@@ -41,6 +41,7 @@ tests = [
     "LL.CS.CEN.INI.BV_03_C",
     "LL.CS.PER.INI.BV_01_C",
     "LL.CS.PER.INI.BV_02_C",
+    "LL.CS.PER.REF.BV_01_C",
     "LL.CS.cache_behavior",
     "LL.DDI.ADV.BV_01_C",
     "LL.DDI.ADV.BV_02_C",
