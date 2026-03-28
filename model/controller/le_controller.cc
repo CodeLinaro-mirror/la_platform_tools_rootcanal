@@ -3346,6 +3346,8 @@ void LeController::IncomingLlCsFaeRsp(LeAclConnection& connection,
     return;
   }
 
+  connection.cs_parameters.remote_fae_table = rsp.GetRemoteFaeTable();
+
   if (IsLeEventUnmasked(SubeventCode::LE_CS_READ_REMOTE_FAE_TABLE_COMPLETE)) {
     send_event_(bluetooth::hci::LeCsReadRemoteFaeTableCompleteBuilder::Create(
             ErrorCode::SUCCESS, connection.handle, rsp.GetRemoteFaeTable()));
