@@ -38,6 +38,7 @@ tests = [
     "LL.CON_.PER.BV_42_C",
     "LL.CS.CEN.INI.BV_01_C",
     "LL.CS.CEN.INI.BV_03_C",
+    "LL.CS.PER.INI.BV_01_C",
     "LL.CS.PER.INI.BV_02_C",
     "LL.CS.cache_behavior",
     "LL.DDI.ADV.BV_01_C",
