@@ -1604,6 +1604,56 @@ void DualModeController::LeReadBufferSizeV2(CommandView command) {
           kNumCommandPackets, ErrorCode::SUCCESS, le_buffer_size, iso_buffer_size));
 }
 
+void DualModeController::LeEnhancedReadTransmitPowerLevel(CommandView command) {
+  auto command_view = bluetooth::hci::LeEnhancedReadTransmitPowerLevelView::Create(command);
+  CHECK_PACKET_VIEW(command_view);
+  uint16_t connection_handle = command_view.GetConnectionHandle();
+
+  DEBUG(id_, "<< LE Enhanced Read Transmit Power Level");
+  DEBUG(id_, "   connection_handle=0x{:x}", connection_handle);
+  DEBUG(id_, "   phy={}", command_view.GetPhy());
+
+  ErrorCode status = le_controller_.HasLeAclConnection(connection_handle)
+                             ? ErrorCode::SUCCESS
+                             : ErrorCode::UNKNOWN_CONNECTION;
+
+  send_event_(bluetooth::hci::LeEnhancedReadTransmitPowerLevelCompleteBuilder::Create(
+          kNumCommandPackets, status, connection_handle,
+          static_cast<bluetooth::hci::PhyWithCodedSpecified>(command_view.GetPhy()),
+          kTransmitPowerLevel, kTransmitPowerLevel));
+}
+
+void DualModeController::LeReadRemoteTransmitPowerLevel(CommandView command) {
+  auto command_view = bluetooth::hci::LeReadRemoteTransmitPowerLevelView::Create(command);
+  CHECK_PACKET_VIEW(command_view);
+  uint16_t connection_handle = command_view.GetConnectionHandle();
+
+  DEBUG(id_, "<< LE Read Remote Transmit Power Level");
+  DEBUG(id_, "   connection_handle=0x{:x}", connection_handle);
+  DEBUG(id_, "   phy={}", command_view.GetPhy());
+
+  auto status =
+          le_controller_.LeReadRemoteTransmitPowerLevel(connection_handle, command_view.GetPhy());
+  send_event_(bluetooth::hci::LeReadRemoteTransmitPowerLevelStatusBuilder::Create(
+          status, kNumCommandPackets));
+}
+
+void DualModeController::LeSetTransmitPowerReportingEnable(CommandView command) {
+  auto command_view = bluetooth::hci::LeSetTransmitPowerReportingEnableView::Create(command);
+  CHECK_PACKET_VIEW(command_view);
+  uint16_t connection_handle = command_view.GetConnectionHandle();
+
+  DEBUG(id_, "<< LE Set Transmit Power Reporting Enable");
+  DEBUG(id_, "   connection_handle=0x{:x}", connection_handle);
+  DEBUG(id_, "   local_enable={}", command_view.GetLocalEnable());
+  DEBUG(id_, "   remote_enable={}", command_view.GetRemoteEnable());
+
+  auto status = le_controller_.LeSetTransmitPowerReportingEnable(
+          connection_handle, command_view.GetLocalEnable(), command_view.GetRemoteEnable());
+  send_event_(bluetooth::hci::LeSetTransmitPowerReportingEnableCompleteBuilder::Create(
+          kNumCommandPackets, status, connection_handle));
+}
+
 void DualModeController::LeSetDefaultSubrate(CommandView command) {
   auto command_view = bluetooth::hci::LeSetDefaultSubrateView::Create(command);
   CHECK_PACKET_VIEW(command_view);
@@ -2598,6 +2648,16 @@ void DualModeController::LeExtendedCreateConnectionV1(CommandView command) {
           command_view.GetInitiatingPhys(), command_view.GetInitiatingPhyParameters());
   send_event_(bluetooth::hci::LeExtendedCreateConnectionV1StatusBuilder::Create(
           status, kNumCommandPackets));
+}
+
+void DualModeController::LeReadTransmitPower(CommandView command) {
+  auto command_view = bluetooth::hci::LeReadTransmitPowerView::Create(command);
+  CHECK_PACKET_VIEW(command_view);
+
+  DEBUG(id_, "<< LE Read Transmit Power");
+
+  send_event_(bluetooth::hci::LeReadTransmitPowerCompleteBuilder::Create(
+          kNumCommandPackets, ErrorCode::SUCCESS, kTransmitPowerLevel, kTransmitPowerLevel));
 }
 
 void DualModeController::LeSetPrivacyMode(CommandView command) {
@@ -4337,9 +4397,9 @@ DualModeController::GetHciCommandHandlers() {
            &DualModeController::LeClearPeriodicAdvertiserList},
           {OpCode::LE_READ_PERIODIC_ADVERTISER_LIST_SIZE,
            &DualModeController::LeReadPeriodicAdvertiserListSize},
-          //{OpCode::LE_READ_TRANSMIT_POWER,
-          //&DualModeController::LeReadTransmitPower},
+          {OpCode::LE_READ_TRANSMIT_POWER, &DualModeController::LeReadTransmitPower},
           //{OpCode::LE_READ_RF_PATH_COMPENSATION_POWER,
+
           //&DualModeController::LeReadRfPathCompensationPower},
           //{OpCode::LE_WRITE_RF_PATH_COMPENSATION_POWER,
           //&DualModeController::LeWriteRfPathCompensationPower},
@@ -4403,16 +4463,17 @@ DualModeController::GetHciCommandHandlers() {
           {OpCode::LE_SET_HOST_FEATURE_V1, &DualModeController::LeSetHostFeatureV1},
           //{OpCode::LE_READ_ISO_LINK_QUALITY,
           //&DualModeController::LeReadIsoLinkQuality},
-          //{OpCode::LE_ENHANCED_READ_TRANSMIT_POWER_LEVEL,
-          //&DualModeController::LeEnhancedReadTransmitPowerLevel},
-          //{OpCode::LE_READ_REMOTE_TRANSMIT_POWER_LEVEL,
-          //&DualModeController::LeReadRemoteTransmitPowerLevel},
+          {OpCode::LE_ENHANCED_READ_TRANSMIT_POWER_LEVEL,
+           &DualModeController::LeEnhancedReadTransmitPowerLevel},
+          {OpCode::LE_READ_REMOTE_TRANSMIT_POWER_LEVEL,
+           &DualModeController::LeReadRemoteTransmitPowerLevel},
+
           //{OpCode::LE_SET_PATH_LOSS_REPORTING_PARAMETERS,
           //&DualModeController::LeSetPathLossReportingParameters},
           //{OpCode::LE_SET_PATH_LOSS_REPORTING_ENABLE,
           //&DualModeController::LeSetPathLossReportingEnable},
-          //{OpCode::LE_SET_TRANSMIT_POWER_REPORTING_ENABLE,
-          //&DualModeController::LeSetTransmitPowerReportingEnable},
+          {OpCode::LE_SET_TRANSMIT_POWER_REPORTING_ENABLE,
+           &DualModeController::LeSetTransmitPowerReportingEnable},
           //{OpCode::LE_TRANSMITTER_TEST_V4,
           //&DualModeController::LeTransmitterTestV4},
           //{OpCode::LE_SET_DATA_RELATED_ADDRESS_CHANGES,
