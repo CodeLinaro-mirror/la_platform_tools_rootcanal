@@ -953,6 +953,7 @@ enum ErrorCode: 8 {
   TRANSACTION_RESPONSE_TIMEOUT = 0x22,
   LINK_LAYER_COLLISION = 0x23,
   ENCRYPTION_MODE_NOT_ACCEPTABLE = 0x25,
+  INSUFFICIENT_SECURITY = 0x2F,
   ROLE_SWITCH_FAILED = 0x35,
   HOST_BUSY = 0x38,
   CONTROLLER_BUSY = 0x3A,
@@ -962,6 +963,7 @@ enum ErrorCode: 8 {
   LIMIT_REACHED = 0x43,
   OPERATION_CANCELLED_BY_HOST = 0x44,
   PACKET_TOO_LONG = 0x45,
+  INSUFFICIENT_CHANNELS = 0x48,
 }
 
 // Events that are defined with their respective commands
@@ -5176,7 +5178,7 @@ packet LeCsConfigComplete : LeMetaEvent (subevent_code = LE_CS_CONFIG_COMPLETE) 
   channel_selection_type : CsChannelSelectionType,
   ch3c_shape : CsCh3cShape,
   ch3c_jump : 8,
-  _reserved_ : 8,
+  reserved : 8,
   t_ip1_time : 8,
   t_ip2_time : 8,
   t_fcs_time : 8,
@@ -5202,7 +5204,7 @@ packet LeCsCreateConfig : Command (op_code = LE_CS_CREATE_CONFIG) {
   channel_selection_type : CsChannelSelectionType,
   ch3c_shape : CsCh3cShape,
   ch3c_jump : 8,
-  _reserved_ : 8,
+  reserved : 8,
 }
 
 packet LeCsCreateConfigStatus : CommandStatus (command_op_code = LE_CS_CREATE_CONFIG) {
@@ -5223,6 +5225,7 @@ packet LeCsSetChannelClassification : Command (op_code = LE_CS_SET_CHANNEL_CLASS
 }
 
 packet LeCsSetChannelClassificationComplete : CommandComplete (command_op_code = LE_CS_SET_CHANNEL_CLASSIFICATION) {
+  status : ErrorCode,
 }
 
 enum CsPhy : 8 {
@@ -5261,7 +5264,7 @@ packet LeCsSetProcedureParameters  : Command (op_code = LE_CS_SET_PROCEDURE_PARA
   tone_antenna_config_selection : 8,
   phy : CsPhy,
   tx_power_delta : 8,
-  preferred_peer_antenna : 8,
+  preferred_peer_antenna : CsPreferredPeerAntenna,
   snr_control_initiator: CsSnrControl,
   snr_control_reflector: CsSnrControl,
 }
@@ -5340,6 +5343,41 @@ packet LeCsTestEndStatus : CommandStatus (command_op_code = LE_CS_TEST_END) {
 
 packet LeCsTestEndComplete : LeMetaEvent (subevent_code = LE_CS_TEST_END_COMPLETE) {
   status : ErrorCode,
+}
+
+struct CsStepData {
+  step_mode : 8,
+  step_channel : 8,
+  _size_(step_data) : 8,
+  step_data : 8[],
+}
+
+packet LeCsSubeventResult : LeMetaEvent (subevent_code = LE_CS_SUBEVENT_RESULT) {
+  connection_handle : 12,
+  _reserved_ : 4,
+  config_id : 8,
+  start_acl_conn_event_counter : 16,
+  procedure_counter : 16,
+  frequency_compensation : 16,
+  reference_power_level : 8,
+  procedure_done_status : 4,
+  subevent_done_status : 4,
+  abort_reason : 8,
+  num_antenna_paths : 8,
+  _count_(steps) : 8,
+  steps : CsStepData[],
+}
+
+packet LeCsSubeventResultContinue : LeMetaEvent (subevent_code = LE_CS_SUBEVENT_RESULT_CONTINUE) {
+  connection_handle : 12,
+  _reserved_ : 4,
+  config_id : 8,
+  procedure_done_status : 4,
+  subevent_done_status : 4,
+  abort_reason : 8,
+  num_antenna_paths : 8,
+  _count_(steps) : 8,
+  steps : CsStepData[],
 }
 
 // HCI Event Packets
