@@ -78,6 +78,24 @@ struct CigConfig {
     configurable: bool,
 }
 
+/// BIG configuration.
+#[derive(Clone, Debug, Default)]
+struct BigConfig {
+    // BIG parameters from LeCreateBig command
+    big_handle: u8,
+    advertising_handle: u8,
+    num_bis: u8,
+    sdu_interval: u32,
+    max_sdu: u16,
+    max_transport_latency: u16,
+    rtn: u8,
+    phy: u8,
+    packing: u8,
+    framing: u8,
+    encryption: bool,
+    broadcast_code: [u8; 16],
+}
+
 /// CIS configuration.
 #[derive(Clone, Debug, Default)]
 struct CisConfig {
@@ -92,6 +110,18 @@ struct CisConfig {
     bn_p_to_c: Option<u8>,
     max_pdu_c_to_p: Option<u16>,
     max_pdu_p_to_c: Option<u16>,
+}
+
+/// BIS configuration.
+#[derive(Clone)]
+pub struct Bis {
+    pub bis_connection_handle: u16,
+    pub big_handle: u8,
+    pub bis_id: u8,
+    pub advertising_handle: u8,
+    pub role: hci::Role,
+    pub max_sdu: u16,
+    iso_data_path: Option<IsoDataPath>,
 }
 
 /// CIG configuration.
@@ -269,8 +299,12 @@ impl Cis {
 pub struct IsoManager {
     /// CIG configuration.
     cig_config: HashMap<u8, CigConfig>,
+    /// BIG configuration.
+    big_config: HashMap<u8, BigConfig>,
     /// CIS configuration.
     cis_config: HashMap<(u8, u8), CisConfig>,
+    /// BIS configuration.
+    bis_connections: HashMap<u16, Bis>,
     /// Mapping from ACL connection handle to connection role.
     acl_connections: HashMap<u16, hci::Role>,
     /// Mapping from CIS connection handle to a CIS connection
@@ -291,7 +325,9 @@ impl IsoManager {
         IsoManager {
             ops,
             cig_config: Default::default(),
+            big_config: Default::default(),
             cis_config: Default::default(),
+            bis_connections: Default::default(),
             acl_connections: Default::default(),
             cis_connections: Default::default(),
             cis_connection_requests: Default::default(),
@@ -400,6 +436,13 @@ impl IsoManager {
     fn new_cis_connection_handle(&self) -> u16 {
         (0xe00..0xefe)
             .find(|handle| !self.cis_connections.contains_key(handle))
+            .unwrap()
+    }
+
+    // Returns the first unused handle in the range 0x0D00..0x0DFE.
+    fn new_bis_connection_handle(&self) -> u16 {
+        (0x0D00..=0x0DFE)
+            .find(|handle| !self.bis_connections.contains_key(handle))
             .unwrap()
     }
 
@@ -1531,6 +1574,271 @@ impl IsoManager {
         } else {
             println!("skipping out of place packet LL_CIS_TERMINATE_IND");
         }
+    }
+
+    pub fn hci_le_create_big(&mut self, packet: hci::LeCreateBig) {
+        let command_status = |status| hci::LeCreateBigStatus { status, num_hci_command_packets: 1 };
+        let big_handle = packet.big_handle();
+        let advertising_handle = packet.advertising_handle();
+        let num_bis = packet.num_bis();
+        let sdu_interval = packet.sdu_interval();
+        let max_sdu = packet.max_sdu();
+        let max_transport_latency = packet.max_transport_latency();
+        let rtn = packet.rtn();
+        let phy: u8 = packet.phy().into();
+        let packing: u8 = packet.packing().into();
+        let framing: u8 = packet.framing().into();
+        let encryption: u8 = packet.encryption().into();
+        let broadcast_code = packet.broadcast_code();
+
+        // 1. Validate BIG_Handle Range
+        // Spec: "The BIG_Handle parameter shall be in the range 0x00 to 0xEF."
+        if big_handle > 0xEF {
+            println!("LE Create BIG: Invalid BIG_Handle 0x{:02X}", big_handle);
+            self.send_hci_event(command_status(hci::ErrorCode::InvalidHciCommandParameters));
+            return;
+        }
+
+        // 2. Validate BIG_Handle State
+        // Spec: "If the Host issues this command with a BIG_Handle for a BIG that is
+        // already created, then the Controller shall return the error code
+        // Command Disallowed (0x0C)."
+        if self.big_config.contains_key(&big_handle) {
+            println!("LE Create BIG: BIG_Handle 0x{:02X} is already in use", big_handle);
+            self.send_hci_event(command_status(hci::ErrorCode::CommandDisallowed));
+            return;
+        }
+
+        // 3. Validate Advertising_Handle Range
+        // Spec: "The Advertising_Handle parameter shall be in the range 0x00 to 0xEF."
+        if advertising_handle > 0xEF {
+            println!("LE Create BIG: Invalid Advertising_Handle 0x{:02X}", advertising_handle);
+            self.send_hci_event(command_status(hci::ErrorCode::InvalidHciCommandParameters));
+            return;
+        }
+
+        // 4. Validate Advertising_Handle State
+        // 4-1. If the Advertising_Handle does not identify a periodic advertising train
+        let mut advertising_handle_periodic_enabled = false;
+        if !self
+            .ops
+            .get_advertiser_info(advertising_handle, &mut advertising_handle_periodic_enabled)
+        {
+            println!(
+                "LE Create BIG: Advertising_Handle 0x{:02X} is not configured",
+                advertising_handle
+            );
+            self.send_hci_event(command_status(hci::ErrorCode::UnknownAdvertisingIdentifier));
+            return;
+        }
+        if !advertising_handle_periodic_enabled {
+            println!(
+                "LE Create BIG: Advertising_Handle 0x{:02X} is not periodic enabled",
+                advertising_handle
+            );
+            self.send_hci_event(command_status(hci::ErrorCode::UnknownAdvertisingIdentifier));
+            return;
+        }
+        // 4-2. the periodic advertising train is associated with another BIG
+        for big in self.big_config.values() {
+            if big.advertising_handle == advertising_handle {
+                println!(
+                    "LE Create BIG: Advertising_Handle 0x{:02X} is already in use",
+                    advertising_handle
+                );
+                self.send_hci_event(command_status(hci::ErrorCode::UnknownAdvertisingIdentifier));
+                return;
+            }
+        }
+        // 4-3. or the periodic advertising train has responses and the
+        // Controller does not support PAwR trains associated with BIGs
+        // TODO: skip this check for now
+
+        // 5. Validate Num_BIS
+        // Spec: "The Num_BIS parameter shall be in the range 0x01 to 0x1F."
+        if !(0x01..=0x1F).contains(&num_bis) {
+            println!("LE Create BIG: Invalid Num_BIS 0x{:02X}", num_bis);
+            self.send_hci_event(command_status(hci::ErrorCode::InvalidHciCommandParameters));
+            return;
+        }
+
+        // 6. Validate SDU_Interval
+        // Spec: "The SDU_Interval parameter shall be in the range 0x0000FF to 0x0FFFFF."
+        if !(0x0000FF..=0x0FFFFF).contains(&sdu_interval) {
+            println!("LE Create BIG: Invalid SDU_Interval 0x{:06X}", sdu_interval);
+            self.send_hci_event(command_status(hci::ErrorCode::InvalidHciCommandParameters));
+            return;
+        }
+
+        // 7. Validate Max_SDU
+        // Spec: "The Max_SDU parameter shall be in the range 0x0001 to 0x0FFF."
+        if !(0x0001..=0x0FFF).contains(&max_sdu) {
+            println!("LE Create BIG: Invalid Max_SDU 0x{:04X}", max_sdu);
+            self.send_hci_event(command_status(hci::ErrorCode::InvalidHciCommandParameters));
+            return;
+        }
+
+        // 8. Validate Max_Transport_Latency
+        // Spec: "The Max_Transport_Latency parameter shall be in the range
+        // 0x0005 to 0x0FA0."
+        if !(0x0005..=0x0FA0).contains(&max_transport_latency) {
+            println!(
+                "LE Create BIG: Invalid Max_Transport_Latency 0x{:04X}",
+                max_transport_latency
+            );
+            self.send_hci_event(command_status(hci::ErrorCode::InvalidHciCommandParameters));
+            return;
+        }
+
+        // 9. Validate RTN
+        // Spec: "The RTN parameter shall be in the range 0x00 to 0x0F."
+        // (Since packet.rtn() returns u8, we just check the upper bound)
+        if rtn > 0x0F {
+            println!("LE Create BIG: Invalid RTN 0x{:02X}", rtn);
+            self.send_hci_event(command_status(hci::ErrorCode::InvalidHciCommandParameters));
+            return;
+        }
+
+        // 10. Validate PHY
+        // Spec: "The PHY parameter shall be one of the values: 0x01 (LE 1M),
+        // 0x02 (LE 2M), 0x03 (LE Coded)."
+        let phy_enum = hci::SecondaryPhyType::try_from(phy);
+        if phy_enum.is_err() || phy == 0 {
+            println!("LE Create BIG: Invalid PHY 0x{:02X}", phy);
+            self.send_hci_event(command_status(hci::ErrorCode::InvalidHciCommandParameters));
+            return;
+        }
+
+        // 11. Validate Packing
+        // Spec: "The Packing parameter shall be one of the values: 0x00 (Sequential),
+        // 0x01 (Interleaved)."
+        if packing > 0x01 {
+            println!("LE Create BIG: Invalid Packing 0x{:02X}", packing);
+            self.send_hci_event(command_status(hci::ErrorCode::InvalidHciCommandParameters));
+            return;
+        }
+
+        // 12. Validate Framing
+        // Spec: "The Framing parameter shall be one of the values: 0x00
+        // (Unframed), 0x01 (Framed)."
+        if framing > 0x01 {
+            println!("LE Create BIG: Invalid Framing 0x{:02X}", framing);
+            self.send_hci_event(command_status(hci::ErrorCode::InvalidHciCommandParameters));
+            return;
+        }
+
+        // 13. Validate Encryption
+        // Spec: "The Encryption parameter shall be one of the values: 0x00 (Unencrypted),
+        // 0x01 (Encrypted)."
+        if encryption > 0x01 {
+            println!("LE Create BIG: Invalid Encryption 0x{:02X}", encryption);
+            self.send_hci_event(command_status(hci::ErrorCode::InvalidHciCommandParameters));
+            return;
+        }
+
+        // --- Success Path ---
+        self.send_hci_event(command_status(hci::ErrorCode::Success));
+
+        let big = BigConfig {
+            big_handle,
+            advertising_handle,
+            num_bis,
+            sdu_interval,
+            max_sdu,
+            max_transport_latency,
+            rtn,
+            phy,
+            packing,
+            framing,
+            encryption: encryption != 0,
+            broadcast_code: *broadcast_code,
+        };
+        self.big_config.insert(big_handle, big);
+
+        let mut bis_connection_handles = vec![];
+        for bis_id in 1..=num_bis {
+            let bis_connection_handle = self.new_bis_connection_handle();
+            self.bis_connections.insert(
+                bis_connection_handle,
+                Bis {
+                    bis_connection_handle,
+                    big_handle,
+                    bis_id,
+                    advertising_handle,
+                    role: hci::Role::Central,
+                    max_sdu,
+                    iso_data_path: None,
+                },
+            );
+            bis_connection_handles.push(bis_connection_handle);
+        }
+
+        let iso_interval = (sdu_interval as f64 / 1250.0).ceil() as u16;
+
+        // Parameter Derivation
+        let bn = 1;
+        let nse = bn * (rtn + 1);
+        let pto = 0;
+        let irc = rtn + 1;
+        let max_pdu = max_sdu;
+
+        if nse > 31 {
+            println!("LE Create BIG: Invalid NSE 0x{:02X}", nse);
+            self.send_hci_event(command_status(hci::ErrorCode::InvalidHciCommandParameters));
+            return;
+        }
+
+        self.send_hci_event(hci::LeCreateBigComplete {
+            status: hci::ErrorCode::Success,
+            big_handle,
+            big_sync_delay: 0,
+            transport_latency_big: sdu_interval * 2,
+            phy: hci::SecondaryPhyType::try_from(phy).unwrap_or(hci::SecondaryPhyType::Le1m),
+            nse,
+            bn,
+            pto,
+            irc,
+            max_pdu,
+            iso_interval,
+            connection_handle: bis_connection_handles,
+        });
+    }
+
+    pub fn hci_le_terminate_big(&mut self, packet: hci::LeTerminateBig) {
+        let command_status =
+            |status| hci::LeTerminateBigStatus { status, num_hci_command_packets: 1 };
+        let big_handle = packet.big_handle();
+        let reason = packet.reason();
+
+        // 1. Validate BIG_Handle Range
+        // Spec: "The BIG_Handle parameter shall be in the range 0x00 to 0xEF."
+        if big_handle > 0xEF {
+            println!("LE Terminate BIG: Invalid BIG_Handle 0x{:02X}", big_handle);
+            self.send_hci_event(command_status(hci::ErrorCode::InvalidHciCommandParameters));
+            return;
+        }
+
+        // 2. Validate BIG_Handle State (Existence)
+        // Spec: "If the BIG_Handle parameter does not identify a BIG that is
+        // currently created, the Controller shall return the error code
+        // Unknown Advertising Identifier (0x42)."
+        if self.big_config.remove(&big_handle).is_none() {
+            return self
+                .send_hci_event(command_status(hci::ErrorCode::UnknownAdvertisingIdentifier));
+        };
+
+        // Send Command Status (Success) immediately as the command is pending completion.
+        self.send_hci_event(command_status(hci::ErrorCode::Success));
+
+        // 3. State Cleanup
+        // Remove the BIG configuration.
+        self.bis_connections
+            .retain(|_, bis| bis.big_handle != big_handle);
+
+        // 4. Send Complete Event
+        // Spec: "The Controller shall send an HCI_LE_Terminate_BIG_Complete
+        // event to the Host."
+        self.send_hci_event(hci::LeTerminateBigComplete { big_handle, reason });
     }
 }
 
