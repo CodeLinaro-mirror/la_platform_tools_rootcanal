@@ -3346,6 +3346,8 @@ void LeController::IncomingLlCsFaeRsp(LeAclConnection& connection,
     return;
   }
 
+  connection.cs_parameters.remote_fae_table = rsp.GetRemoteFaeTable();
+
   if (IsLeEventUnmasked(SubeventCode::LE_CS_READ_REMOTE_FAE_TABLE_COMPLETE)) {
     send_event_(bluetooth::hci::LeCsReadRemoteFaeTableCompleteBuilder::Create(
             ErrorCode::SUCCESS, connection.handle, rsp.GetRemoteFaeTable()));
@@ -4021,6 +4023,18 @@ LeController::LeController(const Address& address, const ControllerProperties& p
 
                     controller->SendLeLinkLayerPacket(model::packets::LlcpBuilder::Create(
                             source, destination, std::vector(data, data + len)));
+                  },
+
+          .get_advertiser_info =
+                  [](void* user, uint8_t advertising_handle, bool* periodic_enabled) {
+                    auto controller = static_cast<LeController*>(user);
+                    auto it = controller->extended_advertisers_.find(advertising_handle);
+                    if (it == controller->extended_advertisers_.end()) {
+                      return false;
+                    }
+
+                    *periodic_enabled = it->second.IsPeriodicEnabled();
+                    return true;
                   }};
 
   ll_.reset(link_layer_create(controller_ops_));
