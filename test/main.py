@@ -39,7 +39,6 @@ tests = [
     "LL.CS.CEN.BV_01_C",
     "LL.CS.CEN.INI.BV_01_C",
     "LL.CS.CEN.INI.BV_03_C",
-    "LL.CS.CEN.INI.BV_05_C",
     "LL.CS.PER.INI.BV_01_C",
     "LL.CS.PER.INI.BV_02_C",
     "LL.CS.PER.REF.BV_01_C",

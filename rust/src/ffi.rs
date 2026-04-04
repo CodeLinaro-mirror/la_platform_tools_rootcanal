@@ -39,14 +39,6 @@ pub struct ControllerOps {
     send_lmp_packet:
         unsafe extern "C" fn(user: *mut (), to: *const [u8; 6], data: *const u8, len: usize),
     send_llcp_packet: unsafe extern "C" fn(user: *mut (), handle: u16, data: *const u8, len: usize),
-    // SAFETY:
-    // - `user` must be exactly the value `ControllerOps::user_pointer`.
-    // - `periodic_enabled` must be a valid non-null pointer to a `bool` value.
-    get_advertiser_info: unsafe extern "C" fn(
-        user: *mut (),
-        advertising_handle: u8,
-        periodic_enabled: *mut bool,
-    ) -> bool,
 }
 
 impl ControllerOps {
@@ -93,23 +85,6 @@ impl ControllerOps {
 
     pub(crate) fn send_llcp_packet(&self, handle: u16, packet: &[u8]) {
         unsafe { (self.send_llcp_packet)(self.user_pointer, handle, packet.as_ptr(), packet.len()) }
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn get_advertiser_info(
-        &self,
-        advertising_handle: u8,
-        periodic_enabled: &mut bool,
-    ) -> bool {
-        // # SAFETY
-        // - `self.user_pointer` is the value provided when the callbacks are registered.
-        //    The value is not manipulated in the rust module.
-        // - `periodic_enabled` is a non null pointer valid for the scope of the function call.
-        // - `self.get_advertiser_info` is a valid function pointer
-        //    enforced by requirements on ControllerOps.
-        unsafe {
-            (self.get_advertiser_info)(self.user_pointer, advertising_handle, periodic_enabled)
-        }
     }
 }
 
