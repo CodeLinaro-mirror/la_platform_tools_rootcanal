@@ -5889,7 +5889,7 @@ void LeController::IncomingLeEncryptConnection(LeAclConnection& connection,
   auto le_encrypt = model::packets::LeEncryptConnectionView::Create(incoming);
   ASSERT(le_encrypt.IsValid());
 
-  // TODO: Save keys to check
+  connection.ltk = le_encrypt.GetLtk();
 
   if (IsEventUnmasked(EventCode::LE_META_EVENT)) {
     send_event_(bluetooth::hci::LeLongTermKeyRequestBuilder::Create(
@@ -5900,15 +5900,16 @@ void LeController::IncomingLeEncryptConnection(LeAclConnection& connection,
 void LeController::IncomingLeEncryptConnectionResponse(
         LeAclConnection& connection, model::packets::LinkLayerPacketView incoming) {
   INFO(id_, "IncomingLeEncryptConnectionResponse");
-  // TODO: Check keys
 
   ErrorCode status = ErrorCode::SUCCESS;
   auto response = model::packets::LeEncryptConnectionResponseView::Create(incoming);
   ASSERT(response.IsValid());
 
   bool success = true;
-  // Zero LTK is a rejection
-  if (response.GetLtk() == std::array<uint8_t, 16>{0}) {
+  if (response.GetStatus() != 0) {
+    status = static_cast<ErrorCode>(response.GetStatus());
+    success = false;
+  } else if (connection.ltk.has_value() && response.GetLtk() != connection.ltk.value()) {
     status = ErrorCode::AUTHENTICATION_FAILURE;
     success = false;
   }
@@ -6354,7 +6355,6 @@ ErrorCode LeController::Disconnect(uint16_t handle, ErrorCode host_reason,
 
     connections_.Disconnect(handle, [this](TaskId task_id) { CancelScheduledTask(task_id); });
     SendDisconnectionCompleteEvent(handle, controller_reason);
-
     ASSERT(link_layer_remove_link(ll_.get(), handle, static_cast<uint8_t>(controller_reason)));
     return ErrorCode::SUCCESS;
   }
@@ -6472,13 +6472,13 @@ bool LeController::HasLeAclConnection(uint16_t connection_handle) {
 
 void LeController::HandleLeEnableEncryption(uint16_t handle, std::array<uint8_t, 8> rand,
                                             uint16_t ediv, std::array<uint8_t, kLtkSize> ltk) {
-  // TODO: Check keys
   // TODO: Block ACL traffic or at least guard against it
   if (!connections_.HasLeAclHandle(handle)) {
     return;
   }
 
-  auto const& connection = connections_.GetLeAclConnection(handle);
+  auto& connection = connections_.GetLeAclConnection(handle);
+  connection.ltk = ltk;
   SendLeLinkLayerPacket(model::packets::LeEncryptConnectionBuilder::Create(
           connection.own_address.GetAddress(), connection.address.GetAddress(), rand, ediv, ltk));
 }
@@ -6524,7 +6524,7 @@ ErrorCode LeController::LeLongTermKeyRequestReply(uint16_t handle,
   }
   SendLeLinkLayerPacket(model::packets::LeEncryptConnectionResponseBuilder::Create(
           connection.own_address.GetAddress(), connection.address.GetAddress(),
-          std::array<uint8_t, 8>(), uint16_t(), ltk));
+          static_cast<uint8_t>(ErrorCode::SUCCESS), std::array<uint8_t, 8>(), uint16_t(), ltk));
 
   return ErrorCode::SUCCESS;
 }
@@ -6538,7 +6538,8 @@ ErrorCode LeController::LeLongTermKeyRequestNegativeReply(uint16_t handle) {
   auto const& connection = connections_.GetLeAclConnection(handle);
   SendLeLinkLayerPacket(model::packets::LeEncryptConnectionResponseBuilder::Create(
           connection.own_address.GetAddress(), connection.address.GetAddress(),
-          std::array<uint8_t, 8>(), uint16_t(), std::array<uint8_t, 16>()));
+          static_cast<uint8_t>(ErrorCode::PIN_OR_KEY_MISSING), std::array<uint8_t, 8>(), uint16_t(),
+          std::array<uint8_t, 16>()));
   return ErrorCode::SUCCESS;
 }
 

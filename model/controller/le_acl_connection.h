@@ -82,6 +82,7 @@ public:
   std::optional<uint64_t> remote_supported_features;
   LeAclSubrateParameters subrate_parameters;
   LeCsParameters cs_parameters;
+  std::optional<std::array<uint8_t, 16>> ltk;
 
   LeAclConnection(uint16_t handle, AddressWithType address, AddressWithType own_address,
                   AddressWithType resolved_address, bluetooth::hci::Role role,

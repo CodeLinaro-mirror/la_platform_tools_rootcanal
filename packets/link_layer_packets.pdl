@@ -297,6 +297,7 @@ packet LeEncryptConnection : LinkLayerPacket (type = LE_ENCRYPT_CONNECTION) {
 }
 
 packet LeEncryptConnectionResponse : LinkLayerPacket (type = LE_ENCRYPT_CONNECTION_RESPONSE) {
+  status : 8,
   rand : 8[8],
   ediv : 16,
   ltk : 8[16],
