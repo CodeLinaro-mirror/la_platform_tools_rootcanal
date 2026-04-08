@@ -423,6 +423,8 @@ enum OpCode : 16 {
   // MSFT_OPCODE_xxxx below are needed for the tests.
   MSFT_OPCODE_MEDIATEK = 0xFD30,
   MSFT_OPCODE_QUALCOMM = 0xFD70,
+
+  UNKNOWN_OPCODE = ..,
 }
 
 // For mapping Local Supported Commands command
@@ -1101,6 +1103,8 @@ enum DisconnectReason : 8 {
   UNSUPPORTED_REMOTE_FEATURE = 0x1A,
   PAIRING_WITH_UNIT_KEY_NOT_SUPPORTED = 0x29,
   UNACCEPTABLE_CONNECTION_PARAMETERS = 0x3B,
+
+  UNKNOWN_REASON = ..,
 }
 
 packet Disconnect : Command (op_code = DISCONNECT) {
@@ -3819,7 +3823,7 @@ packet LeSetDefaultPhyComplete : CommandComplete (command_op_code = LE_SET_DEFAU
   status : ErrorCode,
 }
 
-enum PhyOptions : 8 {
+enum PhyOptions : 16 {
   NO_PREFERENCE = 0x00,
   S_2 = 0x01,
   S_8 = 0x02,
