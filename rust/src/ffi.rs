@@ -116,7 +116,7 @@ impl ControllerOps {
 /// Create a new link manager instance
 /// # Arguments
 /// * `ops` - Function callbacks required by the link manager
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn link_manager_create(ops: ControllerOps) -> *const LinkManager {
     Rc::into_raw(Rc::new(LinkManager::new(ops)))
 }
@@ -129,7 +129,7 @@ pub extern "C" fn link_manager_create(ops: ControllerOps) -> *const LinkManager 
 /// - This should be called from the thread of creation
 /// - `lm` must be a valid pointer
 /// - `peer` must be valid for reads for 6 bytes
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn link_manager_add_link(
     lm: *const LinkManager,
     peer: *const [u8; 6],
@@ -147,7 +147,7 @@ pub unsafe extern "C" fn link_manager_add_link(
 /// - This should be called from the thread of creation
 /// - `lm` must be a valid pointer
 /// - `peer` must be valid for reads for 6 bytes
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn link_manager_remove_link(
     lm: *const LinkManager,
     peer: *const [u8; 6],
@@ -162,7 +162,7 @@ pub unsafe extern "C" fn link_manager_remove_link(
 /// # Safety
 /// - This should be called from the thread of creation
 /// - `lm` must be a valid pointer
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn link_manager_tick(lm: *const LinkManager) {
     let lm = ManuallyDrop::new(unsafe { Rc::from_raw(lm) });
     lm.as_ref().tick();
@@ -178,7 +178,7 @@ pub unsafe extern "C" fn link_manager_tick(lm: *const LinkManager) {
 /// - This should be called from the thread of creation
 /// - `lm` must be a valid pointer
 /// - `data` must be valid for reads of len `len`
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn link_manager_ingest_hci(
     lm: *const LinkManager,
     data: *const u8,
@@ -206,7 +206,7 @@ pub unsafe extern "C" fn link_manager_ingest_hci(
 /// - `lm` must be a valid pointers
 /// - `from` must be valid pointer for reads for 6 bytes
 /// - `data` must be valid for reads of len `len`
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn link_manager_ingest_lmp(
     lm: *const LinkManager,
     from: *const [u8; 6],
@@ -229,7 +229,7 @@ pub unsafe extern "C" fn link_manager_ingest_lmp(
 /// # Safety
 /// - This should be called from the thread of creation
 /// - `lm` must be a valid pointers and must not be reused afterwards
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn link_manager_destroy(lm: *const LinkManager) {
     unsafe {
         let _ = Rc::from_raw(lm);
@@ -239,7 +239,7 @@ pub unsafe extern "C" fn link_manager_destroy(lm: *const LinkManager) {
 /// Create a new link manager instance
 /// # Arguments
 /// * `ops` - Function callbacks required by the link manager
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn link_layer_create(ops: ControllerOps) -> *const LinkLayer {
     Rc::into_raw(Rc::new(LinkLayer::new(ops)))
 }
@@ -255,7 +255,7 @@ pub extern "C" fn link_layer_create(ops: ControllerOps) -> *const LinkLayer {
 /// - `ll` must be a valid pointer
 /// - `peer` must be valid for reads for 6 bytes
 /// - `role` must be 0 (central) or 1 (peripheral)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn link_layer_add_link(
     ll: *const LinkLayer,
     handle: u16,
@@ -280,7 +280,7 @@ pub unsafe extern "C" fn link_layer_add_link(
 /// - This should be called from the thread of creation
 /// - `ll` must be a valid pointer
 /// - `peer` must be valid for reads for 6 bytes
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn link_layer_remove_link(
     ll: *const LinkLayer,
     handle: u16,
@@ -297,7 +297,7 @@ pub unsafe extern "C" fn link_layer_remove_link(
 /// # Safety
 /// - This should be called from the thread of creation
 /// - `ll` must be a valid pointer
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn link_layer_tick(ll: *const LinkLayer) {
     let mut ll = ManuallyDrop::new(unsafe { Rc::from_raw(ll) });
     let ll = Rc::get_mut(&mut ll).unwrap();
@@ -314,7 +314,7 @@ pub unsafe extern "C" fn link_layer_tick(ll: *const LinkLayer) {
 /// - This should be called from the thread of creation
 /// - `ll` must be a valid pointer
 /// - `data` must be valid for reads of len `len`
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn link_layer_ingest_hci(
     ll: *const LinkLayer,
     data: *const u8,
@@ -342,7 +342,7 @@ pub unsafe extern "C" fn link_layer_ingest_hci(
 /// - This should be called from the thread of creation
 /// - `ll` must be a valid pointers
 /// - `data` must be valid for reads of len `len`
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn link_layer_ingest_llcp(
     ll: *const LinkLayer,
     handle: u16,
@@ -371,7 +371,7 @@ pub unsafe extern "C" fn link_layer_ingest_llcp(
 /// # Safety
 /// - This should be called from the thread of creation
 /// - `ll` must be a valid pointers
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn link_layer_get_cis_connection_handle(
     ll: *const LinkLayer,
     cig_id: u8,
@@ -398,7 +398,7 @@ pub unsafe extern "C" fn link_layer_get_cis_connection_handle(
 /// # Safety
 /// - This should be called from the thread of creation
 /// - `ll` must be a valid pointers
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn link_layer_get_cis_information(
     ll: *const LinkLayer,
     cis_connection_handle: u16,
@@ -431,7 +431,7 @@ pub unsafe extern "C" fn link_layer_get_cis_information(
 /// # Safety
 /// - This should be called from the thread of creation
 /// - `ll` must be a valid pointers and must not be reused afterwards
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn link_layer_destroy(ll: *const LinkLayer) {
     unsafe {
         let _ = Rc::from_raw(ll);
