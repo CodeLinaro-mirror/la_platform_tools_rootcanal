@@ -2897,19 +2897,16 @@ ErrorCode LeController::LeCsSetChannelClassification(
   le_cs_channel_classification_ = channel_classification;
   last_le_cs_set_channel_classification_time_ = now;
 
-  // Update all ongoing CS procedures where we are the initiator.
   std::vector<uint16_t> le_acl_handles = connections_.GetLeAclHandles();
   for (auto handle : le_acl_handles) {
     auto& connection = connections_.GetLeAclConnection(handle);
+    SendLeLinkLayerPacket(model::packets::LlCsChannelMapIndBuilder::Create(
+            connection.own_address.GetAddress(), connection.address.GetAddress(),
+            channel_classification, 0 /* instant */));
+
+    // Also update the channel map in all configs for this connection
     for (auto& [_, config] : connection.cs_parameters.config_map) {
-      if (config.enabled &&
-          config.role == static_cast<uint8_t>(bluetooth::hci::CsRole::INITIATOR)) {
-        // TODO: combine with local classification (assume all enabled for now)
-        config.channel_map = channel_classification;
-        SendLeLinkLayerPacket(model::packets::LlCsChannelMapIndBuilder::Create(
-                connection.own_address.GetAddress(), connection.address.GetAddress(),
-                config.channel_map, 0 /* instant */));
-      }
+      config.channel_map = channel_classification;
     }
   }
 
