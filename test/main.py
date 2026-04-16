@@ -85,6 +85,7 @@ tests = [
     "LL.scan_timeout",
     "LL.cis_disconnection",
     "LL.cig_reconfiguration",
+    "LL.le_encryption",
     "LMP.connection_keepalive",
     "LMP.page_collision",
 ]
