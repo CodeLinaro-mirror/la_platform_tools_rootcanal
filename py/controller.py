@@ -141,7 +141,8 @@ class Controller:
         # Create a c++ controller instance.
         self.instance = rootcanal.ffi_controller_new(c_char_p(address.address),
                                                      self.send_hci_callback, self.send_ll_callback,
-                                                     None, self.ranging_estimator_callback, None)
+                                                     None, self.ranging_estimator_callback, None,
+                                                     None, 0)
 
         self.address = address
         self.evt_queue = collections.deque()
@@ -446,6 +447,16 @@ class ControllerTest(unittest.IsolatedAsyncioTestCase):
         self.controller.send_cmd(
             hci.LeSetHostFeatureV1(
                 bit_number=hci.LeHostFeatureBits.CONNECTED_ISO_STREAM_HOST_SUPPORT,
+                bit_value=hci.Enable.ENABLED))
+
+        await self.expect_evt(
+            hci.LeSetHostFeatureV1Complete(status=ErrorCode.SUCCESS, num_hci_command_packets=1))
+
+    async def enable_channel_sounding_host_support(self):
+        """Enable Channel Sounding Host Support in the LE Feature mask."""
+        self.controller.send_cmd(
+            hci.LeSetHostFeatureV1(
+                bit_number=hci.LeHostFeatureBits.CHANNEL_SOUNDING_HOST_SUPPORT,
                 bit_value=hci.Enable.ENABLED))
 
         await self.expect_evt(

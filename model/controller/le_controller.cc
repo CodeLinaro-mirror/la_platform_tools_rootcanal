@@ -1929,6 +1929,48 @@ ErrorCode LeController::LeExtendedCreateConnection(
   return ErrorCode::SUCCESS;
 }
 
+// HCI LE Read Remote Transmit Power Level (Vol 4, Part E § 7.8.118).
+ErrorCode LeController::LeReadRemoteTransmitPowerLevel(uint16_t connection_handle, uint8_t phy) {
+  // If the Connection_Handle parameter does not identify a current ACL connection, the
+  // Controller shall return the error code Unknown Connection Identifier (0x02).
+  if (!connections_.HasLeAclHandle(connection_handle)) {
+    INFO(id_, "unknown connection_handle (0x{:06x})", connection_handle);
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  // If the Host sets PHY to a value that the Controller does not support, including a value that
+  // is reserved for future use, the Controller shall return the error code Unsupported Feature or
+  // Parameter Value (0x11).
+  // TODO
+
+  // TODO: RootCanal does not emulate transmit power, there is no active reporting yet.
+  ScheduleTask(kNoDelayMs, [=, this]() {
+    send_event_(bluetooth::hci::LeTransmitPowerReportingBuilder::Create(
+            ErrorCode::SUCCESS, connection_handle,
+            bluetooth::hci::ReportingReason::READ_COMMAND_COMPLETE, phy,
+            /*transmit_power_level*/ -30,
+            /*transmit_power_level_flag*/ 0,
+            /*delta*/ 0x7f));
+  });
+
+  return ErrorCode::SUCCESS;
+}
+
+// HCI LE Set Transmit Power Reporting Enable command (Vol 4, Part E § 7.8.121).
+ErrorCode LeController::LeSetTransmitPowerReportingEnable(uint16_t connection_handle,
+                                                          uint8_t /*local_enable*/,
+                                                          uint8_t /*remote_enable*/) {
+  // If the Connection_Handle parameter does not identify a current ACL connection, the
+  // Controller shall return the error code Unknown Connection Identifier (0x02).
+  if (!connections_.HasLeAclHandle(connection_handle)) {
+    INFO(id_, "unknown connection_handle (0x{:06x})", connection_handle);
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  // TODO: RootCanal does not emulate transmit power, there is no active reporting yet.
+  return ErrorCode::SUCCESS;
+}
+
 // =============================================================================
 //  LE Connection Subrating
 // =============================================================================
@@ -2817,6 +2859,54 @@ ErrorCode LeController::LeCsCreateConfig(
   return ErrorCode::SUCCESS;
 }
 
+ErrorCode LeController::LeCsSetChannelClassification(
+        std::array<uint8_t, 10> channel_classification) {
+  // If the Host issues this command less than 1 second after the previous time it issued this
+  // command, then the Controller shall return the error code Command Disallowed (0x0C).
+  auto now = std::chrono::steady_clock::now();
+  if (now < last_le_cs_set_channel_classification_time_ + std::chrono::seconds(1)) {
+    return ErrorCode::COMMAND_DISALLOWED;
+  }
+
+  std::array<uint8_t, 10> reserved_mask = {0x03, 0x00, 0x80, 0x03, 0x00,
+                                           0x00, 0x00, 0x00, 0x00, 0xE0};
+  int num_channels = 0;
+  for (size_t i = 0; i < 10; ++i) {
+    if ((channel_classification[i] & reserved_mask[i]) != 0) {
+      return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+    }
+    num_channels += __builtin_popcount(channel_classification[i]);
+  }
+
+  // If the Channel_Classification parameter enables channels that are reserved for future use or
+  // enables fewer than 15 channels, then the Controller shall return the error code Invalid HCI
+  // Command Parameters (0x12).
+  if (num_channels < 15) {
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  le_cs_channel_classification_ = channel_classification;
+  last_le_cs_set_channel_classification_time_ = now;
+
+  // Update all ongoing CS procedures where we are the initiator.
+  std::vector<uint16_t> le_acl_handles = connections_.GetLeAclHandles();
+  for (auto handle : le_acl_handles) {
+    auto& connection = connections_.GetLeAclConnection(handle);
+    for (auto& [_, config] : connection.cs_parameters.config_map) {
+      if (config.enabled &&
+          config.role == static_cast<uint8_t>(bluetooth::hci::CsRole::INITIATOR)) {
+        // TODO: combine with local classification (assume all enabled for now)
+        config.channel_map = channel_classification;
+        SendLeLinkLayerPacket(model::packets::LlCsChannelMapIndBuilder::Create(
+                connection.own_address.GetAddress(), connection.address.GetAddress(),
+                config.channel_map, 0 /* instant */));
+      }
+    }
+  }
+
+  return ErrorCode::SUCCESS;
+}
+
 ErrorCode LeController::LeCsRemoveConfig(uint16_t connection_handle, uint8_t config_id) {
   // If the Host sends this command with a Connection_Handle that does not exist, or the
   // Connection_Handle is not for an ACL, then the Controller shall return the error code Unknown
@@ -2891,6 +2981,194 @@ ErrorCode LeController::LeCsSecurityEnable(uint16_t connection_handle) {
   SendLeLinkLayerPacket(model::packets::LlCsSecurityEnableReqBuilder::Create(
           connection.own_address.GetAddress(), connection.address.GetAddress(), cs_iv_c, cs_in_c,
           cs_pv_c));
+  return ErrorCode::SUCCESS;
+}
+
+ErrorCode LeController::LeCsSetProcedureParameters(
+        uint16_t connection_handle, uint8_t config_id, uint16_t max_procedure_len,
+        uint16_t min_procedure_interval, uint16_t max_procedure_interval,
+        uint16_t max_procedure_count, uint32_t min_subevent_len, uint32_t max_subevent_len,
+        uint8_t tone_antenna_config_selection, bluetooth::hci::CsPhy phy, uint8_t tx_power_delta,
+        bluetooth::hci::CsPreferredPeerAntenna preferred_peer_antenna,
+        bluetooth::hci::CsSnrControl snr_control_initiator,
+        bluetooth::hci::CsSnrControl snr_control_reflector) {
+  // If the Host sends this command with a Connection_Handle that does not exist, or the
+  // Connection_Handle is not for an ACL, then the Controller shall return the error code Unknown
+  // Connection Identifier (0x02).
+  if (!connections_.HasLeAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  auto& connection = connections_.GetLeAclConnection(connection_handle);
+
+  // If the CS configuration corresponding to Config_ID does not exist or is removed using the
+  // HCI_LE_CS_Remove_Config command, then the Controller shall return the error code Invalid HCI
+  // Command Parameters (0x12).
+  auto it = connection.cs_parameters.config_map.find(config_id);
+  if (it == connection.cs_parameters.config_map.end()) {
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  // If the Host issues this command when a CS procedure measurement is already enabled for
+  // the specified Config_ID in the Controller using the HCI_LE_CS_Procedure_Enable command,
+  // then the Controller shall return the error code Command Disallowed (0x0C).
+  if (connection.cs_parameters.config_map[config_id].enabled) {
+    return ErrorCode::COMMAND_DISALLOWED;
+  }
+
+  // If the number of channels available for Channel Sounding before the start of a new CS procedure
+  // measurement is less than 15, then the Controller shall return the error code Insufficient
+  // Channels (0x48).
+  // The specification mentions returning INSUFFICIENT_CHANNELS if the number of available channels
+  // is less than 15, Since channel usage is dynamically tracked in rootcanal and channel_map
+  // validity is checked in LeCsCreateConfig,this check is skipped here.
+
+  // If the Host issues this command with parameters that exceed the CS capabilities or any
+  // coexistence constraints, then the Controller shall return the error code Rejected Due to
+  // Limited Resources (0x0D).
+  if (min_subevent_len < 1250 || min_subevent_len > 3999999) {
+    INFO(id_, "Min_Subevent_Len {} is out of range (1250-3999999 us)", min_subevent_len);
+    return ErrorCode::CONNECTION_REJECTED_LIMITED_RESOURCES;
+  }
+  if (max_subevent_len < 1250 || max_subevent_len > 3999999) {
+    INFO(id_, "Max_Subevent_Len {} is out of range (1250-3999999 us)", max_subevent_len);
+    return ErrorCode::CONNECTION_REJECTED_LIMITED_RESOURCES;
+  }
+  if (min_subevent_len > max_subevent_len) {
+    INFO(id_, "Min_Subevent_Len {} is greater than Max_Subevent_Len {}", min_subevent_len,
+         max_subevent_len);
+    return ErrorCode::CONNECTION_REJECTED_LIMITED_RESOURCES;
+  }
+
+  if (tone_antenna_config_selection >=
+      properties_.cs_local_supported_capabilities.num_antennae_supported) {
+    return ErrorCode::CONNECTION_REJECTED_LIMITED_RESOURCES;
+  }
+
+  bool phy_supported = false;
+  switch (phy) {
+    case bluetooth::hci::CsPhy::LE_1M_PHY:
+      phy_supported = true;
+      break;
+    case bluetooth::hci::CsPhy::LE_2M_PHY:
+      phy_supported = (properties_.cs_local_supported_capabilities.cs_sync_phys_supported &
+                       (1 << static_cast<uint8_t>(bluetooth::hci::CsPhy::LE_2M_PHY))) != 0;
+      break;
+    case bluetooth::hci::CsPhy::LE_CODED_PHY_S2:
+      phy_supported = (properties_.cs_local_supported_capabilities.cs_sync_phys_supported &
+                       (1 << static_cast<uint8_t>(bluetooth::hci::CsPhy::LE_CODED_PHY_S2))) != 0;
+      break;
+    case bluetooth::hci::CsPhy::LE_CODED_PHY_S8:
+    default:
+      break;
+  }
+
+  if (!phy_supported) {
+    return ErrorCode::CONNECTION_REJECTED_LIMITED_RESOURCES;
+  }
+
+  LeCsProcedureParameters procedure_parameters = {
+          .max_procedure_len = max_procedure_len,
+          .min_procedure_interval = min_procedure_interval,
+          .max_procedure_interval = max_procedure_interval,
+          .max_procedure_count = max_procedure_count,
+          .min_subevent_len = min_subevent_len,
+          .max_subevent_len = max_subevent_len,
+          .tone_antenna_config_selection = tone_antenna_config_selection,
+          .phy = phy,
+          .tx_power_delta = tx_power_delta,
+          .preferred_peer_antenna = preferred_peer_antenna,
+          .snr_control_initiator = snr_control_initiator,
+          .snr_control_reflector = snr_control_reflector};
+
+  connection.cs_parameters.config_map[config_id].procedure_parameters = procedure_parameters;
+
+  return ErrorCode::SUCCESS;
+}
+
+ErrorCode LeController::LeCsProcedureEnable(uint16_t connection_handle, uint8_t config_id,
+                                            bluetooth::hci::Enable enable) {
+  // If the Host sends this command with a Connection_Handle that does not exist, or the
+  // Connection_Handle is not for an ACL, then the Controller shall return the error code Unknown
+  // Connection Identifier (0x02).
+  if (!connections_.HasLeAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+
+  auto& connection = connections_.GetLeAclConnection(connection_handle);
+
+  // If the CS configuration corresponding to Config_ID does not exist (or has been removed using
+  // the HCI_LE_CS_Remove_Config command), then the Controller shall return the error code Invalid
+  // HCI Command Parameters (0x12).
+  auto config_it = connection.cs_parameters.config_map.find(config_id);
+  if (config_it == connection.cs_parameters.config_map.end()) {
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  auto& cs_config = config_it->second;
+  // If the Host issues this command to enable a CS configuration identified by the Config_ID
+  // parameter before a corresponding HCI_LE_CS_Set_Procedure_Parameters command has been issued
+  // for the same Config_ID, then the Controller shall return the error code Command Disallowed
+  // (0x0C).
+  if (!cs_config.procedure_parameters.has_value()) {
+    return ErrorCode::COMMAND_DISALLOWED;
+  }
+
+  // If the CS procedure parameters associated with the given Config_ID exceed any scheduling or
+  // coexistence constraints at the time this command is issued, then the Controller shall return
+  // the error code Connection Rejected Due to Limited Resources (0x0D).
+  // Assume infinite bandwidth for now.
+
+  // If the Host issues this command to enable a CS configuration identified by the Config_ID
+  // parameter that is already enabled using the HCI_LE_CS_Procedure_Enable command, then the
+  // Controller shall return the error code Command Disallowed (0x0C).
+  if (cs_config.enabled) {
+    return ErrorCode::COMMAND_DISALLOWED;
+  }
+
+  // If the number of channels available for Channel Sounding before the start of a new CS procedure
+  // measurement is less than 15, then the Controller shall return the error code Insufficient
+  // Channels (0x48).
+  // The specification mentions returning INSUFFICIENT_CHANNELS if the number of available channels
+  // is less than 15, Since channel usage is dynamically tracked in rootcanal and channel_map
+  // validity is checked in LeCsCreateConfig,this check is skipped here.
+
+  auto convert_snr_control = [](bluetooth::hci::CsSnrControl snr_control) {
+    switch (snr_control) {
+      case bluetooth::hci::CsSnrControl::ADJUST_18_DB:
+        return 0x0;
+      case bluetooth::hci::CsSnrControl::ADJUST_21_DB:
+        return 0x1;
+      case bluetooth::hci::CsSnrControl::ADJUST_24_DB:
+        return 0x2;
+      case bluetooth::hci::CsSnrControl::ADJUST_27_DB:
+        return 0x3;
+      case bluetooth::hci::CsSnrControl::ADJUST_30_DB:
+        return 0x4;
+      case bluetooth::hci::CsSnrControl::NOT_APPLIED:
+        return 0x05;
+    }
+  };
+
+  if (enable == bluetooth::hci::Enable::ENABLED) {
+    const auto& params = cs_config.procedure_parameters.value();
+    SendLeLinkLayerPacket(model::packets::LlCsReqBuilder::Create(
+            connection.own_address.GetAddress(), connection.address.GetAddress(), config_id,
+            0 /* conn_event_count */, 0 /* offset_min */, 0 /* offset_max */,
+            params.max_procedure_len, 0 /* event_interval */, 1 /* subevents_per_event */,
+            0 /* subevent_interval */, params.min_subevent_len, params.min_procedure_interval,
+            params.max_procedure_count, params.tone_antenna_config_selection,
+            static_cast<uint8_t>(params.preferred_peer_antenna), static_cast<uint8_t>(params.phy),
+            params.tx_power_delta, convert_snr_control(params.snr_control_initiator),
+            convert_snr_control(params.snr_control_reflector)));
+    cs_config.enabled = true;
+  } else if (enable == bluetooth::hci::Enable::DISABLED) {
+    cs_config.enabled = false;
+    SendLeLinkLayerPacket(model::packets::LlCsTerminateReqBuilder::Create(
+            connection.own_address.GetAddress(), connection.address.GetAddress(), config_id,
+            1 /* procedure_count */, static_cast<uint8_t>(ErrorCode::SUCCESS)));
+  }
+
   return ErrorCode::SUCCESS;
 }
 
@@ -3405,6 +3683,224 @@ void LeController::IncomingLlCsSecurityRsp(LeAclConnection& connection,
   }
 }
 
+void LeController::IncomingLlCsReq(LeAclConnection& connection,
+                                   model::packets::LinkLayerPacketView incoming) {
+  auto req = model::packets::LlCsReqView::Create(incoming);
+  ASSERT(req.IsValid());
+
+  // If the remote Link Layer sends an LL_CS_REQ PDU when the Channel Sounding (Host Support)
+  // feature bit is not set in the local Link Layer, the local Link Layer shall send an
+  // LL_REJECT_EXT_IND PDU with the error code Unsupported Remote Feature / Unsupported LMP
+  // Feature (0x1A).
+  if (!channel_sounding_host_support_) {
+    SendLeLinkLayerPacket(model::packets::LlCsRspBuilder::Create(
+            connection.own_address.GetAddress(), connection.address.GetAddress(),
+            static_cast<uint8_t>(ErrorCode::UNSUPPORTED_REMOTE_OR_LMP_FEATURE), 0 /* config_id */,
+            0 /* conn_event_count */, 0 /* offset_min */, 0 /* offset_max */,
+            0 /* event_interval */, 0 /* subevents_per_event */, 0 /* subevent_interval */,
+            0 /* subevent_len */, 0 /* aci */, 0 /* phy */, 0 /* pwr_delta */));
+    return;
+  }
+
+  //  If the CS configuration ID received during the CS Start procedure is not properly created,
+  //  then the receiving Link Layer shall immediately respond with an LL_REJECT_EXT_IND PDU with
+  //  the error code Invalid LL Parameters (0x1E).
+  auto config_id = req.GetConfigId();
+  auto it = connection.cs_parameters.config_map.find(config_id);
+  if (it == connection.cs_parameters.config_map.end()) {
+    SendLeLinkLayerPacket(model::packets::LlCsRspBuilder::Create(
+            connection.own_address.GetAddress(), connection.address.GetAddress(),
+            static_cast<uint8_t>(ErrorCode::INVALID_LMP_OR_LL_PARAMETERS), 0 /* config_id */,
+            0 /* conn_event_count */, 0 /* offset_min */, 0 /* offset_max */,
+            0 /* event_interval */, 0 /* subevents_per_event */, 0 /* subevent_interval */,
+            0 /* subevent_len */, 0 /* aci */, 0 /* phy */, 0 /* pwr_delta */));
+    return;
+  }
+
+  if (connection.cs_parameters.iv == 0) {
+    SendLeLinkLayerPacket(model::packets::LlCsRspBuilder::Create(
+            connection.own_address.GetAddress(), connection.address.GetAddress(),
+            static_cast<uint8_t>(ErrorCode::PIN_OR_KEY_MISSING), config_id,
+            0 /* conn_event_count */, 0 /* offset_min */, 0 /* offset_max */,
+            0 /* event_interval */, 0 /* subevents_per_event */, 0 /* subevent_interval */,
+            0 /* subevent_len */, 0 /* aci */, 0 /* phy */, 0 /* pwr_delta */));
+    return;
+  }
+
+  if (!connection.cs_parameters.remote_fae_table.has_value()) {
+    SendLeLinkLayerPacket(model::packets::LlCsRspBuilder::Create(
+            connection.own_address.GetAddress(), connection.address.GetAddress(),
+            static_cast<uint8_t>(ErrorCode::COMMAND_DISALLOWED), config_id,
+            0 /* conn_event_count */, 0 /* offset_min */, 0 /* offset_max */,
+            0 /* event_interval */, 0 /* subevents_per_event */, 0 /* subevent_interval */,
+            0 /* subevent_len */, 0 /* aci */, 0 /* phy */, 0 /* pwr_delta */));
+    return;
+  }
+
+  // If the receiving Link Layer is in the Peripheral role and accepts the parameters received in
+  // the LL_CS_REQ PDU or chooses to select alternative parameters, then it shall send an
+  // LL_CS_RSP PDU.
+  if (connection.role == bluetooth::hci::Role::PERIPHERAL) {
+    SendLeLinkLayerPacket(model::packets::LlCsRspBuilder::Create(
+            connection.own_address.GetAddress(), connection.address.GetAddress(),
+            static_cast<uint8_t>(ErrorCode::SUCCESS), config_id, req.GetConnEventCount(),
+            req.GetOffsetMin(), req.GetOffsetMax(), req.GetEventInterval(),
+            req.GetSubeventsPerEvent(), req.GetSubeventInterval(), req.GetSubeventLen(),
+            req.GetAci(), req.GetPhy(), req.GetPwrDelta()));
+  } else {
+    SendLeLinkLayerPacket(model::packets::LlCsIndBuilder::Create(
+            connection.own_address.GetAddress(), connection.address.GetAddress(),
+            static_cast<uint8_t>(ErrorCode::SUCCESS), config_id, req.GetConnEventCount(),
+            req.GetOffsetMin(), req.GetEventInterval(), req.GetSubeventsPerEvent(),
+            req.GetSubeventInterval(), req.GetSubeventLen(), req.GetAci(), req.GetPhy(),
+            req.GetPwrDelta()));
+
+    // This event shall be generated when the local or remote Controller has scheduled a new CS
+    // procedure measurement or disabled an ongoing CS procedure measurement as a result of an
+    // HCI_LE_CS_Procedure_Enable command. When a new CS procedure measurement is enabled, the
+    // HCI_LE_CS_Procedure_Enable_Complete event shall be sent to the Host after the LL_CS_IND is
+    // transmitted and before any CS subevent results are available.
+    if (IsLeEventUnmasked(SubeventCode::LE_CS_PROCEDURE_ENABLE_COMPLETE)) {
+      uint8_t config_id = req.GetConfigId();
+      auto config_it = connection.cs_parameters.config_map.find(config_id);
+      if (config_it != connection.cs_parameters.config_map.end()) {
+        const auto& params = config_it->second.procedure_parameters.value();
+        send_event_(bluetooth::hci::LeCsProcedureEnableCompleteBuilder::Create(
+                ErrorCode::SUCCESS, connection.handle, config_id, bluetooth::hci::Enable::ENABLED,
+                params.tone_antenna_config_selection, params.tx_power_delta, req.GetSubeventLen(),
+                req.GetSubeventsPerEvent(), req.GetSubeventInterval(), req.GetEventInterval(),
+                params.min_procedure_interval, params.max_procedure_count,
+                params.max_procedure_len));
+      }
+    }
+  }
+}
+
+void LeController::IncomingLlCsRsp(LeAclConnection& connection,
+                                   model::packets::LinkLayerPacketView incoming) {
+  if (!channel_sounding_host_support_) {
+    return;
+  }
+
+  auto rsp = model::packets::LlCsRspView::Create(incoming);
+  ASSERT(rsp.IsValid());
+
+  // If the receiving Link Layer is in the Peripheral role ...
+  // This packet is sent by Peripheral to Central.
+  // So we are Central.
+  if (connection.role == bluetooth::hci::Role::CENTRAL) {
+    // When a Link Layer in the Central role receives either an LL_CS_REQ PDU or an LL_CS_RSP PDU,
+    // it shall either prepare to start the CS procedure by replying with an LL_CS_IND PDU or it
+    // shall cancel the CS Start procedure by replying with an LL_REJECT_EXT_IND PDU with the
+    // appropriate error code.
+    SendLeLinkLayerPacket(model::packets::LlCsIndBuilder::Create(
+            connection.own_address.GetAddress(), connection.address.GetAddress(),
+            static_cast<uint8_t>(ErrorCode::SUCCESS), rsp.GetConfigId(), rsp.GetConnEventCount(),
+            rsp.GetOffsetMin(), rsp.GetEventInterval(), rsp.GetSubeventsPerEvent(),
+            rsp.GetSubeventInterval(), rsp.GetSubeventLen(), rsp.GetAci(), rsp.GetPhy(),
+            rsp.GetPwrDelta()));
+
+    if (IsLeEventUnmasked(SubeventCode::LE_CS_PROCEDURE_ENABLE_COMPLETE)) {
+      uint8_t config_id = rsp.GetConfigId();
+      auto config_it = connection.cs_parameters.config_map.find(config_id);
+      if (config_it != connection.cs_parameters.config_map.end()) {
+        const auto& params = config_it->second.procedure_parameters.value();
+        send_event_(bluetooth::hci::LeCsProcedureEnableCompleteBuilder::Create(
+                ErrorCode::SUCCESS, connection.handle, config_id, bluetooth::hci::Enable::ENABLED,
+                params.tone_antenna_config_selection, params.tx_power_delta, rsp.GetSubeventLen(),
+                rsp.GetSubeventsPerEvent(), rsp.GetSubeventInterval(), rsp.GetEventInterval(),
+                params.min_procedure_interval, params.max_procedure_count,
+                params.max_procedure_len));
+      }
+    }
+  }
+}
+
+void LeController::IncomingLlCsChannelMapInd(LeAclConnection& connection,
+                                             model::packets::LinkLayerPacketView incoming) {
+  auto ind = model::packets::LlCsChannelMapIndView::Create(incoming);
+  ASSERT(ind.IsValid());
+
+  for (auto& [_, config] : connection.cs_parameters.config_map) {
+    if (config.enabled) {
+      config.channel_map = ind.GetChannelMap();
+    }
+  }
+}
+
+void LeController::IncomingLlCsInd(LeAclConnection& connection,
+                                   model::packets::LinkLayerPacketView incoming) {
+  if (!channel_sounding_host_support_) {
+    return;
+  }
+
+  auto ind = model::packets::LlCsIndView::Create(incoming);
+  ASSERT(ind.IsValid());
+
+  if (connection.role == bluetooth::hci::Role::PERIPHERAL) {
+    INFO(id_, "CS procedure started (Config ID: {})", ind.GetConfigId());
+
+    if (IsLeEventUnmasked(SubeventCode::LE_CS_PROCEDURE_ENABLE_COMPLETE)) {
+      uint8_t config_id = ind.GetConfigId();
+      auto config_it = connection.cs_parameters.config_map.find(config_id);
+      if (config_it != connection.cs_parameters.config_map.end()) {
+        const auto& params = config_it->second.procedure_parameters.value();
+        send_event_(bluetooth::hci::LeCsProcedureEnableCompleteBuilder::Create(
+                ErrorCode::SUCCESS, connection.handle, config_id, bluetooth::hci::Enable::ENABLED,
+                params.tone_antenna_config_selection, params.tx_power_delta, ind.GetSubeventLen(),
+                ind.GetSubeventsPerEvent(), ind.GetSubeventInterval(), ind.GetEventInterval(),
+                params.min_procedure_interval, params.max_procedure_count,
+                params.max_procedure_len));
+      }
+    }
+  }
+}
+
+void LeController::IncomingLlCsTerminateReq(LeAclConnection& connection,
+                                            model::packets::LinkLayerPacketView incoming) {
+  auto terminate_req = model::packets::LlCsTerminateReqView::Create(incoming);
+  ASSERT(terminate_req.IsValid());
+  auto error_code = terminate_req.GetErrorCode();
+  auto config_it = connection.cs_parameters.config_map.find(terminate_req.GetConfigId());
+
+  //  Additionally, the Link Layer receiving the LL_CS_TERMINATE_REQ PDU shall
+  //  respond by sending an LL_REJECT_EXT_IND PDU with error code Command
+  //  Disallowed (0x0C) if the Config_ID value received is not associated with the
+  //  CS procedure repeat series associated with the received ProcCount value.
+  if (config_it == connection.cs_parameters.config_map.end()) {
+    DEBUG(id_, "Config ID {} not found", terminate_req.GetConfigId());
+    error_code = static_cast<uint8_t>(ErrorCode::COMMAND_DISALLOWED);
+  }
+
+  SendLeLinkLayerPacket(model::packets::LlCsTerminateRspBuilder::Create(
+          connection.own_address.GetAddress(), connection.address.GetAddress(),
+          terminate_req.GetConfigId(), terminate_req.GetProcedureCount(), error_code));
+
+  if (IsLeEventUnmasked(SubeventCode::LE_CS_PROCEDURE_ENABLE_COMPLETE)) {
+    send_event_(bluetooth::hci::LeCsProcedureEnableCompleteBuilder::Create(
+            static_cast<ErrorCode>(error_code), connection.handle, terminate_req.GetConfigId(),
+            bluetooth::hci::Enable::DISABLED, 0 /* tone_antenna_config_selection */,
+            0 /* selected_tx_power */, 0 /* subevent_len */, 0 /* subevents_per_event */,
+            0 /* subevent_interval */, 0 /* event_interval */, 0 /*procedure_interval */,
+            0 /*procedure_count*/, 0 /*max_procedure_len*/));
+  }
+}
+
+void LeController::IncomingLlCsTerminateRsp(LeAclConnection& connection,
+                                            model::packets::LinkLayerPacketView incoming) {
+  auto terminate_rsp = model::packets::LlCsTerminateRspView::Create(incoming);
+  ASSERT(terminate_rsp.IsValid());
+
+  if (IsLeEventUnmasked(SubeventCode::LE_CS_PROCEDURE_ENABLE_COMPLETE)) {
+    send_event_(bluetooth::hci::LeCsProcedureEnableCompleteBuilder::Create(
+            static_cast<ErrorCode>(terminate_rsp.GetErrorCode()), connection.handle,
+            terminate_rsp.GetConfigId(), bluetooth::hci::Enable::DISABLED,
+            0 /* tone_antenna_config_selection */, 0 /* selected_tx_power */, 0 /* subevent_len */,
+            0 /* subevents_per_event */, 0 /* subevent_interval */, 0 /* event_interval */,
+            0 /*procedure_interval */, 0 /*procedure_count*/, 0 /*max_procedure_len*/));
+  }
+}
+
 void LeController::SetSecureSimplePairingSupport(bool enable) {
   uint64_t bit = 0x1;
   secure_simple_pairing_host_support_ = enable;
@@ -3670,6 +4166,18 @@ void LeController::IncomingPacket(model::packets::LinkLayerPacketView incoming, 
       break;
     case model::packets::PacketType::LL_CS_SEC_RSP:
       IncomingLlCsSecurityRsp(connection, incoming);
+      break;
+    case model::packets::PacketType::LL_CS_REQ:
+      IncomingLlCsReq(connection, incoming);
+      break;
+    case model::packets::PacketType::LL_CS_RSP:
+      IncomingLlCsRsp(connection, incoming);
+      break;
+    case model::packets::PacketType::LL_CS_IND:
+      IncomingLlCsInd(connection, incoming);
+      break;
+    case model::packets::PacketType::LL_CS_CHANNEL_MAP_IND:
+      IncomingLlCsChannelMapInd(connection, incoming);
       break;
     default:
       WARNING(id_, "Dropping unhandled packet of type {}",
@@ -4983,6 +5491,9 @@ uint16_t LeController::HandleLeConnection(AddressWithType address, AddressWithTy
                                     .conn_supervision_timeout = supervision_timeout},
           default_subrate_parameters_);
 
+  // Start the keepalive timer for the connection.
+  CheckExpiringConnection(handle);
+
   if (IsLeEventUnmasked(SubeventCode::LE_ENHANCED_CONNECTION_COMPLETE_V1)) {
     AddressWithType peer_resolved_address = resolved_address;
     Address peer_resolvable_private_address;
@@ -6051,16 +6562,18 @@ void LeController::Reset() {
   default_tx_phys_ = properties_.LeSupportedPhys();
   default_rx_phys_ = properties_.LeSupportedPhys();
   default_subrate_parameters_ = LeAclSubrateParameters{};
+  le_cs_channel_classification_ = {0xfc, 0xff, 0x7f, 0xfc, 0xff, 0xff, 0xff, 0xff, 0xff, 0x1f};
+  last_le_cs_set_channel_classification_time_ = std::chrono::steady_clock::time_point::min();
 
   ll_.reset(link_layer_create(controller_ops_));
 }
 
 void LeController::CheckExpiringConnection(uint16_t handle) {
-  if (!connections_.HasAclHandle(handle)) {
+  if (!connections_.HasLeAclHandle(handle)) {
     return;
   }
 
-  auto& connection = connections_.GetAclConnection(handle);
+  auto& connection = connections_.GetLeAclConnection(handle);
 
   if (connection.HasExpired()) {
     Disconnect(handle, ErrorCode::CONNECTION_TIMEOUT, ErrorCode::CONNECTION_TIMEOUT);
@@ -6068,8 +6581,8 @@ void LeController::CheckExpiringConnection(uint16_t handle) {
   }
 
   if (connection.IsNearExpiring()) {
-    SendLeLinkLayerPacket(
-            model::packets::PingRequestBuilder::Create(connection.own_address, connection.address));
+    SendLeLinkLayerPacket(model::packets::PingRequestBuilder::Create(
+            connection.own_address.GetAddress(), connection.address.GetAddress()));
     ScheduleTask(std::chrono::duration_cast<milliseconds>(connection.TimeUntilExpired()),
                  [this, handle] { CheckExpiringConnection(handle); });
     return;

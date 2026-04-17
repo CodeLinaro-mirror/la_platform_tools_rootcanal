@@ -517,6 +517,9 @@ public:
   // 7.8.66
   void LeExtendedCreateConnectionV1(CommandView command);
 
+  // 7.8.74
+  void LeReadTransmitPower(CommandView command);
+
   // 7.8.77
   void LeSetPrivacyMode(CommandView command);
 
@@ -526,11 +529,20 @@ public:
   // 7.8.115
   void LeSetHostFeatureV1(CommandView command);
 
+  // 7.8.117
+  void LeEnhancedReadTransmitPowerLevel(CommandView command);
+
+  // 7.8.118
+  void LeReadRemoteTransmitPowerLevel(CommandView command);
+
+  // 7.8.121
+  void LeSetTransmitPowerReportingEnable(CommandView command);
+
   // 7.8.123 - 7.8.124
   void LeSetDefaultSubrate(CommandView command);
   void LeSubrateRequest(CommandView command);
 
-  // 7.8.130 - 7.8.137
+  // 7.8.130 - 7.8.141
   void LeCsReadLocalSupportedCapabilities(CommandView command);
   void LeCsReadRemoteSupportedCapabilities(CommandView command);
   void LeCsWriteCachedRemoteSupportedCapabilities(CommandView command);
@@ -540,7 +552,9 @@ public:
   void LeCsWriteCachedRemoteFaeTable(CommandView command);
   void LeCsCreateConfig(CommandView command);
   void LeCsRemoveConfig(CommandView command);
-
+  void LeCsSetChannelClassification(CommandView command);
+  void LeCsSetProcedureParameters(CommandView command);
+  void LeCsProcedureEnable(CommandView command);
 
   // Vendor-specific Commands
   void RootcanalCommand(CommandView command);

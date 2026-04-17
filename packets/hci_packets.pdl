@@ -963,6 +963,7 @@ enum ErrorCode: 8 {
   LIMIT_REACHED = 0x43,
   OPERATION_CANCELLED_BY_HOST = 0x44,
   PACKET_TOO_LONG = 0x45,
+  INSUFFICIENT_CHANNELS = 0x48,
 }
 
 // Events that are defined with their respective commands
@@ -4726,6 +4727,7 @@ packet LeRemoveIsoDataPathComplete : CommandComplete (command_op_code = LE_REMOV
 enum LeHostFeatureBits : 8 {
   CONNECTED_ISO_STREAM_HOST_SUPPORT = 32,
   CONNECTION_SUBRATING_HOST_SUPPORT = 38,
+  CHANNEL_SOUNDING_HOST_SUPPORT = 47,
 }
 
 packet LeSetHostFeatureV1 : Command (op_code = LE_SET_HOST_FEATURE_V1) {
@@ -4982,7 +4984,7 @@ packet LeCsReadRemoteSupportedCapabilitiesComplete : LeMetaEvent (subevent_code 
   _reserved_ : 4,
   num_config_supported : 8,
   max_consecutive_procedures_supported : 16,
-  num_antennas_supported : 8,
+  num_antennae_supported : 8,
   max_antenna_paths_supported : 8,
   roles_supported : 8,
   modes_supported : 8,
@@ -5224,6 +5226,7 @@ packet LeCsSetChannelClassification : Command (op_code = LE_CS_SET_CHANNEL_CLASS
 }
 
 packet LeCsSetChannelClassificationComplete : CommandComplete (command_op_code = LE_CS_SET_CHANNEL_CLASSIFICATION) {
+  status : ErrorCode,
 }
 
 enum CsPhy : 8 {
@@ -5262,7 +5265,7 @@ packet LeCsSetProcedureParameters  : Command (op_code = LE_CS_SET_PROCEDURE_PARA
   tone_antenna_config_selection : 8,
   phy : CsPhy,
   tx_power_delta : 8,
-  preferred_peer_antenna : 8,
+  preferred_peer_antenna : CsPreferredPeerAntenna,
   snr_control_initiator: CsSnrControl,
   snr_control_reflector: CsSnrControl,
 }
@@ -5341,6 +5344,41 @@ packet LeCsTestEndStatus : CommandStatus (command_op_code = LE_CS_TEST_END) {
 
 packet LeCsTestEndComplete : LeMetaEvent (subevent_code = LE_CS_TEST_END_COMPLETE) {
   status : ErrorCode,
+}
+
+struct CsStepData {
+  step_mode : 8,
+  step_channel : 8,
+  _size_(step_data) : 8,
+  step_data : 8[],
+}
+
+packet LeCsSubeventResult : LeMetaEvent (subevent_code = LE_CS_SUBEVENT_RESULT) {
+  connection_handle : 12,
+  _reserved_ : 4,
+  config_id : 8,
+  start_acl_conn_event_counter : 16,
+  procedure_counter : 16,
+  frequency_compensation : 16,
+  reference_power_level : 8,
+  procedure_done_status : 4,
+  subevent_done_status : 4,
+  abort_reason : 8,
+  num_antenna_paths : 8,
+  _count_(steps) : 8,
+  steps : CsStepData[],
+}
+
+packet LeCsSubeventResultContinue : LeMetaEvent (subevent_code = LE_CS_SUBEVENT_RESULT_CONTINUE) {
+  connection_handle : 12,
+  _reserved_ : 4,
+  config_id : 8,
+  procedure_done_status : 4,
+  subevent_done_status : 4,
+  abort_reason : 8,
+  num_antenna_paths : 8,
+  _count_(steps) : 8,
+  steps : CsStepData[],
 }
 
 // HCI Event Packets
@@ -6494,6 +6532,7 @@ struct VendorCapabilities_V_1_06 {
   a2dp_offload_v2_support: 8,
   iso_link_feedback_support: 8,
   sniff_offload_support: 8,
+  big_set_channel_map_classification_support: 16,
   vendor_connection_handle_min : 16,
   vendor_connection_handle_max : 16,
 }

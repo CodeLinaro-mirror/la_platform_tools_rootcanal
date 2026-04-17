@@ -36,6 +36,9 @@ tests = [
     "LL.CON_.INI.BV_11_C",
     "LL.CON_.PER.BV_40_C",
     "LL.CON_.PER.BV_42_C",
+    "LL.CS.CEN.INI.BV_03_C",
+    "LL.CS.PER.INI.BV_02_C",
+    "LL.CS.cache_behavior",
     "LL.DDI.ADV.BV_01_C",
     "LL.DDI.ADV.BV_02_C",
     "LL.DDI.ADV.BV_03_C",
@@ -71,11 +74,13 @@ tests = [
     "LMP.LIH.BV_143_C",
     "LMP.LIH.BV_144_C",
     "LMP.LIH.BV_149_C",
+    "LL.connection_keepalive",
     "LL.scan_collision",
     "LL.scan_concurrency",
     "LL.scan_timeout",
     "LL.cis_disconnection",
     "LL.cig_reconfiguration",
+    "LMP.connection_keepalive",
     "LMP.page_collision",
 ]
 
