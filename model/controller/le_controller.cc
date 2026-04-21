@@ -2935,12 +2935,12 @@ ErrorCode LeController::LeCsRemoveConfig(uint16_t connection_handle, uint8_t con
 
   SendLeLinkLayerPacket(model::packets::LlCsConfigReqBuilder::Create(
           connection.own_address.GetAddress(), connection.address.GetAddress(), config_id,
-          0 /* Delete */, {} /* channel_map */, 0 /* channel_map_repetition */,
-          0 /* main_mode_type */, 0 /* sub_mode_type */, 0 /* min_main_mode_steps */,
-          0 /* max_main_mode_steps */, 0 /* main_mode_repetition */, 0 /* mode_0_steps */,
-          0 /* cs_sync_phy */, 0 /* rtt_type */, 0 /* role */, 0 /* channel_selection_type */,
-          0 /* ch3c_shape */, 0 /* ch3c_jump */, 0 /* t_ip1_time */, 0 /* t_ip2_time */,
-          0 /* t_fcs_time */, 0 /* t_pm_time */));
+          0 /* Delete */, std::array<uint8_t, 10>{} /* channel_map */,
+          0 /* channel_map_repetition */, 1 /* main_mode_type */, 0xff /* sub_mode_type */,
+          0 /* min_main_mode_steps */, 0 /* max_main_mode_steps */, 0 /* main_mode_repetition */,
+          0 /* mode_0_steps */, 1 /* cs_sync_phy */, 0 /* rtt_type */, 0 /* role */,
+          0 /* channel_selection_type */, 0 /* ch3c_shape */, 0 /* ch3c_jump */, 0 /* t_ip1_time */,
+          0 /* t_ip2_time */, 0 /* t_fcs_time */, 0 /* t_pm_time */));
 
   connection.cs_parameters.config_map.erase(it);
 
@@ -3550,23 +3550,44 @@ void LeController::IncomingLlCsConfigReq(LeAclConnection& connection,
   // remote Controller for the CS configuration identified by Config_ID or when a CS configuration
   // is created only with local context.
   if (IsLeEventUnmasked(SubeventCode::LE_CS_CONFIG_COMPLETE)) {
-    // LL Action 1 -> HCI Config Created (1)
-    // LL Action 0 -> HCI Config Removed (0)
-    bluetooth::hci::CsAction event_action = action == 1 ? bluetooth::hci::CsAction::CONFIG_CREATED
-                                                        : bluetooth::hci::CsAction::CONFIG_REMOVED;
+    auto build_cs_config_event = [&](bluetooth::hci::CsAction action_type) {
 
-    send_event_(bluetooth::hci::LeCsConfigCompleteBuilder::Create(
-            ErrorCode::SUCCESS, connection.handle, config_id, event_action,
-            static_cast<bluetooth::hci::CsMainModeType>(req.GetMainModeType()),
-            static_cast<bluetooth::hci::CsSubModeType>(req.GetSubModeType()),
-            req.GetMinMainModeSteps(), req.GetMaxMainModeSteps(), req.GetMainModeRepetition(),
-            req.GetMode0Steps(), static_cast<bluetooth::hci::CsRole>(local_role),
-            static_cast<bluetooth::hci::CsRttType>(req.GetRttType()),
-            static_cast<bluetooth::hci::CsSyncPhy>(req.GetCsSyncPhy()), req.GetChannelMap(),
-            req.GetChannelMapRepetition(),
-            static_cast<bluetooth::hci::CsChannelSelectionType>(req.GetChannelSelectionType()),
-            static_cast<bluetooth::hci::CsCh3cShape>(req.GetCh3CShape()), 0 /*reserved*/,
-            req.GetCh3CJump(), req.GetTIp1(), req.GetTIp2(), req.GetTFcs(), req.GetTPm()));
+    bluetooth::hci::CsMainModeType main_mode = bluetooth::hci::CsMainModeType::MODE_1;
+    bluetooth::hci::CsSubModeType sub_mode = bluetooth::hci::CsSubModeType::UNUSED;
+    bluetooth::hci::CsRole role = bluetooth::hci::CsRole::INITIATOR;
+    bluetooth::hci::CsRttType rtt = bluetooth::hci::CsRttType::RTT_AA_ONLY;
+    bluetooth::hci::CsSyncPhy sync_phy = bluetooth::hci::CsSyncPhy::LE_1M_PHY;
+    bluetooth::hci::CsChannelSelectionType channel_selection =
+        bluetooth::hci::CsChannelSelectionType::TYPE_3B;
+    bluetooth::hci::CsCh3cShape shape = bluetooth::hci::CsCh3cShape::HAT_SHAPE;
+
+
+    if (action_type == bluetooth::hci::CsAction::CONFIG_CREATED) {
+      main_mode = static_cast<bluetooth::hci::CsMainModeType>(req.GetMainModeType());
+      sub_mode = static_cast<bluetooth::hci::CsSubModeType>(req.GetSubModeType());
+      role = static_cast<bluetooth::hci::CsRole>(local_role);
+      rtt = static_cast<bluetooth::hci::CsRttType>(req.GetRttType());
+      sync_phy = static_cast<bluetooth::hci::CsSyncPhy>(req.GetCsSyncPhy());
+      channel_selection =
+          static_cast<bluetooth::hci::CsChannelSelectionType>(req.GetChannelSelectionType());
+      shape = static_cast<bluetooth::hci::CsCh3cShape>(req.GetCh3CShape());
+    }
+
+    return bluetooth::hci::LeCsConfigCompleteBuilder::Create(
+        ErrorCode::SUCCESS, connection.handle, config_id, action_type,
+        main_mode, sub_mode, req.GetMinMainModeSteps(), req.GetMaxMainModeSteps(),
+        req.GetMainModeRepetition(), req.GetMode0Steps(), role, rtt, sync_phy,
+        req.GetChannelMap(), req.GetChannelMapRepetition(), channel_selection, shape,
+        0 /*reserved*/, req.GetCh3CJump(), req.GetTIp1(), req.GetTIp2(), req.GetTFcs(),
+        req.GetTPm());
+};
+
+
+    bluetooth::hci::CsAction final_action = (action == 1)
+    ? bluetooth::hci::CsAction::CONFIG_CREATED
+    : bluetooth::hci::CsAction::CONFIG_REMOVED;
+
+    send_event_(build_cs_config_event(final_action));
   }
 }
 
