@@ -3600,7 +3600,11 @@ void LeController::IncomingLlCsConfigRsp(LeAclConnection& connection,
     return;
   }
 
-  const auto& config = it->second;
+  const auto config = it->second;
+
+  if (error_code != ErrorCode::SUCCESS) {
+    connection.cs_parameters.config_map.erase(it);
+  }
 
   if (IsLeEventUnmasked(SubeventCode::LE_CS_CONFIG_COMPLETE)) {
     send_event_(bluetooth::hci::LeCsConfigCompleteBuilder::Create(
