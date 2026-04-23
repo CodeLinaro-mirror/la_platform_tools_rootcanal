@@ -62,10 +62,12 @@ class LeFeatures:
     def __init__(self, le_features: int):
         self.mask = le_features
         self.ll_privacy = (le_features & hci.LLFeaturesBits.LL_PRIVACY) != 0
-        self.le_extended_advertising = (le_features &
-                                        hci.LLFeaturesBits.LE_EXTENDED_ADVERTISING) != 0
-        self.le_periodic_advertising = (le_features &
-                                        hci.LLFeaturesBits.LE_PERIODIC_ADVERTISING) != 0
+        self.le_extended_advertising = (
+            le_features & hci.LLFeaturesBits.LE_EXTENDED_ADVERTISING
+        ) != 0
+        self.le_periodic_advertising = (
+            le_features & hci.LLFeaturesBits.LE_PERIODIC_ADVERTISING
+        ) != 0
 
 
 def generate_rpa(irk: bytes) -> hci.Address:
@@ -82,27 +84,37 @@ class Controller:
     packets into the controller, and receive_hci, receive_ll to
     catch outgoing HCI packets of LL pdus."""
 
-    def __init__(self,
-                 address: hci.Address,
-                 ranging_mode: RangingMode = RangingMode.FIXED,
-                 fixed_distance_cm: int = 100,
-                 min_random_distance_cm: int = 30,
-                 max_random_distance_cm: int = 500):
+    def __init__(
+        self,
+        address: hci.Address,
+        ranging_mode: RangingMode = RangingMode.FIXED,
+        fixed_distance_cm: int = 100,
+        min_random_distance_cm: int = 30,
+        max_random_distance_cm: int = 500,
+    ):
         self.ranging_mode = ranging_mode
         self.fixed_distance_cm = fixed_distance_cm
         self.min_random_distance_cm = min_random_distance_cm
         self.max_random_distance_cm = max_random_distance_cm
+
         # Write the callbacks for handling HCI and LL send events.
         @SEND_HCI_FUNC
-        def send_hci(cookie: c_void_p, idc: c_int, data: POINTER(c_ubyte), data_len: c_size_t):
+        def send_hci(
+            cookie: c_void_p, idc: c_int, data: POINTER(c_ubyte), data_len: c_size_t
+        ):
             packet = []
             for n in range(data_len):
                 packet.append(data[n])
             self.receive_hci_(int(idc), bytes(packet))
 
         @SEND_LL_FUNC
-        def send_ll(cookie: c_void_p, data: POINTER(c_ubyte), data_len: c_size_t, phy: c_int,
-                    tx_power: c_int):
+        def send_ll(
+            cookie: c_void_p,
+            data: POINTER(c_ubyte),
+            data_len: c_size_t,
+            phy: c_int,
+            tx_power: c_int,
+        ):
             packet = []
             for n in range(data_len):
                 packet.append(data[n])
@@ -124,7 +136,9 @@ class Controller:
             if self.ranging_mode == RangingMode.FIXED:
                 return self.fixed_distance_cm
             elif self.ranging_mode == RangingMode.RANDOM:
-                return random.randint(self.min_random_distance_cm, self.max_random_distance_cm)
+                return random.randint(
+                    self.min_random_distance_cm, self.max_random_distance_cm
+                )
             elif self.ranging_mode == RangingMode.COOKIE_BASED:
                 # Base the distance on the memory addresses of the controllers.
                 # This is arbitrary but makes the result dependent on the pair.
@@ -132,7 +146,9 @@ class Controller:
                 addr2 = cookie2.value if cookie2 else 0
                 seed = addr1 ^ addr2
                 random.seed(seed)
-                return random.randint(self.min_random_distance_cm, self.max_random_distance_cm)
+                return random.randint(
+                    self.min_random_distance_cm, self.max_random_distance_cm
+                )
             else:
                 return 100  # Default fallback
 
@@ -141,10 +157,16 @@ class Controller:
         self.ranging_estimator_callback = RANGING_ESTIMATOR_FUNC(ranging_estimator)
 
         # Create a c++ controller instance.
-        self.instance = rootcanal.ffi_controller_new(c_char_p(address.address),
-                                                     self.send_hci_callback, self.send_ll_callback,
-                                                     None, self.ranging_estimator_callback, None,
-                                                     None, 0)
+        self.instance = rootcanal.ffi_controller_new(
+            c_char_p(address.address),
+            self.send_hci_callback,
+            self.send_ll_callback,
+            None,
+            self.ranging_estimator_callback,
+            None,
+            None,
+            0,
+        )
 
         self.address = address
         self.evt_queue = collections.deque()
@@ -183,34 +205,52 @@ class Controller:
     def send_cmd(self, cmd: hci.Command):
         print(f"--> sending HCI command {cmd.__class__.__name__}")
         data = cmd.serialize()
-        rootcanal.ffi_controller_receive_hci(c_void_p(self.instance), c_int(Idc.Cmd),
-                                             c_char_p(data), c_int(len(data)))
+        rootcanal.ffi_controller_receive_hci(
+            c_void_p(self.instance), c_int(Idc.Cmd), c_char_p(data), c_int(len(data))
+        )
 
     def send_iso(self, iso: hci.Iso):
         print(f"--> sending HCI iso pdu data={len(iso.payload)}[..]")
         data = iso.serialize()
-        rootcanal.ffi_controller_receive_hci(c_void_p(self.instance), c_int(Idc.Iso),
-                                             c_char_p(data), c_int(len(data)))
+        rootcanal.ffi_controller_receive_hci(
+            c_void_p(self.instance), c_int(Idc.Iso), c_char_p(data), c_int(len(data))
+        )
 
-    def send_ll(self, pdu: ll.LinkLayerPacket, phy: Phy = Phy.LowEnergy, rssi: int = -90):
+    def send_ll(
+        self, pdu: ll.LinkLayerPacket, phy: Phy = Phy.LowEnergy, rssi: int = -90
+    ):
         print(f"--> sending LL pdu {pdu.__class__.__name__}")
         data = pdu.serialize()
-        rootcanal.ffi_controller_receive_ll(c_void_p(self.instance), c_char_p(data),
-                                            c_int(len(data)), c_int(phy), c_int(rssi))
+        rootcanal.ffi_controller_receive_ll(
+            c_void_p(self.instance),
+            c_char_p(data),
+            c_int(len(data)),
+            c_int(phy),
+            c_int(rssi),
+        )
 
-    def send_llcp(self,
-                  source_address: hci.Address,
-                  destination_address: hci.Address,
-                  pdu: llcp.LlcpPacket,
-                  phy: Phy = Phy.LowEnergy,
-                  rssi: int = -90):
+    def send_llcp(
+        self,
+        source_address: hci.Address,
+        destination_address: hci.Address,
+        pdu: llcp.LlcpPacket,
+        phy: Phy = Phy.LowEnergy,
+        rssi: int = -90,
+    ):
         print(f"--> sending LLCP pdu {pdu.__class__.__name__}")
-        ll_pdu = ll.Llcp(source_address=source_address,
-                         destination_address=destination_address,
-                         payload=pdu.serialize())
+        ll_pdu = ll.Llcp(
+            source_address=source_address,
+            destination_address=destination_address,
+            payload=pdu.serialize(),
+        )
         data = ll_pdu.serialize()
-        rootcanal.ffi_controller_receive_ll(c_void_p(self.instance), c_char_p(data),
-                                            c_int(len(data)), c_int(phy), c_int(rssi))
+        rootcanal.ffi_controller_receive_ll(
+            c_void_p(self.instance),
+            c_char_p(data),
+            c_int(len(data)),
+            c_int(phy),
+            c_int(rssi),
+        )
 
     async def start(self):
 
@@ -241,7 +281,7 @@ class Controller:
             raise Exception("ll queue not empty at stop()")
 
         if self.ll_queue:
-            for (packet, _) in self.ll_queue:
+            for packet, _ in self.ll_queue:
                 pdu = ll.LinkLayerPacket.parse_all(packet)
                 pdu.show()
             raise Exception("ll queue not empty at stop()")
@@ -284,8 +324,8 @@ class Controller:
 
 class Any:
     """Helper class that will match all other values.
-       Use an element of this class in expected packets to match any value
-      returned by the Controller stack."""
+     Use an element of this class in expected packets to match any value
+    returned by the Controller stack."""
 
     def __eq__(self, other) -> bool:
         return True
@@ -306,7 +346,7 @@ class ControllerTest(unittest.IsolatedAsyncioTestCase):
     Any = Any()
 
     def setUp(self):
-        self.controller = Controller(hci.Address('11:11:11:11:11:11'))
+        self.controller = Controller(hci.Address("11:11:11:11:11:11"))
 
     async def asyncSetUp(self):
         controller = self.controller
@@ -317,18 +357,27 @@ class ControllerTest(unittest.IsolatedAsyncioTestCase):
         # Reset the controller and enable all events and LE events.
         controller.send_cmd(hci.Reset())
         await controller.expect_evt(
-            hci.ResetComplete(status=ErrorCode.SUCCESS, num_hci_command_packets=1))
-        controller.send_cmd(hci.SetEventMask(event_mask=0xffffffffffffffff))
+            hci.ResetComplete(status=ErrorCode.SUCCESS, num_hci_command_packets=1)
+        )
+        controller.send_cmd(hci.SetEventMask(event_mask=0xFFFFFFFFFFFFFFFF))
         await controller.expect_evt(
-            hci.SetEventMaskComplete(status=ErrorCode.SUCCESS, num_hci_command_packets=1))
-        controller.send_cmd(hci.LeSetEventMask(le_event_mask=0xffffffffffffffff))
+            hci.SetEventMaskComplete(
+                status=ErrorCode.SUCCESS, num_hci_command_packets=1
+            )
+        )
+        controller.send_cmd(hci.LeSetEventMask(le_event_mask=0xFFFFFFFFFFFFFFFF))
         await controller.expect_evt(
-            hci.LeSetEventMaskComplete(status=ErrorCode.SUCCESS, num_hci_command_packets=1))
+            hci.LeSetEventMaskComplete(
+                status=ErrorCode.SUCCESS, num_hci_command_packets=1
+            )
+        )
 
         # Load the local supported features to be able to disable tests
         # that rely on unsupported features.
         controller.send_cmd(hci.LeReadLocalSupportedFeaturesPage0())
-        evt = await self.expect_cmd_complete(hci.LeReadLocalSupportedFeaturesPage0Complete)
+        evt = await self.expect_cmd_complete(
+            hci.LeReadLocalSupportedFeaturesPage0Complete
+        )
         controller.le_features = LeFeatures(evt.le_features)
 
     async def expect_evt(
@@ -362,7 +411,9 @@ class ControllerTest(unittest.IsolatedAsyncioTestCase):
 
                 self.assertTrue(False)
 
-    async def expect_cmd_complete(self, expected_evt: type, timeout: int = 3) -> hci.Event:
+    async def expect_cmd_complete(
+        self, expected_evt: type, timeout: int = 3
+    ) -> hci.Event:
         evt = await self.expect_evt(expected_evt, timeout=timeout)
         assert evt.status == ErrorCode.SUCCESS
         assert evt.num_hci_command_packets == 1
@@ -392,10 +443,12 @@ class ControllerTest(unittest.IsolatedAsyncioTestCase):
             iso.show()
             self.assertTrue(False)
 
-    async def expect_ll(self,
-                        expected_pdus: typing.Union[list, typing.Union[ll.LinkLayerPacket, type]],
-                        ignored_pdus: typing.Union[list, type] = [],
-                        timeout: int = 3) -> ll.LinkLayerPacket:
+    async def expect_ll(
+        self,
+        expected_pdus: typing.Union[list, typing.Union[ll.LinkLayerPacket, type]],
+        ignored_pdus: typing.Union[list, type] = [],
+        timeout: int = 3,
+    ) -> ll.LinkLayerPacket:
         if not isinstance(ignored_pdus, list):
             ignored_pdus = [ignored_pdus]
 
@@ -414,7 +467,10 @@ class ControllerTest(unittest.IsolatedAsyncioTestCase):
                 for expected_pdu in expected_pdus:
                     if isinstance(expected_pdu, type) and isinstance(pdu, expected_pdu):
                         return pdu
-                    if isinstance(expected_pdu, ll.LinkLayerPacket) and pdu == expected_pdu:
+                    if (
+                        isinstance(expected_pdu, ll.LinkLayerPacket)
+                        and pdu == expected_pdu
+                    ):
                         return pdu
 
                 print("received unexpected pdu:")
@@ -429,16 +485,21 @@ class ControllerTest(unittest.IsolatedAsyncioTestCase):
 
                 self.assertTrue(False)
 
-    async def expect_llcp(self,
-                          source_address: hci.Address,
-                          destination_address: hci.Address,
-                          expected_pdu: llcp.LlcpPacket,
-                          timeout: int = 3) -> llcp.LlcpPacket:
+    async def expect_llcp(
+        self,
+        source_address: hci.Address,
+        destination_address: hci.Address,
+        expected_pdu: llcp.LlcpPacket,
+        timeout: int = 3,
+    ) -> llcp.LlcpPacket:
         packet = await asyncio.wait_for(self.controller.receive_ll(), timeout=timeout)
         pdu = ll.LinkLayerPacket.parse_all(packet)
 
-        if (pdu.type != ll.PacketType.LLCP or pdu.source_address != source_address or
-                pdu.destination_address != destination_address):
+        if (
+            pdu.type != ll.PacketType.LLCP
+            or pdu.source_address != source_address
+            or pdu.destination_address != destination_address
+        ):
             print("received unexpected pdu:")
             pdu.show()
             print(f"expected pdu: {source_address} -> {destination_address}")
@@ -460,20 +521,30 @@ class ControllerTest(unittest.IsolatedAsyncioTestCase):
         self.controller.send_cmd(
             hci.LeSetHostFeatureV1(
                 bit_number=hci.LeHostFeatureBits.CONNECTED_ISO_STREAM_HOST_SUPPORT,
-                bit_value=hci.Enable.ENABLED))
+                bit_value=hci.Enable.ENABLED,
+            )
+        )
 
         await self.expect_evt(
-            hci.LeSetHostFeatureV1Complete(status=ErrorCode.SUCCESS, num_hci_command_packets=1))
+            hci.LeSetHostFeatureV1Complete(
+                status=ErrorCode.SUCCESS, num_hci_command_packets=1
+            )
+        )
 
     async def enable_channel_sounding_host_support(self):
         """Enable Channel Sounding Host Support in the LE Feature mask."""
         self.controller.send_cmd(
             hci.LeSetHostFeatureV1(
                 bit_number=hci.LeHostFeatureBits.CHANNEL_SOUNDING_HOST_SUPPORT,
-                bit_value=hci.Enable.ENABLED))
+                bit_value=hci.Enable.ENABLED,
+            )
+        )
 
         await self.expect_evt(
-            hci.LeSetHostFeatureV1Complete(status=ErrorCode.SUCCESS, num_hci_command_packets=1))
+            hci.LeSetHostFeatureV1Complete(
+                status=ErrorCode.SUCCESS, num_hci_command_packets=1
+            )
+        )
 
     async def establish_le_connection_central(self, peer_address: hci.Address) -> int:
         """Establish a connection with the selected peer as Central.
@@ -492,40 +563,53 @@ class ControllerTest(unittest.IsolatedAsyncioTestCase):
                         connection_interval_min=0x200,
                         connection_interval_max=0x200,
                         max_latency=0x6,
-                        supervision_timeout=0xc80,
+                        supervision_timeout=0xC80,
                         min_ce_length=0,
                         max_ce_length=0,
                     )
-                ]))
+                ],
+            )
+        )
 
         await self.expect_evt(
-            hci.LeExtendedCreateConnectionV1Status(status=ErrorCode.SUCCESS,
-                                                   num_hci_command_packets=1))
-
-        self.controller.send_ll(ll.LeLegacyAdvertisingPdu(
-            source_address=peer_address,
-            advertising_address_type=ll.AddressType.PUBLIC,
-            advertising_type=ll.LegacyAdvertisingType.ADV_IND,
-            advertising_data=[]),
-                                rssi=-16)
-
-        await self.expect_ll(
-            ll.LeConnect(source_address=self.controller.address,
-                         destination_address=peer_address,
-                         initiating_address_type=ll.AddressType.PUBLIC,
-                         advertising_address_type=ll.AddressType.PUBLIC,
-                         conn_interval=0x200,
-                         conn_peripheral_latency=0x6,
-                         conn_supervision_timeout=0xc80))
+            hci.LeExtendedCreateConnectionV1Status(
+                status=ErrorCode.SUCCESS, num_hci_command_packets=1
+            )
+        )
 
         self.controller.send_ll(
-            ll.LeConnectComplete(source_address=peer_address,
-                                 destination_address=self.controller.address,
-                                 initiating_address_type=ll.AddressType.PUBLIC,
-                                 advertising_address_type=ll.AddressType.PUBLIC,
-                                 conn_interval=0x200,
-                                 conn_peripheral_latency=0x6,
-                                 conn_supervision_timeout=0xc80))
+            ll.LeLegacyAdvertisingPdu(
+                source_address=peer_address,
+                advertising_address_type=ll.AddressType.PUBLIC,
+                advertising_type=ll.LegacyAdvertisingType.ADV_IND,
+                advertising_data=[],
+            ),
+            rssi=-16,
+        )
+
+        await self.expect_ll(
+            ll.LeConnect(
+                source_address=self.controller.address,
+                destination_address=peer_address,
+                initiating_address_type=ll.AddressType.PUBLIC,
+                advertising_address_type=ll.AddressType.PUBLIC,
+                conn_interval=0x200,
+                conn_peripheral_latency=0x6,
+                conn_supervision_timeout=0xC80,
+            )
+        )
+
+        self.controller.send_ll(
+            ll.LeConnectComplete(
+                source_address=peer_address,
+                destination_address=self.controller.address,
+                initiating_address_type=ll.AddressType.PUBLIC,
+                advertising_address_type=ll.AddressType.PUBLIC,
+                conn_interval=0x200,
+                conn_peripheral_latency=0x6,
+                conn_supervision_timeout=0xC80,
+            )
+        )
 
         connection_complete = await self.expect_evt(
             hci.LeEnhancedConnectionCompleteV1(
@@ -536,18 +620,24 @@ class ControllerTest(unittest.IsolatedAsyncioTestCase):
                 peer_address=peer_address,
                 connection_interval=0x200,
                 peripheral_latency=0x6,
-                supervision_timeout=0xc80,
-                central_clock_accuracy=hci.ClockAccuracy.PPM_500))
+                supervision_timeout=0xC80,
+                central_clock_accuracy=hci.ClockAccuracy.PPM_500,
+            )
+        )
 
         acl_connection_handle = connection_complete.connection_handle
         await self.expect_evt(
             hci.LeChannelSelectionAlgorithm(
                 connection_handle=acl_connection_handle,
-                channel_selection_algorithm=hci.ChannelSelectionAlgorithm.ALGORITHM_1))
+                channel_selection_algorithm=hci.ChannelSelectionAlgorithm.ALGORITHM_1,
+            )
+        )
 
         return acl_connection_handle
 
-    async def le_start_encryption(self, acl_connection_handle: int, peer_address: hci.Address):
+    async def le_start_encryption(
+        self, acl_connection_handle: int, peer_address: hci.Address
+    ):
         """Start LE encryption procedure."""
         controller = self.controller
         controller.send_cmd(
@@ -582,17 +672,22 @@ class ControllerTest(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-        await self.expect_evt([
-            hci.EncryptionChange(
-                status=ErrorCode.SUCCESS,
-                connection_handle=acl_connection_handle,
-                encryption_enabled=hci.EncryptionEnabled.ON),
-            hci.EncryptionKeyRefreshComplete(
-                status=ErrorCode.SUCCESS,
-                connection_handle=acl_connection_handle)
-        ])
+        await self.expect_evt(
+            [
+                hci.EncryptionChange(
+                    status=ErrorCode.SUCCESS,
+                    connection_handle=acl_connection_handle,
+                    encryption_enabled=hci.EncryptionEnabled.ON,
+                ),
+                hci.EncryptionKeyRefreshComplete(
+                    status=ErrorCode.SUCCESS, connection_handle=acl_connection_handle
+                ),
+            ]
+        )
 
-    async def establish_le_connection_peripheral(self, peer_address: hci.Address) -> int:
+    async def establish_le_connection_peripheral(
+        self, peer_address: hci.Address
+    ) -> int:
         """Establish a connection with the selected peer as Peripheral.
         Returns the ACL connection handle for the opened link."""
         self.controller.send_cmd(
@@ -602,32 +697,46 @@ class ControllerTest(unittest.IsolatedAsyncioTestCase):
                 advertising_type=hci.AdvertisingType.ADV_IND,
                 own_address_type=hci.OwnAddressType.PUBLIC_DEVICE_ADDRESS,
                 advertising_channel_map=0x7,
-                advertising_filter_policy=hci.AdvertisingFilterPolicy.ALL_DEVICES))
+                advertising_filter_policy=hci.AdvertisingFilterPolicy.ALL_DEVICES,
+            )
+        )
 
         await self.expect_evt(
-            hci.LeSetAdvertisingParametersComplete(status=ErrorCode.SUCCESS,
-                                                   num_hci_command_packets=1))
+            hci.LeSetAdvertisingParametersComplete(
+                status=ErrorCode.SUCCESS, num_hci_command_packets=1
+            )
+        )
 
         self.controller.send_cmd(hci.LeSetAdvertisingEnable(advertising_enable=True))
 
         await self.expect_evt(
-            hci.LeSetAdvertisingEnableComplete(status=ErrorCode.SUCCESS, num_hci_command_packets=1))
+            hci.LeSetAdvertisingEnableComplete(
+                status=ErrorCode.SUCCESS, num_hci_command_packets=1
+            )
+        )
 
-        self.controller.send_ll(ll.LeConnect(source_address=peer_address,
-                                             destination_address=self.controller.address,
-                                             initiating_address_type=ll.AddressType.PUBLIC,
-                                             advertising_address_type=ll.AddressType.PUBLIC,
-                                             conn_interval=0x200,
-                                             conn_peripheral_latency=0x200,
-                                             conn_supervision_timeout=0x200),
-                                rssi=-16)
+        self.controller.send_ll(
+            ll.LeConnect(
+                source_address=peer_address,
+                destination_address=self.controller.address,
+                initiating_address_type=ll.AddressType.PUBLIC,
+                advertising_address_type=ll.AddressType.PUBLIC,
+                conn_interval=0x200,
+                conn_peripheral_latency=0x200,
+                conn_supervision_timeout=0x200,
+            ),
+            rssi=-16,
+        )
 
         await self.expect_ll(
-            ll.LeConnectComplete(source_address=self.controller.address,
-                                 destination_address=peer_address,
-                                 conn_interval=0x200,
-                                 conn_peripheral_latency=0x200,
-                                 conn_supervision_timeout=0x200))
+            ll.LeConnectComplete(
+                source_address=self.controller.address,
+                destination_address=peer_address,
+                conn_interval=0x200,
+                conn_peripheral_latency=0x200,
+                conn_supervision_timeout=0x200,
+            )
+        )
 
         connection_complete = await self.expect_evt(
             hci.LeEnhancedConnectionCompleteV1(
@@ -639,7 +748,9 @@ class ControllerTest(unittest.IsolatedAsyncioTestCase):
                 connection_interval=0x200,
                 peripheral_latency=0x200,
                 supervision_timeout=0x200,
-                central_clock_accuracy=hci.ClockAccuracy.PPM_500))
+                central_clock_accuracy=hci.ClockAccuracy.PPM_500,
+            )
+        )
 
         return connection_complete.connection_handle
 
