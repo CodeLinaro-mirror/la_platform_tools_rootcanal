@@ -233,4 +233,5 @@ class Test(ControllerTest):
         await self.expect_evt(hci.LeConnectionComplete(status=hci.ErrorCode.ADVERTISING_TIMEOUT,))
 
         # Empty the LL queue.
-        controller.ll_queue.clear()
+        while not controller.ll_queue.empty():
+            _ = controller.ll_queue.get_nowait()
