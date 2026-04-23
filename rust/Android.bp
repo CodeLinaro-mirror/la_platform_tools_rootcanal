@@ -30,6 +30,16 @@ rust_ffi {
     export_include_dirs: ["include"],
 }
 
+filegroup {
+    name: "rootcanal_lmp_packets",
+    srcs: ["lmp_packets.pdl"],
+}
+
+filegroup {
+    name: "rootcanal_llcp_packets",
+    srcs: ["llcp_packets.pdl"],
+}
+
 genrule {
     name: "rootcanal_lmp_packets_rust_gen",
     defaults: ["pdl_rust_generator_defaults"],

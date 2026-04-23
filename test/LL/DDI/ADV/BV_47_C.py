@@ -13,15 +13,15 @@
 # limitations under the License.
 
 import asyncio
-import hci_packets as hci
-import link_layer_packets as ll
+from rootcanal.packets import hci
+from rootcanal.packets import ll
 import math
 import random
 import unittest
 from dataclasses import dataclass
-from hci_packets import ErrorCode, FragmentPreference
-from py.bluetooth import Address
-from py.controller import ControllerTest
+from rootcanal.packets.hci import ErrorCode, FragmentPreference
+from rootcanal.bluetooth import Address
+from rootcanal.controller import ControllerTest
 from typing import List
 
 

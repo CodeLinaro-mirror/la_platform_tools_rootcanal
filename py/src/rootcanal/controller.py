@@ -15,15 +15,17 @@
 import asyncio
 import collections
 import enum
-import hci_packets as hci
-import link_layer_packets as ll
-import llcp_packets as llcp
-import py.bluetooth
 import sys
 import typing
 import unittest
 from typing import Optional, Tuple, Union
-from hci_packets import ErrorCode
+
+from . import bluetooth
+from .packets import hci
+from .packets import ll
+from .packets import llcp
+from .packets import lmp
+from .packets.hci import ErrorCode
 
 from ctypes import *
 import random
@@ -290,6 +292,9 @@ class Any:
 
     def __format__(self, format_spec: str) -> str:
         return "_"
+
+    def __getattr__(self, name):
+        return self
 
 
 class ControllerTest(unittest.IsolatedAsyncioTestCase):

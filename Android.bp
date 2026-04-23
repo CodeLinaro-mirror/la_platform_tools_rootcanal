@@ -177,54 +177,6 @@ cc_library_host_shared {
     ],
 }
 
-// Generate the python parser+serializer backend for
-// packets/link_layer_packets.pdl.
-genrule {
-    name: "link_layer_packets_python3_gen",
-    defaults: ["pdl_python_generator_defaults"],
-    cmd: "$(location :pdlc) $(in) |" +
-        " $(location :pdl_python_generator)" +
-        " --output $(out) --custom-type-location py.bluetooth",
-    srcs: [
-        "packets/link_layer_packets.pdl",
-    ],
-    out: [
-        "link_layer_packets.py",
-    ],
-}
-
-// Generate the python parser+serializer backend for
-// rust/llcp_packets.pdl.
-genrule {
-    name: "llcp_packets_python3_gen",
-    defaults: ["pdl_python_generator_defaults"],
-    cmd: "$(location :pdlc) $(in) |" +
-        " $(location :pdl_python_generator)" +
-        " --output $(out) --custom-type-location py.bluetooth",
-    srcs: [
-        "rust/llcp_packets.pdl",
-    ],
-    out: [
-        "llcp_packets.py",
-    ],
-}
-
-// Generate the python parser+serializer backend for
-// hci_packets.pdl.
-genrule {
-    name: "hci_packets_python3_gen",
-    defaults: ["pdl_python_generator_defaults"],
-    cmd: "$(location :pdlc) $(in) |" +
-        " $(location :pdl_python_generator)" +
-        " --output $(out) --custom-type-location py.bluetooth",
-    srcs: [
-        "packets/hci_packets.pdl",
-    ],
-    out: [
-        "hci_packets.py",
-    ],
-}
-
 cc_test_host {
     name: "rootcanal_hci_test",
     defaults: [
@@ -281,11 +233,6 @@ python_test_host {
     name: "rootcanal_ll_test",
     main: "test/main.py",
     srcs: [
-        ":hci_packets_python3_gen",
-        ":link_layer_packets_python3_gen",
-        ":llcp_packets_python3_gen",
-        "py/bluetooth.py",
-        "py/controller.py",
         "test/HCI/*.py",
         "test/HCI/AEN/*.py",
         "test/LL/*.py",
@@ -306,10 +253,8 @@ python_test_host {
         "test/LMP/LIH/*.py",
         "test/main.py",
     ],
-    data: [
-        ":lib_rootcanal_ffi",
-    ],
     libs: [
+        "rootcanal_python_lib",
         "typing_extensions",
     ],
     test_options: {
