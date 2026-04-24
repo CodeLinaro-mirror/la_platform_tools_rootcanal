@@ -15,22 +15,22 @@
 import asyncio
 import enum
 import os
-from .packets import hci
-from .packets import ll
-from .packets import llcp
-from .packets.hci import ErrorCode
-from . import bluetooth
-from . import binaries
 import random
 import sys
 import typing
 import unittest
+from ctypes import *
+from importlib import resources
 from typing import Optional, Tuple, Union
 
-from ctypes import *
+from . import bluetooth
+from .packets import hci, ll, llcp
+from .packets.hci import ErrorCode
 
-rootcanal = cdll.LoadLibrary("lib_rootcanal_ffi.so")
-rootcanal.ffi_controller_new.restype = c_void_p
+with resources.path(__package__, "lib_rootcanal_ffi.so") as so_path:
+    rootcanal = cdll.LoadLibrary(str(so_path))
+    rootcanal.ffi_controller_new.restype = c_void_p
+
 
 SEND_HCI_FUNC = CFUNCTYPE(None, c_void_p, c_int, POINTER(c_ubyte), c_size_t)
 SEND_LL_FUNC = CFUNCTYPE(None, c_void_p, POINTER(c_ubyte), c_size_t, c_int, c_int)

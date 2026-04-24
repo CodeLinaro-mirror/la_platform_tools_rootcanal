@@ -10,7 +10,7 @@ genrule {
         ":rootcanal_link_layer_packets",
     ],
     out: [
-        "rootcanal/packets/ll.py",
+        "packets/ll.py",
     ],
 }
 
@@ -26,7 +26,7 @@ genrule {
         ":rootcanal_llcp_packets",
     ],
     out: [
-        "rootcanal/packets/llcp.py",
+        "packets/llcp.py",
     ],
 }
 
@@ -42,7 +42,7 @@ genrule {
         ":rootcanal_lmp_packets",
     ],
     out: [
-        "rootcanal/packets/lmp.py",
+        "packets/lmp.py",
     ],
 }
 
@@ -58,21 +58,22 @@ genrule {
         ":rootcanal_hci_packets",
     ],
     out: [
-        "rootcanal/packets/hci.py",
+        "packets/hci.py",
     ],
 }
 
 python_library_host {
     name: "rootcanal_python_lib",
+    pkg_path: "rootcanal",
     srcs: [
         ":hci_packets_python3_gen",
         ":link_layer_packets_python3_gen",
         ":llcp_packets_python3_gen",
         ":lmp_packets_python3_gen",
-        "rootcanal/__init__.py",
-        "rootcanal/bluetooth.py",
-        "rootcanal/controller.py",
-        "rootcanal/packets/__init__.py",
+        "__init__.py",
+        "bluetooth.py",
+        "controller.py",
+        "packets/__init__.py",
     ],
     shared_libs: [
         "lib_rootcanal_ffi",
