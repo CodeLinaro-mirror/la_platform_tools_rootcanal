@@ -18,7 +18,7 @@ import unittest
 from typing import List
 from rootcanal.packets.hci import ErrorCode
 from rootcanal.bluetooth import Address
-from rootcanal.controller import ControllerTest
+from test.controller_test import ControllerTest
 
 
 class Test(ControllerTest):

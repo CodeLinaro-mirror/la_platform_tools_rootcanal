@@ -251,6 +251,7 @@ python_test_host {
         "test/LL/SEC/ADV/*.py",
         "test/LMP/*.py",
         "test/LMP/LIH/*.py",
+        "test/controller_test.py",
         "test/main.py",
     ],
     libs: [

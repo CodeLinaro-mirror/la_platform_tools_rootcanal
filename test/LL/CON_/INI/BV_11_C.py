@@ -18,7 +18,8 @@ from rootcanal.packets import ll
 import unittest
 from rootcanal.packets.hci import ErrorCode
 from rootcanal.bluetooth import Address
-from rootcanal.controller import ControllerTest, generate_rpa
+from test.controller_test import ControllerTest
+from rootcanal.controller import generate_rpa
 
 
 class Test(ControllerTest):

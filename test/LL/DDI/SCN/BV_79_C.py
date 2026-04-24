@@ -19,7 +19,7 @@ import random
 from dataclasses import dataclass
 from rootcanal.packets.hci import ErrorCode
 from rootcanal.bluetooth import Address
-from rootcanal.controller import ControllerTest
+from test.controller_test import ControllerTest
 from typing import Optional
 
 ADV_IND = 0x13

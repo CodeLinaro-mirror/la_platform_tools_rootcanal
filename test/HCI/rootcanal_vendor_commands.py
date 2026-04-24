@@ -16,7 +16,7 @@ import asyncio
 from rootcanal.packets import hci
 import unittest
 from rootcanal.packets.hci import ErrorCode
-from rootcanal.controller import ControllerTest
+from test.controller_test import ControllerTest
 
 
 class Test(ControllerTest):
