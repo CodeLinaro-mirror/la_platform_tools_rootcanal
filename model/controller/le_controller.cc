@@ -5341,6 +5341,25 @@ void LeController::IncomingLePeriodicAdvertisingPdu(model::packets::LinkLayerPac
 
     // Refresh the timeout for the sync disconnection.
     sync.timeout = std::chrono::steady_clock::now() + sync.sync_timeout;
+
+    // Send BIG Info report if BIG Info is present.
+    auto big_info = pdu.GetBigInfo();
+    if (big_info.num_bis_ > 0) {
+      sync.big_info = big_info;
+
+      // If the Controller also generates an HCI_LE_Periodic_Advertising_Report
+      // event, the HCI_LE_BIGInfo_Advertising_Report event shall immediately
+      // follow that event.
+      if (IsLeEventUnmasked(SubeventCode::LE_BIG_INFO_ADVERTISING_REPORT)) {
+        send_event_(bluetooth::hci::LeBigInfoAdvertisingReportBuilder::Create(
+                sync.sync_handle, big_info.num_bis_, big_info.nse_, big_info.iso_interval_,
+                big_info.bn_, big_info.pto_, big_info.irc_, big_info.max_pdu_,
+                big_info.sdu_interval_, big_info.max_sdu_,
+                static_cast<bluetooth::hci::SecondaryPhyType>(big_info.phy_),
+                static_cast<bluetooth::hci::Enable>(big_info.framing_),
+                static_cast<bluetooth::hci::Enable>(big_info.encryption_)));
+      }
+    }
   }
 }
 

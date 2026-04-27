@@ -417,6 +417,63 @@ pub unsafe extern "C" fn link_layer_get_bis_connection_handle(
         .is_some()
 }
 
+/// Query the BIG configuration for a BIG established with
+/// the input advertising handle.
+/// Returns true if successful
+/// # Arguments
+/// * `ll` - link layer pointer
+/// * `advertising_handle` - Advertising handle
+/// * `num_bis` - Returns the number of BIS
+/// * `nse` - Returns the number of subevents
+/// * `iso_interval` - Returns the ISO interval
+/// * `bn` - Returns the burst number
+/// * `pto` - Returns the pre-transmission offset
+/// * `irc` - Returns the immediate repetition count
+/// * `max_pdu` - Returns the maximum PDU size
+/// * `sdu_interval` - Returns the SDU interval
+/// * `max_sdu` - Returns the maximum SDU size
+/// * `phy` - Returns the PHY
+/// * `framing` - Returns the framing
+/// * `encryption` - Returns the encryption
+/// # Safety
+/// - This should be called from the thread of creation
+/// - `ll` must be a valid pointer
+#[no_mangle]
+pub unsafe extern "C" fn link_layer_get_big_info(
+    ll: *const LinkLayer,
+    advertising_handle: u8,
+    num_bis: *mut u8,
+    nse: *mut u8,
+    iso_interval: *mut u16,
+    bn: *mut u8,
+    pto: *mut u8,
+    irc: *mut u8,
+    max_pdu: *mut u16,
+    sdu_interval: *mut u32,
+    max_sdu: *mut u16,
+    phy: *mut u8,
+    framing: *mut u8,
+    encryption: *mut u8,
+) -> bool {
+    let ll = ManuallyDrop::new(unsafe { Rc::from_raw(ll) });
+    ll.get_big_info(advertising_handle)
+        .map(|big| unsafe {
+            *num_bis = big.num_bis;
+            *nse = big.nse;
+            *iso_interval = big.iso_interval;
+            *bn = big.bn;
+            *pto = big.pto;
+            *irc = big.irc;
+            *max_pdu = big.max_pdu;
+            *sdu_interval = big.sdu_interval;
+            *max_sdu = big.max_sdu;
+            *phy = big.phy;
+            *framing = big.framing;
+            *encryption = big.encryption as u8;
+        })
+        .is_some()
+}
+
 /// Query the CIS and CIG identifiers for a CIS established with
 /// the input CIS connection handle.
 /// Returns true if successful

@@ -147,4 +147,8 @@ impl LinkLayer {
     pub fn get_bis(&self, bis_connection_handle: u16) -> Option<&iso::Bis> {
         self.iso.get_bis(bis_connection_handle)
     }
+
+    pub fn get_big_info(&self, advertising_handle: u8) -> Option<&iso::BigConfig> {
+        self.iso.get_big_info(advertising_handle)
+    }
 }

@@ -80,20 +80,26 @@ struct CigConfig {
 
 /// BIG configuration.
 #[derive(Clone, Debug, Default)]
-struct BigConfig {
+pub struct BigConfig {
     // BIG parameters from LeCreateBig command
-    big_handle: u8,
-    advertising_handle: u8,
-    num_bis: u8,
-    sdu_interval: u32,
-    max_sdu: u16,
-    max_transport_latency: u16,
-    rtn: u8,
-    phy: u8,
-    packing: u8,
-    framing: u8,
-    encryption: bool,
-    broadcast_code: [u8; 16],
+    pub big_handle: u8,
+    pub advertising_handle: u8,
+    pub num_bis: u8,
+    pub sdu_interval: u32,
+    pub max_sdu: u16,
+    pub max_transport_latency: u16,
+    pub rtn: u8,
+    pub phy: u8,
+    pub packing: u8,
+    pub framing: u8,
+    pub encryption: bool,
+    pub broadcast_code: [u8; 16],
+    pub iso_interval: u16,
+    pub bn: u8,
+    pub nse: u8,
+    pub pto: u8,
+    pub irc: u8,
+    pub max_pdu: u16,
 }
 
 /// CIS configuration.
@@ -541,6 +547,12 @@ impl IsoManager {
 
     pub fn get_bis(&self, bis_connection_handle: u16) -> Option<&Bis> {
         self.bis_connections.get(&bis_connection_handle)
+    }
+
+    pub fn get_big_info(&self, advertising_handle: u8) -> Option<&BigConfig> {
+        self.big_config
+            .values()
+            .find(|big| big.advertising_handle == advertising_handle)
     }
 
     /// Start the next CIS connection request, if any.
@@ -1808,6 +1820,21 @@ impl IsoManager {
         // --- Success Path ---
         self.send_hci_event(command_status(hci::ErrorCode::Success));
 
+        let iso_interval = (sdu_interval as f64 / 1250.0).ceil() as u16;
+
+        // Parameter Derivation
+        let bn = 1;
+        let nse = bn * (rtn + 1);
+        let pto = 0;
+        let irc = rtn + 1;
+        let max_pdu = max_sdu;
+
+        if nse > 31 {
+            println!("LE Create BIG: Invalid NSE 0x{:02X}", nse);
+            self.send_hci_event(command_status(hci::ErrorCode::InvalidHciCommandParameters));
+            return;
+        }
+
         let big = BigConfig {
             big_handle,
             advertising_handle,
@@ -1821,6 +1848,12 @@ impl IsoManager {
             framing,
             encryption: encryption != 0,
             broadcast_code: *broadcast_code,
+            iso_interval,
+            bn,
+            nse,
+            pto,
+            irc,
+            max_pdu,
         };
         self.big_config.insert(big_handle, big);
 
@@ -1840,21 +1873,6 @@ impl IsoManager {
                 },
             );
             bis_connection_handles.push(bis_connection_handle);
-        }
-
-        let iso_interval = (sdu_interval as f64 / 1250.0).ceil() as u16;
-
-        // Parameter Derivation
-        let bn = 1;
-        let nse = bn * (rtn + 1);
-        let pto = 0;
-        let irc = rtn + 1;
-        let max_pdu = max_sdu;
-
-        if nse > 31 {
-            println!("LE Create BIG: Invalid NSE 0x{:02X}", nse);
-            self.send_hci_event(command_status(hci::ErrorCode::InvalidHciCommandParameters));
-            return;
         }
 
         self.send_hci_event(hci::LeCreateBigComplete {
