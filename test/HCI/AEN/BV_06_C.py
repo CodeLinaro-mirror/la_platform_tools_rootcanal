@@ -32,23 +32,36 @@ class Test(ControllerTest):
         controller.send_cmd(hci.LeReadLocalP256PublicKey())
 
         await self.expect_evt(
-            hci.LeReadLocalP256PublicKeyStatus(status=ErrorCode.SUCCESS, num_hci_command_packets=1))
+            hci.LeReadLocalP256PublicKeyStatus(
+                status=ErrorCode.SUCCESS, num_hci_command_packets=1
+            )
+        )
 
         first = await self.expect_evt(
-            hci.LeReadLocalP256PublicKeyComplete(status=ErrorCode.SUCCESS,
-                                                 key_x_coordinate=self.Any,
-                                                 key_y_coordinate=self.Any))
+            hci.LeReadLocalP256PublicKeyComplete(
+                status=ErrorCode.SUCCESS,
+                key_x_coordinate=self.Any,
+                key_y_coordinate=self.Any,
+            )
+        )
 
         controller.send_cmd(hci.LeReadLocalP256PublicKey())
 
         await self.expect_evt(
-            hci.LeReadLocalP256PublicKeyStatus(status=ErrorCode.SUCCESS, num_hci_command_packets=1))
+            hci.LeReadLocalP256PublicKeyStatus(
+                status=ErrorCode.SUCCESS, num_hci_command_packets=1
+            )
+        )
 
         second = await self.expect_evt(
-            hci.LeReadLocalP256PublicKeyComplete(status=ErrorCode.SUCCESS,
-                                                 key_x_coordinate=self.Any,
-                                                 key_y_coordinate=self.Any))
+            hci.LeReadLocalP256PublicKeyComplete(
+                status=ErrorCode.SUCCESS,
+                key_x_coordinate=self.Any,
+                key_y_coordinate=self.Any,
+            )
+        )
 
-        self.assertTrue((first.key_x_coordinate,
-                         first.key_y_coordinate) != (second.key_x_coordinate,
-                                                     second.key_y_coordinate))
+        self.assertTrue(
+            (first.key_x_coordinate, first.key_y_coordinate)
+            != (second.key_x_coordinate, second.key_y_coordinate)
+        )
