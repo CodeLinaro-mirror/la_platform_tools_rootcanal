@@ -3128,8 +3128,12 @@ ErrorCode LeController::LeCsProcedureEnable(uint16_t connection_handle, uint8_t 
   // If the Host issues this command to enable a CS configuration identified by the Config_ID
   // parameter that is already enabled using the HCI_LE_CS_Procedure_Enable command, then the
   // Controller shall return the error code Command Disallowed (0x0C).
-  if (cs_config.enabled) {
+  if (enable == bluetooth::hci::Enable::ENABLED && cs_config.enabled) {
     return ErrorCode::COMMAND_DISALLOWED;
+  }
+  if (enable == bluetooth::hci::Enable::DISABLED && !cs_config.enabled) {
+    DEBUG(id_, "CS procedure is already disabled");
+    return ErrorCode::SUCCESS;
   }
 
   // If the number of channels available for Channel Sounding before the start of a new CS procedure
