@@ -22,6 +22,7 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <exception>
 #include <functional>
 #include <initializer_list>
 #include <optional>
@@ -122,7 +123,7 @@ struct fmt::formatter<bluetooth::hci::Address> {
 
     // Check if reached the end of the range:
     if (it != end && *it != '}') {
-      report_error("invalid format");
+      std::terminate();
     }
 
     // Return an iterator past the end of the parsed range:
