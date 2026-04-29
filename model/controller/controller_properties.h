@@ -50,7 +50,7 @@ struct ControllerQuirks {
 
 // Channel Sounding capabilities (Core Spec Vol 4, Part E § 7.8.130).
 struct CsLocalSupportedCapabilities {
-  uint8_t num_config_supported{1};
+  uint8_t num_config_supported{3};
   uint16_t max_consecutive_procedures_supported{1};
   uint8_t num_antennae_supported{1};
   uint8_t max_antenna_paths_supported{1};
