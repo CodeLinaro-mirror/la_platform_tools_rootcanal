@@ -729,8 +729,8 @@ impl IsoManager {
         }
 
         let Some(iso_interval) = iso_interval(
-            sdu_interval_c_to_p,
-            sdu_interval_p_to_c,
+            configures_c_to_p.then_some(sdu_interval_c_to_p),
+            configures_p_to_c.then_some(sdu_interval_p_to_c),
             framed,
             max_transport_latency_c_to_p as u32 * 1000,
             max_transport_latency_p_to_c as u32 * 1000,
@@ -1913,16 +1913,17 @@ impl IsoManager {
 
 /// Derive a valid ISO_Interval for a CIG based on the
 /// LE Set Cig Parameters command input. SDU_Interval, Max_Transport_Latency are
-/// provided microseconds.
+/// provided microseconds. SDU_Interval is None if there is no stream in this direction.
 fn iso_interval(
-    sdu_interval_c_to_p: microseconds,
-    sdu_interval_p_to_c: microseconds,
+    sdu_interval_c_to_p: Option<microseconds>,
+    sdu_interval_p_to_c: Option<microseconds>,
     framed: bool,
     max_transport_latency_c_to_p: microseconds,
     max_transport_latency_p_to_c: microseconds,
 ) -> Option<slots> {
     if framed {
-        let iso_interval = std::cmp::max(sdu_interval_c_to_p, sdu_interval_p_to_c);
+        let iso_interval =
+            std::cmp::max(sdu_interval_c_to_p.unwrap_or(0), sdu_interval_p_to_c.unwrap_or(0));
         Some(iso_interval.div_ceil(1250) as u16)
     } else {
         // Unframed PDUs shall only be used when the ISO_Interval is equal to
@@ -1932,21 +1933,26 @@ fn iso_interval(
         let iso_interval = num_integer::lcm(
             1250,
             match (sdu_interval_c_to_p, sdu_interval_p_to_c) {
-                (0, 0) => panic!(),
-                (0, _) => sdu_interval_p_to_c,
-                (_, 0) => sdu_interval_c_to_p,
-                _ => num_integer::lcm(sdu_interval_c_to_p, sdu_interval_p_to_c),
+                (None, None) => panic!(),
+                (None, Some(p_to_c)) => p_to_c,
+                (Some(c_to_p), None) => c_to_p,
+                (Some(c_to_p), Some(p_to_c)) => num_integer::lcm(c_to_p, p_to_c),
             },
         );
-        let min_transport_latency_c_to_p = 2 * iso_interval - sdu_interval_c_to_p;
-        let min_transport_latency_p_to_c = 2 * iso_interval - sdu_interval_p_to_c;
+        if iso_interval / 1250 > u16::MAX as u32 {
+            return None;
+        }
 
-        ((iso_interval / 1250) <= u16::MAX as u32
-            && (sdu_interval_c_to_p == 0
-                || min_transport_latency_c_to_p <= max_transport_latency_c_to_p)
-            && (sdu_interval_p_to_c == 0
-                || min_transport_latency_p_to_c <= max_transport_latency_p_to_c))
-            .then_some((iso_interval / 1250) as u16)
+        let c_to_p_valid = sdu_interval_c_to_p.is_none_or(|sdu_itv| {
+            let min_latency = 2 * iso_interval - sdu_itv;
+            min_latency <= max_transport_latency_c_to_p
+        });
+        let p_to_c_valid = sdu_interval_p_to_c.is_none_or(|sdu_itv| {
+            let min_latency = 2 * iso_interval - sdu_itv;
+            min_latency <= max_transport_latency_p_to_c
+        });
+
+        (c_to_p_valid && p_to_c_valid).then_some((iso_interval / 1250) as u16)
     }
 }
 
@@ -1974,8 +1980,8 @@ mod test {
 
     #[test]
     fn test_iso_interval() {
-        assert!(iso_interval(0x7530, 0x7530, false, 0x7530, 0x7530).is_some());
-        assert!(iso_interval(0x7530, 0, false, 0x7530, 0x7530).is_some());
-        assert!(iso_interval(0x7530, 0x7530, false, 0x7000, 0x7000).is_none());
+        assert!(iso_interval(Some(0x7530), Some(0x7530), false, 0x7530, 0x7530).is_some());
+        assert!(iso_interval(Some(0x7530), None, false, 0x7530, 0x7530).is_some());
+        assert!(iso_interval(Some(0x7530), Some(0x7530), false, 0x7000, 0x7000).is_none());
     }
 }
