@@ -523,8 +523,24 @@ impl IsoManager {
             .cloned()
     }
 
+    pub fn get_bis_connection_handle<F>(&self, predicate: F) -> Option<u16>
+    where
+        F: Fn(&Bis) -> bool,
+    {
+        self.bis_connections
+            .iter()
+            .filter(|(_, bis)| predicate(bis))
+            .map(|(handle, _)| handle)
+            .next()
+            .cloned()
+    }
+
     pub fn get_cis(&self, cis_connection_handle: u16) -> Option<&Cis> {
         self.cis_connections.get(&cis_connection_handle)
+    }
+
+    pub fn get_bis(&self, bis_connection_handle: u16) -> Option<&Bis> {
+        self.bis_connections.get(&bis_connection_handle)
     }
 
     /// Start the next CIS connection request, if any.
