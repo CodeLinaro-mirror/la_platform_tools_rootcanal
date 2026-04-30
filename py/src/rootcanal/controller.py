@@ -1,0 +1,307 @@
+# Copyright 2023 The Android Open Source Project
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import asyncio
+import enum
+import os
+import random
+import sys
+import typing
+import unittest
+from ctypes import *
+from importlib import resources
+from typing import Optional, Tuple, Union
+
+from .packets import hci, ll, llcp
+
+with resources.path(__package__, "lib_rootcanal_ffi.so") as so_path:
+    rootcanal = cdll.LoadLibrary(str(so_path))
+    rootcanal.ffi_controller_new.restype = c_void_p
+
+
+SEND_HCI_FUNC = CFUNCTYPE(None, c_void_p, c_int, POINTER(c_ubyte), c_size_t)
+SEND_LL_FUNC = CFUNCTYPE(None, c_void_p, POINTER(c_ubyte), c_size_t, c_int, c_int)
+RANGING_ESTIMATOR_FUNC = CFUNCTYPE(c_uint, c_void_p, c_void_p)
+
+
+class Idc(enum.IntEnum):
+    Cmd = 1
+    Acl = 2
+    Sco = 3
+    Evt = 4
+    Iso = 5
+
+
+class Phy(enum.IntEnum):
+    LowEnergy = 0
+    BrEdr = 1
+
+
+class RangingMode(enum.Enum):
+    FIXED = "fixed"
+    RANDOM = "random"
+    COOKIE_BASED = "cookie_based"
+
+
+class LeFeatures:
+    def __init__(self, le_features: int):
+        self.mask = le_features
+        self.ll_privacy = (le_features & hci.LLFeaturesBits.LL_PRIVACY) != 0
+        self.le_extended_advertising = (
+            le_features & hci.LLFeaturesBits.LE_EXTENDED_ADVERTISING
+        ) != 0
+        self.le_periodic_advertising = (
+            le_features & hci.LLFeaturesBits.LE_PERIODIC_ADVERTISING
+        ) != 0
+
+
+def generate_rpa(irk: bytes) -> hci.Address:
+    rpa = bytearray(6)
+    rpa_type = c_char * 6
+    rootcanal.ffi_generate_rpa(c_char_p(irk), rpa_type.from_buffer(rpa))
+    rpa.reverse()
+    return hci.Address(bytes(rpa))
+
+
+class Controller:
+    """Binder class over RootCanal's ffi interfaces.
+    The methods send_cmd, send_hci, send_ll are used to inject HCI or LL
+    packets into the controller, and receive_hci, receive_ll to
+    catch outgoing HCI packets of LL pdus."""
+
+    def __init__(
+        self,
+        address: hci.Address,
+        ranging_mode: RangingMode = RangingMode.FIXED,
+        fixed_distance_cm: int = 100,
+        min_random_distance_cm: int = 30,
+        max_random_distance_cm: int = 500,
+    ):
+        self.ranging_mode = ranging_mode
+        self.fixed_distance_cm = fixed_distance_cm
+        self.min_random_distance_cm = min_random_distance_cm
+        self.max_random_distance_cm = max_random_distance_cm
+
+        # Write the callbacks for handling HCI and LL send events.
+        @SEND_HCI_FUNC
+        def send_hci(
+            cookie: c_void_p, idc: c_int, data: POINTER(c_ubyte), data_len: c_size_t
+        ):
+            packet = []
+            for n in range(data_len):
+                packet.append(data[n])
+            self.receive_hci_(int(idc), bytes(packet))
+
+        @SEND_LL_FUNC
+        def send_ll(
+            cookie: c_void_p,
+            data: POINTER(c_ubyte),
+            data_len: c_size_t,
+            phy: c_int,
+            tx_power: c_int,
+        ):
+            packet = []
+            for n in range(data_len):
+                packet.append(data[n])
+            self.receive_ll_(bytes(packet), int(phy), int(tx_power))
+
+        @RANGING_ESTIMATOR_FUNC
+        def ranging_estimator(cookie1: c_void_p, cookie2: c_void_p) -> int:
+            """
+            Simulates a distance estimation for Channel Sounding.
+            Returns a fixed or random distance in cm based on the Controller's settings.
+
+            Args:
+                cookie1: Opaque pointer to the first controller instance.
+                cookie2: Opaque pointer to the second controller instance.
+
+            Returns:
+                An unsigned integer representing the estimated distance in cm.
+            """
+            if self.ranging_mode == RangingMode.FIXED:
+                return self.fixed_distance_cm
+            elif self.ranging_mode == RangingMode.RANDOM:
+                return random.randint(
+                    self.min_random_distance_cm, self.max_random_distance_cm
+                )
+            elif self.ranging_mode == RangingMode.COOKIE_BASED:
+                # Base the distance on the memory addresses of the controllers.
+                # This is arbitrary but makes the result dependent on the pair.
+                addr1 = cookie1.value if cookie1 else 0
+                addr2 = cookie2.value if cookie2 else 0
+                seed = addr1 ^ addr2
+                random.seed(seed)
+                return random.randint(
+                    self.min_random_distance_cm, self.max_random_distance_cm
+                )
+            else:
+                return 100  # Default fallback
+
+        self.send_hci_callback = SEND_HCI_FUNC(send_hci)
+        self.send_ll_callback = SEND_LL_FUNC(send_ll)
+        self.ranging_estimator_callback = RANGING_ESTIMATOR_FUNC(ranging_estimator)
+
+        # Create a c++ controller instance.
+        self.instance = rootcanal.ffi_controller_new(
+            c_char_p(address.address),
+            self.send_hci_callback,
+            self.send_ll_callback,
+            None,
+            self.ranging_estimator_callback,
+            None,
+            None,
+            0,
+        )
+
+        self.address = address
+        self.evt_queue = asyncio.Queue()
+        self.acl_queue = asyncio.Queue()
+        self.iso_queue = asyncio.Queue()
+        self.ll_queue = asyncio.Queue()
+
+    def __del__(self):
+        rootcanal.ffi_controller_delete(c_void_p(self.instance))
+
+    def receive_hci_(self, idc: int, packet: bytes):
+        if idc == Idc.Evt:
+            print(f"<-- received HCI event data={len(packet)}[..]")
+            self.evt_queue.put_nowait(packet)
+        elif idc == Idc.Acl:
+            print(f"<-- received HCI ACL packet data={len(packet)}[..]")
+            self.acl_queue.put_nowait(packet)
+        elif idc == Idc.Iso:
+            print(f"<-- received HCI ISO packet data={len(packet)}[..]")
+            self.iso_queue.put_nowait(packet)
+        else:
+            print(f"ignoring HCI packet typ={idc}")
+
+    def receive_ll_(self, packet: bytes, phy: int, tx_power: int):
+        print(f"<-- received LL pdu data={len(packet)}[..]")
+        self.ll_queue.put_nowait(packet)
+
+    def send_cmd(self, cmd: hci.Command):
+        print(f"--> sending HCI command {cmd.__class__.__name__}")
+        data = cmd.serialize()
+        rootcanal.ffi_controller_receive_hci(
+            c_void_p(self.instance), c_int(Idc.Cmd), c_char_p(data), c_int(len(data))
+        )
+
+    def send_iso(self, iso: hci.Iso):
+        print(f"--> sending HCI iso pdu data={len(iso.payload)}[..]")
+        data = iso.serialize()
+        rootcanal.ffi_controller_receive_hci(
+            c_void_p(self.instance), c_int(Idc.Iso), c_char_p(data), c_int(len(data))
+        )
+
+    def send_ll(
+        self, pdu: ll.LinkLayerPacket, phy: Phy = Phy.LowEnergy, rssi: int = -90
+    ):
+        print(f"--> sending LL pdu {pdu.__class__.__name__}")
+        data = pdu.serialize()
+        rootcanal.ffi_controller_receive_ll(
+            c_void_p(self.instance),
+            c_char_p(data),
+            c_int(len(data)),
+            c_int(phy),
+            c_int(rssi),
+        )
+
+    def send_llcp(
+        self,
+        source_address: hci.Address,
+        destination_address: hci.Address,
+        pdu: llcp.LlcpPacket,
+        phy: Phy = Phy.LowEnergy,
+        rssi: int = -90,
+    ):
+        print(f"--> sending LLCP pdu {pdu.__class__.__name__}")
+        ll_pdu = ll.Llcp(
+            source_address=source_address,
+            destination_address=destination_address,
+            payload=pdu.serialize(),
+        )
+        data = ll_pdu.serialize()
+        rootcanal.ffi_controller_receive_ll(
+            c_void_p(self.instance),
+            c_char_p(data),
+            c_int(len(data)),
+            c_int(phy),
+            c_int(rssi),
+        )
+
+    async def start(self):
+        async def timer():
+            while True:
+                await asyncio.sleep(0.005)
+                rootcanal.ffi_controller_tick(c_void_p(self.instance))
+
+        # Spawn the controller timer task.
+        self.timer_task = asyncio.create_task(timer())
+
+    def stop(self):
+        # Cancel the controller timer task.
+        del self.timer_task
+
+        if self.evt_queue.qsize() > 0:
+            try:
+                print("evt queue not empty at stop():")
+                while packet := self.evt_queue.get_nowait():
+                    evt = hci.Event.parse_all(packet)
+                    evt.show()
+            except asyncio.QueueEmpty:
+                pass
+            raise Exception("evt queue not empty at stop()")
+
+        if self.iso_queue.qsize() > 0:
+            try:
+                print("iso queue not empty at stop():")
+                while packet := self.iso_queue.get_nowait():
+                    iso = hci.Event.parse_all(packet)
+                    iso.show()
+            except asyncio.QueueEmpty:
+                pass
+            raise Exception("iso queue not empty at stop()")
+
+        if self.ll_queue.qsize() > 0:
+            try:
+                print("ll queue not empty at stop():")
+                while packet := self.ll_queue.get_nowait():
+                    ll = hci.Event.parse_all(packet)
+                    ll.show()
+            except asyncio.QueueEmpty:
+                pass
+            raise Exception("ll queue not empty at stop()")
+
+    async def receive_evt(self):
+        return await self.evt_queue.get()
+
+    async def receive_acl(self):
+        return await self.acl_queue.get()
+
+    async def receive_iso(self):
+        return await self.iso_queue.get()
+
+    async def receive_ll(self):
+        return await self.ll_queue.get()
+
+    async def expect_evt(self, expected_evt: hci.Event):
+        packet = await self.receive_evt()
+        evt = hci.Event.parse_all(packet)
+        if evt != expected_evt:
+            print("received unexpected event")
+            print("expected event:")
+            expected_evt.show()
+            print("received event:")
+            evt.show()
+            raise Exception(f"unexpected evt {evt.__class__.__name__}")

@@ -587,6 +587,7 @@ protected:
   void IncomingLeDisconnectPacket(LeAclConnection& connection,
                                   model::packets::LinkLayerPacketView incoming);
   void IncomingLlcpPacket(model::packets::LinkLayerPacketView incoming);
+  void IncomingLeBroadcastIsochronousPdu(model::packets::LinkLayerPacketView incoming);
   void IncomingLeConnectedIsochronousPdu(model::packets::LinkLayerPacketView incoming);
 
   void ScanIncomingLeLegacyAdvertisingPdu(model::packets::LeLegacyAdvertisingPduView& pdu,

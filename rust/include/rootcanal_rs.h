@@ -186,6 +186,21 @@ bool link_layer_ingest_llcp(const LinkLayer* ll, uint16_t handle, const uint8_t*
 bool link_layer_get_cis_connection_handle(const LinkLayer* ll, uint8_t cig_id, uint8_t cis_id,
                                           uint16_t* cis_connection_handle);
 
+/// Query the connection handle for a BIS established with
+/// the input BIG and BIS identifiers.
+/// Returns true if successful
+/// # Arguments
+/// * `ll` - link layer pointer
+/// * `big_id` - Identifier of the established BIG
+/// * `bis_id` - Identifier of the established BIS
+/// * `bis_connection_handle` - Returns the handle of the BIS if connected
+/// # Safety
+/// - This should be called from the thread of creation
+/// - `ll` must be a valid pointers
+bool link_layer_get_bis_connection_handle(const LinkLayer* ll, uint8_t big_id, uint8_t bis_id,
+                                          uint16_t* bis_connection_handle);
+
+
 /// Query the CIS and CIG identifiers for a CIS established with
 /// the input CIS connection handle.
 /// Returns true if successful
@@ -200,6 +215,23 @@ bool link_layer_get_cis_connection_handle(const LinkLayer* ll, uint8_t cig_id, u
 bool link_layer_get_cis_information(const LinkLayer* ll, uint16_t cis_connection_handle,
                                     uint16_t* acl_connection_handle, uint8_t* cig_id,
                                     uint8_t* cis_id, uint16_t* max_sdu_tx);
+
+/// Query the BIS and BIG identifiers for a BIS established with
+/// the input BIS connection handle.
+/// Returns true if successful
+/// # Arguments
+/// * `ll` - link layer pointer
+/// * `bis_connection_handle` - BIS connection handle
+/// * `big_id` - Returns the BIG identifier
+/// * `bis_id` - Returns the BIS identifier
+/// * `advertising_handle` - Returns the advertising handle
+/// * `max_sdu_tx` - Returns the Max_SDU_Length
+/// # Safety
+/// - This should be called from the thread of creation
+/// - `ll` must be a valid pointers
+bool link_layer_get_bis_information(const LinkLayer* ll, uint16_t bis_connection_handle,
+                                    uint8_t* big_id, uint8_t* bis_id, uint8_t* advertising_handle,
+                                    uint16_t* max_sdu_tx);
 
 /// Deallocate the link layer instance
 /// # Arguments

@@ -132,7 +132,16 @@ impl LinkLayer {
             .get_cis_connection_handle(|cis| cis.cig_id == cig_id && cis.cis_id == cis_id)
     }
 
+    pub fn get_bis_connection_handle(&self, big_id: u8, bis_id: u8) -> Option<u16> {
+        self.iso
+            .get_bis_connection_handle(|bis| bis.big_handle == big_id && bis.bis_id == bis_id)
+    }
+
     pub fn get_cis(&self, cis_connection_handle: u16) -> Option<&iso::Cis> {
         self.iso.get_cis(cis_connection_handle)
+    }
+
+    pub fn get_bis(&self, bis_connection_handle: u16) -> Option<&iso::Bis> {
+        self.iso.get_bis(bis_connection_handle)
     }
 }
