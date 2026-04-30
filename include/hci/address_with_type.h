@@ -21,6 +21,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <exception>
 #include <functional>
 #include <ostream>
 #include <sstream>
@@ -153,7 +154,7 @@ struct fmt::formatter<bluetooth::hci::AddressWithType> {
 
     // Check if reached the end of the range:
     if (it != end && *it != '}') {
-      report_error("invalid format");
+      std::terminate();
     }
 
     // Return an iterator past the end of the parsed range:

@@ -19,7 +19,6 @@
 #include <iostream>
 
 #include "model/controller/dual_mode_controller.h"
-#include "model/setup/async_manager.h"
 #include "rootcanal/configuration.pb.h"
 
 using namespace rootcanal;
