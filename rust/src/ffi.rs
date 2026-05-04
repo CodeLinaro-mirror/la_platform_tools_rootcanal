@@ -324,10 +324,12 @@ pub unsafe extern "C" fn link_layer_ingest_hci(
     let ll = Rc::get_mut(&mut ll).unwrap();
     let data = unsafe { slice::from_raw_parts(data, len) };
 
-    if let Ok(packet) = hci::Command::decode_full(data) {
-        ll.ingest_hci(packet).is_ok()
-    } else {
-        false
+    match hci::Command::decode_full(data) {
+        Ok(packet) => ll.ingest_hci(packet).is_ok(),
+        Err(err) => {
+            println!("failed to decode LL HCI command: {}", err);
+            false
+        }
     }
 }
 
@@ -387,6 +389,34 @@ pub unsafe extern "C" fn link_layer_get_cis_connection_handle(
         .is_some()
 }
 
+/// Query the connection handle for a BIS established with
+/// the input BIG and BIS identifiers.
+/// Returns true if successful
+/// # Arguments
+/// * `ll` - link layer pointer
+/// * `big_id` - Identifier of the established BIG
+/// * `bis_id` - Identifier of the established BIS
+/// * `bis_connection_handle` - Returns the handle of the BIS if connected
+/// # Safety
+/// - This should be called from the thread of creation
+/// - `ll` must be a valid pointer
+/// - `bis_connection_handle` must be a valid pointer
+#[no_mangle]
+pub unsafe extern "C" fn link_layer_get_bis_connection_handle(
+    ll: *const LinkLayer,
+    big_id: u8,
+    bis_id: u8,
+    bis_connection_handle: *mut u16,
+) -> bool {
+    let mut ll = ManuallyDrop::new(unsafe { Rc::from_raw(ll) });
+    let ll = Rc::get_mut(&mut ll).unwrap();
+    ll.get_bis_connection_handle(big_id, bis_id)
+        .map(|handle| unsafe {
+            *bis_connection_handle = handle;
+        })
+        .is_some()
+}
+
 /// Query the CIS and CIG identifiers for a CIS established with
 /// the input CIS connection handle.
 /// Returns true if successful
@@ -421,6 +451,41 @@ pub unsafe extern "C" fn link_layer_get_cis_information(
                 *cis_id = cis.cis_id;
                 *max_sdu_tx = cis.max_sdu_tx().unwrap_or(0);
             }
+        })
+        .is_some()
+}
+
+/// Query the BIS and BIG identifiers for a BIS established with
+/// the input BIS connection handle.
+/// Returns true if successful
+/// # Arguments
+/// * `ll` - link layer pointer
+/// * `bis_connection_handle` - BIS connection handle
+/// * `big_id` - Returns the BIG identifier
+/// * `bis_id` - Returns the BIS identifier
+/// # Safety
+/// - This should be called from the thread of creation
+/// - `ll` must be a valid pointer
+/// - `big_id` must be a valid pointer
+/// - `bis_id` must be a valid pointer
+/// - `advertising_handle` must be a valid pointer
+/// - `max_sdu_tx` must be a valid pointer
+#[no_mangle]
+pub unsafe extern "C" fn link_layer_get_bis_information(
+    ll: *const LinkLayer,
+    bis_connection_handle: u16,
+    big_id: *mut u8,
+    bis_id: *mut u8,
+    advertising_handle: *mut u8,
+    max_sdu_tx: *mut u16,
+) -> bool {
+    let ll = ManuallyDrop::new(unsafe { Rc::from_raw(ll) });
+    ll.get_bis(bis_connection_handle)
+        .map(|bis| unsafe {
+            *big_id = bis.big_handle;
+            *bis_id = bis.bis_id;
+            *advertising_handle = bis.advertising_handle;
+            *max_sdu_tx = bis.max_sdu;
         })
         .is_some()
 }

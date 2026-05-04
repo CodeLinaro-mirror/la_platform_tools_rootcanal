@@ -1,0 +1,81 @@
+// Generate the python parser+serializer backend for
+// packets/link_layer_packets.pdl.
+genrule {
+    name: "link_layer_packets_python3_gen",
+    defaults: ["pdl_python_generator_defaults"],
+    cmd: "$(location :pdlc) $(in) |" +
+        " $(location :pdl_python_generator)" +
+        " --output $(out) --custom-type-location rootcanal.bluetooth",
+    srcs: [
+        ":rootcanal_link_layer_packets",
+    ],
+    out: [
+        "packets/ll.py",
+    ],
+}
+
+// Generate the python parser+serializer backend for
+// rust/llcp_packets.pdl.
+genrule {
+    name: "llcp_packets_python3_gen",
+    defaults: ["pdl_python_generator_defaults"],
+    cmd: "$(location :pdlc) $(in) |" +
+        " $(location :pdl_python_generator)" +
+        " --output $(out) --custom-type-location rootcanal.bluetooth",
+    srcs: [
+        ":rootcanal_llcp_packets",
+    ],
+    out: [
+        "packets/llcp.py",
+    ],
+}
+
+// Generate the python parser+serializer backend for
+// rust/lmp_packets.pdl.
+genrule {
+    name: "lmp_packets_python3_gen",
+    defaults: ["pdl_python_generator_defaults"],
+    cmd: "$(location :pdlc) $(in) |" +
+        " $(location :pdl_python_generator)" +
+        " --output $(out) --custom-type-location rootcanal.bluetooth",
+    srcs: [
+        ":rootcanal_lmp_packets",
+    ],
+    out: [
+        "packets/lmp.py",
+    ],
+}
+
+// Generate the python parser+serializer backend for
+// hci_packets.pdl.
+genrule {
+    name: "hci_packets_python3_gen",
+    defaults: ["pdl_python_generator_defaults"],
+    cmd: "$(location :pdlc) $(in) |" +
+        " $(location :pdl_python_generator)" +
+        " --output $(out) --custom-type-location rootcanal.bluetooth",
+    srcs: [
+        ":rootcanal_hci_packets",
+    ],
+    out: [
+        "packets/hci.py",
+    ],
+}
+
+python_library_host {
+    name: "rootcanal_python_lib",
+    pkg_path: "rootcanal",
+    srcs: [
+        ":hci_packets_python3_gen",
+        ":link_layer_packets_python3_gen",
+        ":llcp_packets_python3_gen",
+        ":lmp_packets_python3_gen",
+        "__init__.py",
+        "bluetooth.py",
+        "controller.py",
+        "packets/__init__.py",
+    ],
+    shared_libs: [
+        "lib_rootcanal_ffi",
+    ],
+}

@@ -1,0 +1,9 @@
+filegroup {
+    name: "rootcanal_hci_packets",
+    srcs: ["hci_packets.pdl"],
+}
+
+filegroup {
+    name: "rootcanal_link_layer_packets",
+    srcs: ["link_layer_packets.pdl"],
+}
