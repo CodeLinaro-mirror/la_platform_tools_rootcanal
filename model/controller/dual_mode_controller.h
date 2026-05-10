@@ -26,6 +26,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "log.h"
 #include "hci/address.h"
 #include "model/controller/bredr_controller.h"
 #include "model/controller/controller_properties.h"
@@ -602,6 +603,8 @@ private:
     if (view.IsValid()) {
       return true;
     }
+
+    WARNING(id_, "{}", reason);
 
     // Send a hardware error to reset the host, and report the packet
     // for tracing.
