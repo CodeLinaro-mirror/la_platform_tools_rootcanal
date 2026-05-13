@@ -1305,6 +1305,18 @@ BrEdrController::BrEdrController(const Address& address, const ControllerPropert
                     return controller->GetLmpFeatures(features_page);
                   },
 
+          .get_event_mask =
+                  [](void* user) {
+                    auto controller = static_cast<BrEdrController*>(user);
+                    return controller->event_mask_;
+                  },
+
+          .get_event_mask_page_2 =
+                  [](void* user) {
+                    auto controller = static_cast<BrEdrController*>(user);
+                    return controller->event_mask_page_2_;
+                  },
+
           .send_hci_event =
                   [](void* user, const uint8_t* data, uintptr_t len) {
                     auto controller = static_cast<BrEdrController*>(user);

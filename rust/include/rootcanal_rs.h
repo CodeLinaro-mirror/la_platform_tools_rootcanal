@@ -29,6 +29,8 @@ struct ControllerOps {
   uint16_t (*get_handle)(void* user, const uint8_t (*address)[6]);
   void (*get_address)(void* user, uint16_t handle, uint8_t (*result)[6]);
   uint64_t (*get_extended_features)(void* user, uint8_t features_page);
+  uint64_t (*get_event_mask)(void* user);
+  uint64_t (*get_event_mask_page_2)(void* user);
   uint64_t (*get_le_features)(void* user);
   uint64_t (*get_le_event_mask)(void* user);
   void (*send_hci_event)(void* user, const uint8_t* data, uintptr_t len);

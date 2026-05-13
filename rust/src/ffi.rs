@@ -33,6 +33,8 @@ pub struct ControllerOps {
     get_handle: unsafe extern "C" fn(user: *mut (), address: *const [u8; 6]) -> u16,
     get_address: unsafe extern "C" fn(user: *mut (), handle: u16, result: *mut [u8; 6]),
     get_extended_features: unsafe extern "C" fn(user: *mut (), features_page: u8) -> u64,
+    get_event_mask: unsafe extern "C" fn(user: *mut ()) -> u64,
+    get_event_mask_page_2: unsafe extern "C" fn(user: *mut ()) -> u64,
     get_le_features: unsafe extern "C" fn(user: *mut ()) -> u64,
     get_le_event_mask: unsafe extern "C" fn(user: *mut ()) -> u64,
     send_hci_event: unsafe extern "C" fn(user: *mut (), data: *const u8, len: usize),
@@ -64,6 +66,22 @@ impl ControllerOps {
 
     pub(crate) fn get_extended_features(&self, features_page: u8) -> u64 {
         unsafe { (self.get_extended_features)(self.user_pointer, features_page) }
+    }
+
+    pub(crate) fn get_event_mask(&self) -> u64 {
+        // SAFETY: `self.user_pointer` is the value provided when the
+        // callbacks are registered. The value is not manipulated in
+        // the rust module. `self.get_event_mask` is a valid
+        // function pointer enforced by requirements on ControllerOps.
+        unsafe { (self.get_event_mask)(self.user_pointer) }
+    }
+
+    pub(crate) fn get_event_mask_page_2(&self) -> u64 {
+        // SAFETY: `self.user_pointer` is the value provided when the
+        // callbacks are registered. The value is not manipulated in
+        // the rust module. `self.get_event_mask_page_2` is a valid
+        // function pointer enforced by requirements on ControllerOps.
+        unsafe { (self.get_event_mask_page_2)(self.user_pointer) }
     }
 
     pub(crate) fn get_le_features(&self) -> u64 {
