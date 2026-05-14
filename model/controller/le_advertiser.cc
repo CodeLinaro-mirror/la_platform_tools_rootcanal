@@ -1776,12 +1776,23 @@ void LeController::LeAdvertising() {
     // and a full interval has passed since the last event.
     if (advertiser.IsPeriodicEnabled() && now >= advertiser.next_periodic_event) {
       advertiser.next_periodic_event += advertiser.periodic_advertising_interval;
+
+      uint8_t num_bis = 0, nse = 0, bn = 0, pto = 0, irc = 0, phy = 0, framing = 0, encryption = 0;
+      uint16_t iso_interval = 0, max_pdu = 0, max_sdu = 0;
+      uint32_t sdu_interval = 0;
+      link_layer_get_big_info(ll_.get(), advertiser.advertising_handle, &num_bis, &nse,
+                              &iso_interval, &bn, &pto, &irc, &max_pdu, &sdu_interval, &max_sdu,
+                              &phy, &framing, &encryption);
+
+      model::packets::BigInfo big_info(num_bis, nse, iso_interval, bn, pto, irc, max_pdu,
+                                       sdu_interval, max_sdu, phy, framing, encryption);
+
       SendLeLinkLayerPacket(model::packets::LePeriodicAdvertisingPduBuilder::Create(
                                     advertiser.advertising_address.GetAddress(), Address(),
                                     static_cast<model::packets::AddressType>(
                                             advertiser.advertising_address.GetAddressType()),
                                     advertiser.advertising_sid, advertiser.advertising_tx_power,
-                                    advertiser.periodic_advertising_interval.count(),
+                                    advertiser.periodic_advertising_interval.count(), big_info,
                                     advertiser.periodic_advertising_data),
                             advertiser.advertising_tx_power);
     }

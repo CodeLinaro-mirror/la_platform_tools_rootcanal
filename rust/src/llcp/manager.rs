@@ -98,6 +98,8 @@ impl LinkLayer {
             Ok(LeRemoveIsoDataPath(packet)) => self.iso.hci_le_remove_iso_data_path(packet),
             Ok(LeCreateBig(packet)) => self.iso.hci_le_create_big(packet),
             Ok(LeTerminateBig(packet)) => self.iso.hci_le_terminate_big(packet),
+            Ok(LeBigCreateSync(packet)) => self.iso.hci_le_big_create_sync(packet),
+            Ok(LeBigTerminateSync(packet)) => self.iso.hci_le_big_terminate_sync(packet),
             _ => {
                 println!("Unhandled LL HCI command {:?}", packet.op_code);
                 Err(LinkLayerError::UnhandledHciPacket)?
@@ -146,5 +148,9 @@ impl LinkLayer {
 
     pub fn get_bis(&self, bis_connection_handle: u16) -> Option<&iso::Bis> {
         self.iso.get_bis(bis_connection_handle)
+    }
+
+    pub fn get_big_info(&self, advertising_handle: u8) -> Option<&iso::BigConfig> {
+        self.iso.get_big_info(advertising_handle)
     }
 }

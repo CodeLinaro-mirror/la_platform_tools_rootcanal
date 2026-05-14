@@ -946,6 +946,8 @@ private:
     uint16_t sync_handle;
     std::chrono::steady_clock::duration sync_timeout;
     std::chrono::steady_clock::time_point timeout;
+    // BIG configuration fetched from BIGInfo.
+    std::optional<model::packets::BigInfo> big_info;
   };
 
   // Periodic advertising synchronizing and synchronized states.
