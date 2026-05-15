@@ -120,6 +120,8 @@ static constexpr uint64_t LlFeatures() {
           LLFeaturesBits::LE_POWER_CONTROL_REQUEST,
           LLFeaturesBits::CONNECTION_SUBRATING,
           LLFeaturesBits::CHANNEL_SOUNDING,
+          LLFeaturesBits::ISOCHRONOUS_BROADCASTER,
+          LLFeaturesBits::SYNCHRONIZED_RECEIVER,
   };
 
   uint64_t value = 0;
@@ -424,11 +426,11 @@ static std::array<uint8_t, 64> SupportedCommands() {
           OpCodeIndex::LE_REMOVE_CIG,
           OpCodeIndex::LE_ACCEPT_CIS_REQUEST,
           OpCodeIndex::LE_REJECT_CIS_REQUEST,
-          // OpCodeIndex::LE_CREATE_BIG,
+          OpCodeIndex::LE_CREATE_BIG,
           // OpCodeIndex::LE_CREATE_BIG_TEST,
-          // OpCodeIndex::LE_TERMINATE_BIG,
-          // OpCodeIndex::LE_BIG_CREATE_SYNC,
-          // OpCodeIndex::LE_BIG_TERMINATE_SYNC,
+          OpCodeIndex::LE_TERMINATE_BIG,
+          OpCodeIndex::LE_BIG_CREATE_SYNC,
+          OpCodeIndex::LE_BIG_TERMINATE_SYNC,
           OpCodeIndex::LE_REQUEST_PEER_SCA,
           OpCodeIndex::LE_SETUP_ISO_DATA_PATH,
           OpCodeIndex::LE_REMOVE_ISO_DATA_PATH,
@@ -1800,6 +1802,19 @@ static std::vector<OpCodeIndex> le_power_control_request_commands_ = {
         OpCodeIndex::LE_SET_TRANSMIT_POWER_REPORTING_ENABLE,
 };
 
+// Commands enabled by the LL Broadcaster feature bit.
+static std::vector<OpCodeIndex> ll_isochronous_broadcaster_commands_ = {
+        OpCodeIndex::LE_CREATE_BIG,
+        OpCodeIndex::LE_CREATE_BIG_TEST,
+        OpCodeIndex::LE_TERMINATE_BIG,
+};
+
+// Commands enabled by the LL Broadcast receiver feature bit.
+static std::vector<OpCodeIndex> ll_synchronized_receiver_commands_ = {
+        OpCodeIndex::LE_BIG_CREATE_SYNC,
+        OpCodeIndex::LE_BIG_TERMINATE_SYNC,
+};
+
 static void SetLLFeatureBit(uint64_t& le_features, LLFeaturesBits bit, bool set) {
   if (set) {
     le_features |= static_cast<uint64_t>(bit);
@@ -1982,6 +1997,18 @@ ControllerProperties::ControllerProperties(rootcanal::configuration::Controller 
                       features.le_power_control_request());
       SetSupportedCommandBits(supported_commands, le_power_control_request_commands_,
                               features.le_power_control_request());
+    }
+    if (features.has_le_isochronous_broadcaster()) {
+      SetLLFeatureBit(le_features, LLFeaturesBits::ISOCHRONOUS_BROADCASTER,
+                      features.le_isochronous_broadcaster());
+      SetSupportedCommandBits(supported_commands, ll_isochronous_broadcaster_commands_,
+                              features.le_isochronous_broadcaster());
+    }
+    if (features.has_le_synchronized_receiver()) {
+      SetLLFeatureBit(le_features, LLFeaturesBits::SYNCHRONIZED_RECEIVER,
+                      features.le_synchronized_receiver());
+      SetSupportedCommandBits(supported_commands, ll_synchronized_receiver_commands_,
+                              features.le_synchronized_receiver());
     }
   }
 
