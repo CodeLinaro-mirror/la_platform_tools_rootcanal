@@ -364,9 +364,41 @@ class Test(ControllerTest):
 
         # 18. The Lower Tester and the IUT execute the Mode-0 and Mode-1 channel
         # sounding procedures.
-        # 19. The IUT sends one HCI_LE_CS_Subevent_Result
-        # event to the Upper Tester (RootCanal does not currently generate
-        # Subevent_Result events, skipping)
+        # Rootcanal defaults to a minimum of 48 steps if max_main_mode_steps < 48.
+        # Mode 1 has a step size of 9 bytes. Max HCI payload is 255 bytes.
+        # The first LeCsSubeventResult packet (16-byte header) fits 26 steps.
+        # The remaining 22 steps easily fit in a single
+        # LeCsSubeventResultContinue packet (9-byte header, handles up to 27
+        # steps). Since max_procedure_count=2, we expect 2 total bursts of these
+        # 2 packets.
+        for _ in range(2):
+            await self.expect_evt(
+                hci.LeCsSubeventResult(
+                    connection_handle=acl_connection_handle,
+                    config_id=2,
+                    procedure_counter=self.Any,
+                    frequency_compensation=self.Any,
+                    reference_power_level=self.Any,
+                    procedure_done_status=self.Any,
+                    subevent_done_status=self.Any,
+                    procedure_abort_reason=self.Any,
+                    subevent_abort_reason=self.Any,
+                    num_antenna_paths=self.Any,
+                    cs_step=self.Any,
+                )
+            )
+            await self.expect_evt(
+                hci.LeCsSubeventResultContinue(
+                    connection_handle=acl_connection_handle,
+                    config_id=2,
+                    procedure_done_status=self.Any,
+                    subevent_done_status=self.Any,
+                    procedure_abort_reason=self.Any,
+                    subevent_abort_reason=self.Any,
+                    num_antenna_paths=self.Any,
+                    cs_step=self.Any,
+                )
+            )
 
         # 20. The Upper Tester sends an HCI_LE_CS_Security_Enable command
         controller.send_cmd(
