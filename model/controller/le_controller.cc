@@ -5394,6 +5394,10 @@ void LeController::IncomingLePeriodicAdvertisingPdu(model::packets::LinkLayerPac
                 static_cast<bluetooth::hci::Enable>(big_info.framing_),
                 static_cast<bluetooth::hci::Enable>(big_info.encryption_)));
       }
+    } else if (sync.big_info.has_value()) {
+      // BIG has been terminated by the Broadcaster!
+      link_layer_big_sync_lost(ll_.get(), sync.sync_handle);
+      sync.big_info = std::nullopt;
     }
   }
 }
