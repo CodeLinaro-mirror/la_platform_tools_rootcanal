@@ -4061,6 +4061,41 @@ LeController::LeController(const Address& address, const ControllerProperties& p
 
                     *periodic_enabled = it->second.IsPeriodicEnabled();
                     return true;
+                  },
+
+          .is_sync_handle_valid =
+                  [](void* user, uint16_t sync_handle) {
+                    auto controller = static_cast<LeController*>(user);
+                    return controller->synchronized_.find(sync_handle) !=
+                           controller->synchronized_.end();
+                  },
+
+          .get_sync_big_info =
+                  [](void* user, uint16_t sync_handle, uint8_t* num_bis, uint8_t* nse,
+                     uint16_t* iso_interval, uint8_t* bn, uint8_t* pto, uint8_t* irc,
+                     uint16_t* max_pdu, uint32_t* sdu_interval, uint16_t* max_sdu, uint8_t* phy,
+                     uint8_t* framing, uint8_t* encryption) {
+                    auto controller = static_cast<LeController*>(user);
+                    auto it = controller->synchronized_.find(sync_handle);
+                    if (it == controller->synchronized_.end()) {
+                      return false;
+                    }
+                    if (auto const& big_info = it->second.big_info) {
+                      *num_bis = big_info->num_bis_;
+                      *nse = big_info->nse_;
+                      *iso_interval = big_info->iso_interval_;
+                      *bn = big_info->bn_;
+                      *pto = big_info->pto_;
+                      *irc = big_info->irc_;
+                      *max_pdu = big_info->max_pdu_;
+                      *sdu_interval = big_info->sdu_interval_;
+                      *max_sdu = big_info->max_sdu_;
+                      *phy = big_info->phy_;
+                      *framing = big_info->framing_;
+                      *encryption = big_info->encryption_;
+                      return true;
+                    }
+                    return false;
                   }};
 
   ll_.reset(link_layer_create(controller_ops_));
@@ -5341,6 +5376,25 @@ void LeController::IncomingLePeriodicAdvertisingPdu(model::packets::LinkLayerPac
 
     // Refresh the timeout for the sync disconnection.
     sync.timeout = std::chrono::steady_clock::now() + sync.sync_timeout;
+
+    // Send BIG Info report if BIG Info is present.
+    auto big_info = pdu.GetBigInfo();
+    if (big_info.num_bis_ > 0) {
+      sync.big_info = big_info;
+
+      // If the Controller also generates an HCI_LE_Periodic_Advertising_Report
+      // event, the HCI_LE_BIGInfo_Advertising_Report event shall immediately
+      // follow that event.
+      if (IsLeEventUnmasked(SubeventCode::LE_BIG_INFO_ADVERTISING_REPORT)) {
+        send_event_(bluetooth::hci::LeBigInfoAdvertisingReportBuilder::Create(
+                sync.sync_handle, big_info.num_bis_, big_info.nse_, big_info.iso_interval_,
+                big_info.bn_, big_info.pto_, big_info.irc_, big_info.max_pdu_,
+                big_info.sdu_interval_, big_info.max_sdu_,
+                static_cast<bluetooth::hci::SecondaryPhyType>(big_info.phy_),
+                static_cast<bluetooth::hci::Enable>(big_info.framing_),
+                static_cast<bluetooth::hci::Enable>(big_info.encryption_)));
+      }
+    }
   }
 }
 
