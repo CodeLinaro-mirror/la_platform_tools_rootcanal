@@ -759,7 +759,9 @@ impl IsoManager {
             max_transport_latency_p_to_c as u32 * 1000,
         ) else {
             println!(
-                "ISO_Interval cannot be chosen that fulfills the requirement from the CIG parameters");
+                "ISO_Interval cannot be chosen that fulfills the \
+                 requirement from the CIG parameters"
+            );
             return self.send_hci_event(command_complete(
                 hci::ErrorCode::UnsupportedFeatureOrParameterValue,
             ));
@@ -1335,7 +1337,12 @@ impl IsoManager {
                 || (bis.role == hci::Role::Peripheral
                     && packet.data_path_direction() == hci::DataPathDirection::Input)
             {
-                println!("Attempt to set an invalid data path direction for BIS (Role: {:?}, Direction: {:?}).", bis.role, packet.data_path_direction());
+                println!(
+                    "Attempt to set an invalid data path direction for BIS \
+                     (Role: {:?}, Direction: {:?}).",
+                    bis.role,
+                    packet.data_path_direction()
+                );
                 return self.send_hci_event(command_complete(hci::ErrorCode::CommandDisallowed));
             }
 
