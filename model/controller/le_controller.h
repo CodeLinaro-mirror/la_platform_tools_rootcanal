@@ -529,6 +529,9 @@ public:
   ErrorCode LeCsProcedureEnable(uint16_t connection_handle, uint8_t config_id,
                                 bluetooth::hci::Enable enable);
 
+  void LeChannelSounding();
+  void SendLeCsSubeventResult(LeAclConnection& connection, LeCsConfig& config);
+
   // LE APCF
 
   ErrorCode LeApcfEnable(bool apcf_enable);
@@ -946,6 +949,8 @@ private:
     uint16_t sync_handle;
     std::chrono::steady_clock::duration sync_timeout;
     std::chrono::steady_clock::time_point timeout;
+    // BIG configuration fetched from BIGInfo.
+    std::optional<model::packets::BigInfo> big_info;
   };
 
   // Periodic advertising synchronizing and synchronized states.

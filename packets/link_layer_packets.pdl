@@ -199,11 +199,27 @@ packet LeExtendedAdvertisingPdu : LinkLayerPacket (type = LE_EXTENDED_ADVERTISIN
   advertising_data: 8[],
 }
 
+struct BigInfo {
+  num_bis: 8,
+  nse: 8,
+  iso_interval: 16,
+  bn: 8,
+  pto: 8,
+  irc: 8,
+  max_pdu: 16,
+  sdu_interval: 24,
+  max_sdu: 16,
+  phy: 8,
+  framing: 8,
+  encryption: 8,
+}
+
 packet LePeriodicAdvertisingPdu : LinkLayerPacket (type = LE_PERIODIC_ADVERTISING_PDU) {
   advertising_address_type: AddressType,
   sid: 8, // 0xff when not provided
   tx_power: 8,
   advertising_interval: 16,
+  big_info: BigInfo,
   advertising_data: 8[],
 }
 

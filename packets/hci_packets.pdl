@@ -5350,39 +5350,75 @@ packet LeCsTestEndComplete : LeMetaEvent (subevent_code = LE_CS_TEST_END_COMPLET
   status : ErrorCode,
 }
 
-struct CsStepData {
+enum CsProcedureDoneStatus : 4 {
+  ALL_RESULTS_COMPLETE = 0x0,
+  PARTIAL_RESULTS = 0x1,
+  ABORTED = 0xF,
+}
+
+enum CsSubeventDoneStatus : 4 {
+  ALL_RESULTS_COMPLETE = 0x0,
+  PARTIAL_RESULTS = 0x1,
+  ABORTED = 0xF,
+}
+
+struct LeCsResultDataStructure {
   step_mode : 8,
   step_channel : 8,
   _size_(step_data) : 8,
   step_data : 8[],
 }
 
+enum ProcedureAbortReason : 4 {
+  NO_ABORT = 0x0,
+  LOCAL_HOST_OR_REMOTE = 0x1,
+  INSUFFICIENT_FILTERED_CHANNELS = 0x2,
+  INSTANT_HAS_PASSED = 0x3,
+  UNSPECIFIED = 0xF,
+}
+
+enum SubeventAbortReason : 4 {
+  NO_ABORT = 0x0,
+  LOCAL_HOST_OR_REMOTE = 0x1,
+  NO_CS_SYNC_RECEIVED = 0x2,
+  SCHEDULING_CONFLICTS_OR_LIMITED_RESOURCES = 0x3,
+  UNSPECIFIED = 0xF,
+}
+
 packet LeCsSubeventResult : LeMetaEvent (subevent_code = LE_CS_SUBEVENT_RESULT) {
   connection_handle : 12,
   _reserved_ : 4,
-  config_id : 8,
+  config_id : 2,
+  _reserved_ : 6,
   start_acl_conn_event_counter : 16,
   procedure_counter : 16,
   frequency_compensation : 16,
   reference_power_level : 8,
-  procedure_done_status : 4,
-  subevent_done_status : 4,
-  abort_reason : 8,
+  procedure_done_status : CsProcedureDoneStatus,
+  _reserved_ : 4,
+  subevent_done_status : CsSubeventDoneStatus,
+  _reserved_ : 4,
+  procedure_abort_reason : ProcedureAbortReason,
+  subevent_abort_reason : SubeventAbortReason,
   num_antenna_paths : 8,
-  _count_(steps) : 8,
-  steps : CsStepData[],
+  _count_(cs_step) : 8,
+  cs_step : LeCsResultDataStructure[],
 }
 
 packet LeCsSubeventResultContinue : LeMetaEvent (subevent_code = LE_CS_SUBEVENT_RESULT_CONTINUE) {
   connection_handle : 12,
   _reserved_ : 4,
-  config_id : 8,
-  procedure_done_status : 4,
-  subevent_done_status : 4,
-  abort_reason : 8,
+  config_id : 2,
+  _reserved_ : 6,
+  procedure_done_status : CsProcedureDoneStatus,
+  _reserved_ : 4,
+  subevent_done_status : CsSubeventDoneStatus,
+  _reserved_ : 4,
+  procedure_abort_reason : ProcedureAbortReason,
+  subevent_abort_reason : SubeventAbortReason,
   num_antenna_paths : 8,
-  _count_(steps) : 8,
-  steps : CsStepData[],
+  _count_(cs_step) : 8,
+  cs_step : LeCsResultDataStructure[],
 }
 
 // HCI Event Packets
@@ -6227,7 +6263,7 @@ packet LeCreateBigComplete : LeMetaEvent (subevent_code = LE_CREATE_BIG_COMPLETE
   irc : 8,
   max_pdu : 16,
   iso_interval : 16,
-  _size_(connection_handle) : 8,
+  _count_(connection_handle) : 8,
   connection_handle : 16[],
 }
 
@@ -6246,7 +6282,7 @@ packet LeBigSyncEstablished : LeMetaEvent (subevent_code = LE_BIG_SYNC_ESTABLISH
   irc : 8,
   max_pdu : 16,
   iso_interval : 16,
-  _size_(connection_handle) : 8,
+  _count_(connection_handle) : 8,
   connection_handle : 16[],
 }
 

@@ -29,12 +29,19 @@ struct ControllerOps {
   uint16_t (*get_handle)(void* user, const uint8_t (*address)[6]);
   void (*get_address)(void* user, uint16_t handle, uint8_t (*result)[6]);
   uint64_t (*get_extended_features)(void* user, uint8_t features_page);
+  uint64_t (*get_event_mask)(void* user);
+  uint64_t (*get_event_mask_page_2)(void* user);
   uint64_t (*get_le_features)(void* user);
   uint64_t (*get_le_event_mask)(void* user);
   void (*send_hci_event)(void* user, const uint8_t* data, uintptr_t len);
   void (*send_lmp_packet)(void* user, const uint8_t (*to)[6], const uint8_t* data, uintptr_t len);
   void (*send_llcp_packet)(void* user, uint16_t handle, const uint8_t* data, uintptr_t len);
   bool (*get_advertiser_info)(void* user, uint8_t advertising_handle, bool* periodic_enabled);
+  bool (*is_sync_handle_valid)(void* user, uint16_t sync_handle);
+  bool (*get_sync_big_info)(void* user, uint16_t sync_handle, uint8_t* num_bis, uint8_t* nse,
+                            uint16_t* iso_interval, uint8_t* bn, uint8_t* pto, uint8_t* irc,
+                            uint16_t* max_pdu, uint32_t* sdu_interval, uint16_t* max_sdu,
+                            uint8_t* phy, uint8_t* framing, uint8_t* encryption);
 };
 
 extern "C" {
@@ -200,6 +207,32 @@ bool link_layer_get_cis_connection_handle(const LinkLayer* ll, uint8_t cig_id, u
 bool link_layer_get_bis_connection_handle(const LinkLayer* ll, uint8_t big_id, uint8_t bis_id,
                                           uint16_t* bis_connection_handle);
 
+/// Query the BIG configuration for a BIG established with
+/// the input advertising handle.
+/// Returns true if successful
+/// # Arguments
+/// * `ll` - link layer pointer
+/// * `advertising_handle` - Advertising handle
+/// * `num_bis` - Returns the number of BIS
+/// * `nse` - Returns the number of subevents
+/// * `iso_interval` - Returns the ISO interval
+/// * `bn` - Returns the burst number
+/// * `pto` - Returns the pre-transmission offset
+/// * `irc` - Returns the immediate repetition count
+/// * `max_pdu` - Returns the maximum PDU size
+/// * `sdu_interval` - Returns the SDU interval
+/// * `max_sdu` - Returns the maximum SDU size
+/// * `phy` - Returns the PHY
+/// * `framing` - Returns the framing
+/// * `encryption` - Returns the encryption
+/// # Safety
+/// - This should be called from the thread of creation
+/// - `ll` must be a valid pointer
+bool link_layer_get_big_info(const LinkLayer* ll, uint8_t advertising_handle, uint8_t* num_bis,
+                             uint8_t* nse, uint16_t* iso_interval, uint8_t* bn, uint8_t* pto,
+                             uint8_t* irc, uint16_t* max_pdu, uint32_t* sdu_interval,
+                             uint16_t* max_sdu, uint8_t* phy, uint8_t* framing,
+                             uint8_t* encryption);
 
 /// Query the CIS and CIG identifiers for a CIS established with
 /// the input CIS connection handle.
