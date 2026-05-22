@@ -1239,7 +1239,7 @@ impl IsoManager {
             acl_connection_handle,
             llcp::RejectExtInd {
                 reject_opcode: llcp::Opcode::LlCisReq as u8,
-                error_code: error_code as u8,
+                error_code: error_code.into(),
             },
         );
 
