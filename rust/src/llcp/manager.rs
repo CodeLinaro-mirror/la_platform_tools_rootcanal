@@ -82,6 +82,11 @@ impl LinkLayer {
         Ok(())
     }
 
+    pub fn big_sync_lost(&mut self, sync_handle: u16) -> Result<(), LinkLayerError> {
+        self.iso.big_sync_lost(sync_handle);
+        Ok(())
+    }
+
     pub fn tick(&mut self) {}
 
     pub fn ingest_hci(&mut self, packet: hci::Command) -> Result<(), LinkLayerError> {

@@ -387,6 +387,21 @@ pub unsafe extern "C" fn link_layer_remove_link(
     ll.remove_link(handle, reason).is_ok()
 }
 
+/// Notify the link layer that a synchronized BIG has been lost
+/// Returns true if successful
+/// # Arguments
+/// * `ll` - link layer pointer
+/// * `sync_handle` - periodic advertising sync train handle
+/// # Safety
+/// - This should be called from the thread of creation
+/// - `ll` must be a valid pointer
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn link_layer_big_sync_lost(ll: *const LinkLayer, sync_handle: u16) -> bool {
+    let mut ll = ManuallyDrop::new(unsafe { Rc::from_raw(ll) });
+    let ll = Rc::get_mut(&mut ll).unwrap();
+    ll.big_sync_lost(sync_handle).is_ok()
+}
+
 /// Run the Link Manager procedures
 /// # Arguments
 /// * `ll` - link layer pointer
