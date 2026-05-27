@@ -3841,6 +3841,15 @@ void LeController::IncomingLlCsReq(LeAclConnection& connection,
               req.GetSubeventsPerEvent(), req.GetSubeventInterval(), req.GetEventInterval(),
               min_procedure_interval, max_procedure_count, max_procedure_len));
     }
+
+    if (it != connection.cs_parameters.config_map.end()) {
+      it->second.enabled = true;
+      it->second.remaining_procedure_count =
+              it->second.procedure_parameters.has_value()
+                      ? it->second.procedure_parameters->max_procedure_count
+                      : 1;
+      it->second.result_timeout = std::chrono::steady_clock::now() + kCsProcedureInterval;
+    }
   }
 }
 
