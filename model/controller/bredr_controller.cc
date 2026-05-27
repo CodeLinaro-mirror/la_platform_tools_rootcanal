@@ -68,8 +68,7 @@ bool BrEdrController::IsEventUnmasked(EventCode event) const {
     uint64_t bit = UINT64_C(1) << (evt - 1);
     return (event_mask_ & bit) != 0;
   } else {
-    evt -= 64;
-    uint64_t bit = UINT64_C(1) << (evt - 1);
+    uint64_t bit = UINT64_C(1) << (evt - 64);
     return (event_mask_page_2_ & bit) != 0;
   }
 }

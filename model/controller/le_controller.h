@@ -529,6 +529,9 @@ public:
   ErrorCode LeCsProcedureEnable(uint16_t connection_handle, uint8_t config_id,
                                 bluetooth::hci::Enable enable);
 
+  void LeChannelSounding();
+  void SendLeCsSubeventResult(LeAclConnection& connection, LeCsConfig& config);
+
   // LE APCF
 
   ErrorCode LeApcfEnable(bool apcf_enable);

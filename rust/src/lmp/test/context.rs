@@ -70,7 +70,7 @@ impl TestContext {
         if 0 < code && code <= 64 {
             self.event_mask |= 1 << (code - 1);
         } else if 64 < code && code <= 128 {
-            self.event_mask_page_2 |= 1 << (code - 65);
+            self.event_mask_page_2 |= 1 << (code - 64);
         }
         self
     }

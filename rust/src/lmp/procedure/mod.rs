@@ -44,7 +44,7 @@ pub trait Context {
         if code > 0 && code <= 64 {
             (self.event_mask() & (1 << (code - 1))) != 0
         } else if code > 64 && code <= 128 {
-            (self.event_mask_page_2() & (1 << (code - 65))) != 0
+            (self.event_mask_page_2() & (1 << (code - 64))) != 0
         } else {
             false
         }
