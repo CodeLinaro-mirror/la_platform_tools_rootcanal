@@ -22,6 +22,7 @@ import unittest
 tests = [
     "HCI.AEN.BV_06_C",
     "HCI.rootcanal_vendor_commands",
+    "LL.BIS.BRD.BV_01_C",
     "LL.CIS.CEN.BV_01_C",
     "LL.CIS.CEN.BV_03_C",
     "LL.CIS.CEN.BV_10_C",
