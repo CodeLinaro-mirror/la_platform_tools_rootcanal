@@ -277,8 +277,8 @@ class Controller:
             try:
                 print("ll queue not empty at stop():")
                 while packet := self.ll_queue.get_nowait():
-                    ll = hci.Event.parse_all(packet)
-                    ll.show()
+                    ll_packet = ll.LinkLayerPacket.parse_all(packet)
+                    ll_packet.show()
             except asyncio.QueueEmpty:
                 pass
             raise Exception("ll queue not empty at stop()")
