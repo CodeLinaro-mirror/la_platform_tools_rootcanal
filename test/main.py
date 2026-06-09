@@ -22,6 +22,8 @@ import unittest
 tests = [
     "HCI.AEN.BV_06_C",
     "HCI.rootcanal_vendor_commands",
+    "LL.BIS.BRD.BV_01_C",
+    "LL.BIS.SNC.BV_01_C",
     "LL.CIS.CEN.BV_01_C",
     "LL.CIS.CEN.BV_03_C",
     "LL.CIS.CEN.BV_10_C",
@@ -41,6 +43,7 @@ tests = [
     "LL.CS.CEN.INI.BV_01_C",
     "LL.CS.CEN.INI.BV_03_C",
     "LL.CS.CEN.INI.BV_05_C",
+    "LL.CS.CEN.REF.BV_24_C",
     "LL.CS.PER.INI.BV_01_C",
     "LL.CS.PER.INI.BV_02_C",
     "LL.CS.PER.REF.BV_01_C",

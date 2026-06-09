@@ -145,6 +145,16 @@ bool link_layer_add_link(const LinkLayer* ll, uint16_t handle, const uint8_t (*p
 /// - `peer` must be valid for reads for 6 bytes
 bool link_layer_remove_link(const LinkLayer* ll, uint16_t handle, uint8_t reason);
 
+/// Notify the link layer that a synchronized BIG has been lost
+/// Returns true if successful
+/// # Arguments
+/// * `ll` - link layer pointer
+/// * `sync_handle` - periodic advertising sync train handle
+/// # Safety
+/// - This should be called from the thread of creation
+/// - `ll` must be a valid pointer
+bool link_layer_big_sync_lost(const LinkLayer* ll, uint16_t sync_handle);
+
 /// Run the Link Manager procedures
 /// # Arguments
 /// * `ll` - link layer pointer
