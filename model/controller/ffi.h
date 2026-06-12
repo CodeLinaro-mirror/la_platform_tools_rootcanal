@@ -32,6 +32,7 @@ void ffi_controller_delete(void* controller);
 void ffi_controller_receive_hci(void* controller, int idc, uint8_t const* data, size_t data_len);
 void ffi_controller_receive_ll(void* controller, uint8_t const* data, size_t data_len, int phy,
                                int rssi);
+bool ffi_controller_set_properties(void* controller, uint8_t const* proto_bytes, size_t proto_len);
 void ffi_controller_tick(void* controller);
 void ffi_generate_rpa(uint8_t const irk[16], uint8_t rpa[6]);
 
