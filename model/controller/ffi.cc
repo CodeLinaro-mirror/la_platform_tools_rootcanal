@@ -140,6 +140,19 @@ __attribute__((visibility("default"))) void ffi_controller_receive_ll(void* cont
   controller->ReceiveLinkLayerPacket(packet, Phy::Type(phy), rssi);
 }
 
+__attribute__((visibility("default"))) bool ffi_controller_set_properties(
+        void* controller_, uint8_t const* proto_bytes, size_t proto_len) {
+  DualModeController* controller = reinterpret_cast<DualModeController*>(controller_);
+  if (proto_bytes != nullptr && proto_len > 0) {
+    rootcanal::configuration::Controller config;
+    if (config.ParseFromArray(proto_bytes, proto_len)) {
+      controller->SetProperties(rootcanal::ControllerProperties(config));
+      return true;
+    }
+  }
+  return false;
+}
+
 __attribute__((visibility("default"))) void ffi_controller_tick(void* controller_) {
   DualModeController* controller = reinterpret_cast<DualModeController*>(controller_);
   controller->Tick();
