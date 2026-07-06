@@ -567,6 +567,7 @@ public:
   void GetControllerDebugInfo(CommandView command);
   void IntelDdcConfigRead(CommandView command);
   void IntelDdcConfigWrite(CommandView command);
+  void LeAddDeviceToFilterAcceptListWithProximityThreshold(CommandView command);
 
   // CSR vendor command.
   // Implement the command specific to the CSR controller

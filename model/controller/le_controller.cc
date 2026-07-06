@@ -238,6 +238,62 @@ bool LeController::LeFilterAcceptListContainsDevice(AddressWithType address) {
   return LeFilterAcceptListContainsDevice(address_type, address.GetAddress());
 }
 
+static std::optional<int8_t> ExtractTxPowerFromAdvData(const std::vector<uint8_t>& data) {
+  size_t i = 0;
+  while (i < data.size()) {
+    uint8_t length = data[i];
+    if (length == 0 || i + length >= data.size()) {
+      break;
+    }
+    uint8_t type = data[i + 1];
+    if (type == 0x0A && length >= 2) {
+      return static_cast<int8_t>(data[i + 2]);
+    }
+    i += length + 1;
+  }
+  return std::nullopt;
+}
+
+bool LeController::LeFilterAcceptListContainsDeviceWithThreshold(
+        AddressWithType address, int8_t rssi, const std::vector<uint8_t>& adv_data,
+        int8_t pdu_tx_power) {
+  FilterAcceptListAddressType address_type;
+  switch (address.GetAddressType()) {
+    case AddressType::PUBLIC_DEVICE_ADDRESS:
+    case AddressType::PUBLIC_IDENTITY_ADDRESS:
+      address_type = FilterAcceptListAddressType::PUBLIC;
+      break;
+    case AddressType::RANDOM_DEVICE_ADDRESS:
+    case AddressType::RANDOM_IDENTITY_ADDRESS:
+      address_type = FilterAcceptListAddressType::RANDOM;
+      break;
+  }
+
+  std::optional<int8_t> tx_power = std::nullopt;
+  if (pdu_tx_power != 127) {
+    tx_power = pdu_tx_power;
+  } else {
+    // TxPower not available in PDU header
+    tx_power = ExtractTxPowerFromAdvData(adv_data);
+  }
+
+  for (auto const& entry : le_filter_accept_list_) {
+    if (entry.address_type == address_type && entry.address == address.GetAddress()) {
+      if (entry.path_loss_threshold != FilterAcceptListEntry::kPathLossThresholdNoFiltering) {
+        if (tx_power.has_value()) {
+          int16_t path_loss = static_cast<int16_t>(tx_power.value()) - static_cast<int16_t>(rssi);
+          return path_loss <= entry.path_loss_threshold;
+        }
+      }
+      if (entry.rssi_threshold != FilterAcceptListEntry::kRssiThresholdNoFiltering) {
+        return rssi >= entry.rssi_threshold;
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
 bool LeController::ResolvingListBusy() {
   // The resolving list cannot be modified when
   //  • Advertising (other than periodic advertising) is enabled,
@@ -4900,7 +4956,7 @@ void LeController::ScanIncomingLeLegacyAdvertisingPdu(
 }
 
 void LeController::ConnectIncomingLeLegacyAdvertisingPdu(
-        model::packets::LeLegacyAdvertisingPduView& pdu) {
+        model::packets::LeLegacyAdvertisingPduView& pdu, uint8_t rssi) {
   if (!initiator_.IsEnabled()) {
     return;
   }
@@ -4949,10 +5005,12 @@ void LeController::ConnectIncomingLeLegacyAdvertisingPdu(
       }
       break;
     case bluetooth::hci::InitiatorFilterPolicy::USE_FILTER_ACCEPT_LIST_WITH_PEER_ADDRESS:
-      if (!LeFilterAcceptListContainsDevice(resolved_advertising_address)) {
+      if (!LeFilterAcceptListContainsDeviceWithThreshold(resolved_advertising_address,
+                                                         static_cast<int8_t>(rssi),
+                                                         pdu.GetAdvertisingData())) {
         DEBUG(id_,
               "Legacy advertising ignored by initiator because the "
-              "advertising address {} is not in the filter accept list",
+              "advertising address {} is not in the filter accept list or threshold not met",
               resolved_advertising_address);
         return;
       }
@@ -5049,7 +5107,7 @@ void LeController::IncomingLeLegacyAdvertisingPdu(model::packets::LinkLayerPacke
   ASSERT(pdu.IsValid());
 
   ScanIncomingLeLegacyAdvertisingPdu(pdu, rssi);
-  ConnectIncomingLeLegacyAdvertisingPdu(pdu);
+  ConnectIncomingLeLegacyAdvertisingPdu(pdu, rssi);
 }
 
 // Handle legacy advertising PDUs while in the Scanning state.
@@ -5319,7 +5377,7 @@ void LeController::ScanIncomingLeExtendedAdvertisingPdu(
 }
 
 void LeController::ConnectIncomingLeExtendedAdvertisingPdu(
-        model::packets::LeExtendedAdvertisingPduView& pdu) {
+        model::packets::LeExtendedAdvertisingPduView& pdu, uint8_t rssi) {
   if (!initiator_.IsEnabled()) {
     return;
   }
@@ -5365,10 +5423,12 @@ void LeController::ConnectIncomingLeExtendedAdvertisingPdu(
       }
       break;
     case bluetooth::hci::InitiatorFilterPolicy::USE_FILTER_ACCEPT_LIST_WITH_PEER_ADDRESS:
-      if (!LeFilterAcceptListContainsDevice(resolved_advertising_address)) {
+      if (!LeFilterAcceptListContainsDeviceWithThreshold(
+                  resolved_advertising_address, static_cast<int8_t>(rssi), pdu.GetAdvertisingData(),
+                  static_cast<int8_t>(pdu.GetTxPower()))) {
         DEBUG(id_,
               "Extended advertising ignored by initiator because the "
-              "advertising address {} is not in the filter accept list",
+              "advertising address {} is not in the filter accept list or threshold not met",
               resolved_advertising_address);
         return;
       }
@@ -5465,7 +5525,7 @@ void LeController::IncomingLeExtendedAdvertisingPdu(model::packets::LinkLayerPac
   ASSERT(pdu.IsValid());
 
   ScanIncomingLeExtendedAdvertisingPdu(pdu, rssi);
-  ConnectIncomingLeExtendedAdvertisingPdu(pdu);
+  ConnectIncomingLeExtendedAdvertisingPdu(pdu, rssi);
 }
 
 void LeController::IncomingLePeriodicAdvertisingPdu(model::packets::LinkLayerPacketView incoming,
@@ -7077,6 +7137,38 @@ void LeController::RunPendingTasks() {
       task_queue_.insert(task);
     }
   }
+}
+
+// =============================================================================
+//  Android Vendor Extension Commands
+// =============================================================================
+
+ErrorCode LeController::LeAddDeviceToFilterAcceptListWithProximityThreshold(
+        FilterAcceptListAddressType address_type, Address address, int8_t path_loss_threshold,
+        int8_t rssi_threshold) {
+  if (FilterAcceptListBusy()) {
+    INFO(id_,
+         "device is currently advertising, scanning,"
+         " or establishing an LE connection using the filter accept list");
+    return ErrorCode::COMMAND_DISALLOWED;
+  }
+
+  for (auto& entry : le_filter_accept_list_) {
+    if (entry.address_type == address_type && entry.address == address) {
+      entry.path_loss_threshold = path_loss_threshold;
+      entry.rssi_threshold = rssi_threshold;
+      return ErrorCode::SUCCESS;
+    }
+  }
+
+  if (le_filter_accept_list_.size() >= properties_.le_filter_accept_list_size) {
+    INFO(id_, "filter accept list is full");
+    return ErrorCode::MEMORY_CAPACITY_EXCEEDED;
+  }
+
+  le_filter_accept_list_.emplace_back(
+          FilterAcceptListEntry{address_type, address, path_loss_threshold, rssi_threshold});
+  return ErrorCode::SUCCESS;
 }
 
 }  // namespace rootcanal
