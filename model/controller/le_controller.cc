@@ -27,6 +27,7 @@
 #include <cstring>
 #include <functional>
 #include <memory>
+#include <numbers>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -4115,6 +4116,12 @@ void LeController::SendLeCsSubeventResult(LeAclConnection& connection, LeCsConfi
     return;
   }
 
+  unsigned simulated_distance_cm = 10;
+  if (ranging_estimator_) {
+    simulated_distance_cm = ranging_estimator_(connection.own_address.GetAddress(),
+                                               connection.address.GetAddress());
+  }
+
   auto connection_handle = connection.handle;
 
   std::vector<bluetooth::hci::LeCsResultDataStructure> results;
@@ -4124,37 +4131,124 @@ void LeController::SendLeCsSubeventResult(LeAclConnection& connection, LeCsConfi
   if (total_steps_requested < kMinMainModeSteps) {
     total_steps_requested = kMinMainModeSteps;
   }
+  bool is_initiator = config.role == static_cast<uint8_t>(bluetooth::hci::CsRole::INITIATOR);
+  bool has_sounding_sequence =
+          (config.rtt_type ==
+                   static_cast<uint8_t>(
+                           bluetooth::hci::CsRttType::RTT_WITH_32_BIT_SOUNDING_SEQUENCE) ||
+           config.rtt_type ==
+                   static_cast<uint8_t>(
+                           bluetooth::hci::CsRttType::RTT_WITH_96_BIT_SOUNDING_SEQUENCE));
+  uint8_t num_antenna_paths = 1;
+  uint16_t num_tone_data = num_antenna_paths + 1;
+
+  // 1. Hoist Invariants: Calculate sizes outside the loop
+  // Please refer Core Spec Vol 4, Part E § 7.7.6.44 for calculation of data size based on main mode
+  // type.
+  uint8_t mode1_size = has_sounding_sequence ? 14 : 6;
+  uint8_t mode2_size = 1 + (4 * num_tone_data);
   uint8_t step_data_size;
+
   switch (main_mode_type) {
     case 0:
-      step_data_size = 5;
+      step_data_size = is_initiator ? 5 : 3;
       break;
     case 1:
-      step_data_size = 6;
+      step_data_size = mode1_size;
       break;
     case 2:
-      step_data_size = 9;
+      step_data_size = mode2_size;
       break;
     case 3:
-      step_data_size = 15;
+      step_data_size = mode1_size + mode2_size;
       break;
     default:
       step_data_size = 5;
       break;
   }
+
+  double distance_meters = simulated_distance_cm / 100.0;
+  double speed_of_light = 299792458.0;
+  double time_delay_s = distance_meters / speed_of_light;
+  uint16_t toa_tod = static_cast<uint16_t>((simulated_distance_cm * 2) / 15);
+
+  // 3. Define helper lambdas for bit-packing
+  auto pack_mode1 = [&](std::vector<uint8_t>& data_out, size_t offset) {
+    data_out[offset + 0] = 0;     // Packet_Quality
+    data_out[offset + 1] = 0xFF;  // Packet_NADM
+    data_out[offset + 2] = 0x7F;  // Packet_RSSI
+    data_out[offset + 3] = static_cast<uint8_t>(toa_tod & 0xFF);
+    data_out[offset + 4] = static_cast<uint8_t>((toa_tod >> 8) & 0xFF);
+    data_out[offset + 5] = 1;  // Packet_Antenna
+    if (has_sounding_sequence) {
+      // Cleanly fill the 8 bytes of PCT1 and PCT2 with 0xFF
+      std::fill(data_out.begin() + offset + 6, data_out.begin() + offset + 14, 0xFF);
+    }
+  };
+
+  auto pack_mode2 = [&](std::vector<uint8_t>& data_out, size_t offset, int16_t i_val,
+                        int16_t q_val) {
+    data_out[offset] = 0;  // Antenna_Path_Permutation_Index
+    for (int k = 0; k < num_tone_data; k++) {
+      int t_offset = offset + 1 + (k * 4);
+      data_out[t_offset] = i_val & 0xFF;
+      data_out[t_offset + 1] = ((q_val & 0xF) << 4) | ((i_val >> 8) & 0xF);
+      data_out[t_offset + 2] = (q_val >> 4) & 0xFF;
+      data_out[t_offset + 3] = 0;  // Tone Quality Indicator
+    }
+  };
+
+  // 4. Flattened Iteration Loop
   while (results.size() < total_steps_requested) {
     config.last_rotated_channel = (config.last_rotated_channel + 1) % 80;
     uint8_t current_ch = config.last_rotated_channel;
 
-    if (config.channel_map[current_ch / 8] & (1 << (current_ch % 8))) {
-      std::vector<uint8_t> data(step_data_size, 0);
-      bluetooth::hci::LeCsResultDataStructure res;
-      res.step_mode_ = static_cast<uint8_t>(main_mode_type);
-      res.step_channel_ = current_ch;
-      res.step_data_ = std::move(data);
-
-      results.push_back(std::move(res));
+    if (!(config.channel_map[current_ch / 8] & (1 << (current_ch % 8)))) {
+      continue;
     }
+    // Calculate channel-specific physics
+    double freq_mhz = 2402.0 + current_ch;
+    double freq_hz = freq_mhz * 1000000.0;
+    // The Host CS distance algorithm adds up phases from both initiator and reflector:
+    // (Phase_Initiator + Phase_Reflector_Turnaround).
+    // If we specify a 2-way delay for each Endpoint here, the Host perceives double the physical
+    // distance because it inherently factors both endpoint measurements as part of a single
+    // Roundtrip link! To correct this, we report a realistic independent measurement (one-way
+    // physical delay)
+    double phase = -2.0 * std::numbers::pi * freq_hz * time_delay_s;
+    int16_t i_sample = static_cast<int16_t>(cos(phase) * 2047.0);
+    int16_t q_sample = static_cast<int16_t>(sin(phase) * 2047.0);
+
+    std::vector<uint8_t> data(step_data_size, 0);
+
+    switch (main_mode_type) {
+      case 0:
+        data[0] = 0;     // Packet_Quality
+        data[1] = 0x7F;  // Packet_RSSI
+        data[2] = 1;     // Packet_Antenna
+        if (is_initiator) {
+          data[3] = 0;  // Measured_Freq_Offset LSB
+          data[4] = 0;  // Measured_Freq_Offset MSB
+        }
+        break;
+      case 1:
+        pack_mode1(data, 0);
+        break;
+      case 2:
+        pack_mode2(data, 0, i_sample, q_sample);
+        break;
+      case 3:
+        pack_mode1(data, 0);
+        pack_mode2(data, mode1_size, i_sample, q_sample);
+        break;
+    }
+
+    bluetooth::hci::LeCsResultDataStructure res;
+    res.step_mode_ = static_cast<uint8_t>(main_mode_type);
+    res.step_channel_ = current_ch;
+    res.step_data_ = std::move(data);
+
+    results.push_back(std::move(res));
   }
 
   const size_t max_payload = 255;
@@ -4388,7 +4482,8 @@ LeController::LeController(const Address& address, const ControllerProperties& p
 }
 
 void LeController::RegisterRangingEstimator(
-        std::function<unsigned(void const* cookie1, void const* cookie2)> const& callback) {
+        std::function<unsigned(const Address source_address, const Address target_address)> const&
+                callback) {
   ranging_estimator_ = callback;
 }
 
@@ -6922,6 +7017,11 @@ ErrorCode LeController::LeRemoteConnectionParameterRequestNegativeReply(
 
 bool LeController::HasLeAclConnection(uint16_t connection_handle) {
   return connections_.HasLeAclHandle(connection_handle);
+}
+
+std::optional<uint16_t> LeController::GetLeAclConnectionHandle(
+        bluetooth::hci::Address local_address, bluetooth::hci::Address remote_address) const {
+  return connections_.GetLeAclConnectionHandle(local_address, remote_address);
 }
 
 void LeController::HandleLeEnableEncryption(uint16_t handle, std::array<uint8_t, 8> rand,
