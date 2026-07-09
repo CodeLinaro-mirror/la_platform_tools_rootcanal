@@ -3110,6 +3110,22 @@ void DualModeController::LeExSetScanParameters(CommandView command) {
   SendCommandCompleteUnknownOpCodeEvent(OpCode::LE_EX_SET_SCAN_PARAMETERS);
 }
 
+void DualModeController::LeAddDeviceToFilterAcceptListWithProximityThreshold(CommandView command) {
+  auto command_view =
+          bluetooth::hci::LeAddDeviceToFilterAcceptListWithProximityThresholdView::Create(command);
+  CHECK_PACKET_VIEW(command_view);
+
+  DEBUG(id_, "<< LE Add Device To Filter Accept List With Proximity Threshold");
+  DEBUG(id_, "   address={}", command_view.GetAddress());
+
+  ErrorCode status = le_controller_.LeAddDeviceToFilterAcceptListWithProximityThreshold(
+          command_view.GetAddressType(), command_view.GetAddress(),
+          static_cast<int8_t>(command_view.GetConnectionPathLossThreshold()),
+          static_cast<int8_t>(command_view.GetConnectionRssiThreshold()));
+  send_event_(bluetooth::hci::LeAddDeviceToFilterAcceptListWithProximityThresholdCompleteBuilder::
+                      Create(kNumCommandPackets, status));
+}
+
 void DualModeController::GetControllerDebugInfo(CommandView command) {
   auto command_view = bluetooth::hci::GetControllerDebugInfoView::Create(command);
   CHECK_PACKET_VIEW(command_view);
@@ -4539,6 +4555,8 @@ DualModeController::GetHciCommandHandlers() {
           {OpCode::LE_GET_CONTROLLER_ACTIVITY_ENERGY_INFO,
            &DualModeController::LeGetControllerActivityEnergyInfo},
           {OpCode::LE_EX_SET_SCAN_PARAMETERS, &DualModeController::LeExSetScanParameters},
+          {OpCode::LE_ADD_DEVICE_TO_FILTER_ACCEPT_LIST_WITH_PROXIMITY_THRESHOLD,
+           &DualModeController::LeAddDeviceToFilterAcceptListWithProximityThreshold},
           {OpCode::GET_CONTROLLER_DEBUG_INFO, &DualModeController::GetControllerDebugInfo},
           {OpCode::INTEL_DDC_CONFIG_READ, &DualModeController::IntelDdcConfigRead},
           {OpCode::INTEL_DDC_CONFIG_WRITE, &DualModeController::IntelDdcConfigWrite},
