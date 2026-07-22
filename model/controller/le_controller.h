@@ -144,7 +144,8 @@ public:
                                    Phy::Type, int8_t)>& send_to_remote);
 
   void RegisterRangingEstimator(
-          std::function<unsigned(void const* cookie1, void const* cookie2)> const& callback);
+          std::function<unsigned(const Address source_address, const Address target_address)> const&
+                  callback);
 
   void Reset();
 
@@ -237,6 +238,11 @@ public:
 
   // Returns true if the specified ACL connection handle is valid.
   bool HasLeAclConnection(uint16_t connection_handle);
+
+  // Return the connection handle for a LE ACL connection identified with
+  // local and remote addresses.
+  std::optional<uint16_t> GetLeAclConnectionHandle(bluetooth::hci::Address local_address,
+                                                   bluetooth::hci::Address remote_address) const;
 
   void HandleAcl(bluetooth::hci::AclView acl);
   void HandleIso(bluetooth::hci::IsoView iso);
@@ -786,7 +792,8 @@ private:
   std::function<void(std::shared_ptr<bluetooth::hci::IsoBuilder>)> send_iso_;
 
   // Ranging estimator callback.
-  std::function<unsigned(void const* cookie1, void const* cookie2)> ranging_estimator_{};
+  std::function<unsigned(const Address source_address, const Address target_address)>
+          ranging_estimator_{};
 
   // Callback to send packets to remote devices.
   std::function<void(std::shared_ptr<model::packets::LinkLayerPacketBuilder>, Phy::Type phy_type,

@@ -196,6 +196,11 @@ void DualModeController::HandleIso(std::shared_ptr<std::vector<uint8_t>> packet)
   le_controller_.HandleIso(iso);
 }
 
+std::optional<uint16_t> DualModeController::GetLeAclConnectionHandle(
+        const Address source_address, const Address target_address) const {
+  return le_controller_.GetLeAclConnectionHandle(source_address, target_address);
+}
+
 void DualModeController::HandleCommand(std::shared_ptr<std::vector<uint8_t>> packet) {
   auto command_packet = bluetooth::hci::CommandView::Create(pdl::packet::slice(packet));
   CHECK_PACKET_VIEW(command_packet);
@@ -270,7 +275,8 @@ void DualModeController::RegisterInvalidPacketHandler(
 }
 
 void DualModeController::RegisterRangingEstimator(
-        std::function<unsigned(void const* cookie1, void const* cookie2)> const& callback) {
+        std::function<unsigned(const Address source_address, const Address target_address)> const&
+                callback) {
   le_controller_.RegisterRangingEstimator(callback);
 }
 
