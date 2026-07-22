@@ -184,6 +184,7 @@ cc_test_host {
     ],
     srcs: [
         "test/controller/le/le_add_device_to_filter_accept_list_test.cc",
+        "test/controller/le/le_add_device_to_filter_accept_list_with_proximity_threshold_test.cc",
         "test/controller/le/le_add_device_to_periodic_advertiser_list_test.cc",
         "test/controller/le/le_add_device_to_resolving_list_test.cc",
         "test/controller/le/le_clear_filter_accept_list_test.cc",
