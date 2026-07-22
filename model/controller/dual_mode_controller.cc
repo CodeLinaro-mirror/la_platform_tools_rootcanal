@@ -196,6 +196,11 @@ void DualModeController::HandleIso(std::shared_ptr<std::vector<uint8_t>> packet)
   le_controller_.HandleIso(iso);
 }
 
+std::optional<uint16_t> DualModeController::GetLeAclConnectionHandle(
+        const Address source_address, const Address target_address) const {
+  return le_controller_.GetLeAclConnectionHandle(source_address, target_address);
+}
+
 void DualModeController::HandleCommand(std::shared_ptr<std::vector<uint8_t>> packet) {
   auto command_packet = bluetooth::hci::CommandView::Create(pdl::packet::slice(packet));
   CHECK_PACKET_VIEW(command_packet);
@@ -270,7 +275,8 @@ void DualModeController::RegisterInvalidPacketHandler(
 }
 
 void DualModeController::RegisterRangingEstimator(
-        std::function<unsigned(void const* cookie1, void const* cookie2)> const& callback) {
+        std::function<unsigned(const Address source_address, const Address target_address)> const&
+                callback) {
   le_controller_.RegisterRangingEstimator(callback);
 }
 
@@ -3110,6 +3116,22 @@ void DualModeController::LeExSetScanParameters(CommandView command) {
   SendCommandCompleteUnknownOpCodeEvent(OpCode::LE_EX_SET_SCAN_PARAMETERS);
 }
 
+void DualModeController::LeAddDeviceToFilterAcceptListWithProximityThreshold(CommandView command) {
+  auto command_view =
+          bluetooth::hci::LeAddDeviceToFilterAcceptListWithProximityThresholdView::Create(command);
+  CHECK_PACKET_VIEW(command_view);
+
+  DEBUG(id_, "<< LE Add Device To Filter Accept List With Proximity Threshold");
+  DEBUG(id_, "   address={}", command_view.GetAddress());
+
+  ErrorCode status = le_controller_.LeAddDeviceToFilterAcceptListWithProximityThreshold(
+          command_view.GetAddressType(), command_view.GetAddress(),
+          static_cast<int8_t>(command_view.GetConnectionPathLossThreshold()),
+          static_cast<int8_t>(command_view.GetConnectionRssiThreshold()));
+  send_event_(bluetooth::hci::LeAddDeviceToFilterAcceptListWithProximityThresholdCompleteBuilder::
+                      Create(kNumCommandPackets, status));
+}
+
 void DualModeController::GetControllerDebugInfo(CommandView command) {
   auto command_view = bluetooth::hci::GetControllerDebugInfoView::Create(command);
   CHECK_PACKET_VIEW(command_view);
@@ -4539,6 +4561,8 @@ DualModeController::GetHciCommandHandlers() {
           {OpCode::LE_GET_CONTROLLER_ACTIVITY_ENERGY_INFO,
            &DualModeController::LeGetControllerActivityEnergyInfo},
           {OpCode::LE_EX_SET_SCAN_PARAMETERS, &DualModeController::LeExSetScanParameters},
+          {OpCode::LE_ADD_DEVICE_TO_FILTER_ACCEPT_LIST_WITH_PROXIMITY_THRESHOLD,
+           &DualModeController::LeAddDeviceToFilterAcceptListWithProximityThreshold},
           {OpCode::GET_CONTROLLER_DEBUG_INFO, &DualModeController::GetControllerDebugInfo},
           {OpCode::INTEL_DDC_CONFIG_READ, &DualModeController::IntelDdcConfigRead},
           {OpCode::INTEL_DDC_CONFIG_WRITE, &DualModeController::IntelDdcConfigWrite},

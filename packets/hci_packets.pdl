@@ -420,6 +420,7 @@ enum OpCode : 16 {
   LE_GET_CONTROLLER_ACTIVITY_ENERGY_INFO = 0xFD59,
   LE_EX_SET_SCAN_PARAMETERS = 0xFD5A,
   GET_CONTROLLER_DEBUG_INFO = 0xFD5B,
+  LE_ADD_DEVICE_TO_FILTER_ACCEPT_LIST_WITH_PROXIMITY_THRESHOLD = 0xFD66,
   // MSFT_OPCODE_xxxx below are needed for the tests.
   MSFT_OPCODE_MEDIATEK = 0xFD30,
   MSFT_OPCODE_QUALCOMM = 0xFD70,
@@ -3463,6 +3464,17 @@ packet LeAddDeviceToFilterAcceptList : Command (op_code = LE_ADD_DEVICE_TO_FILTE
 }
 
 packet LeAddDeviceToFilterAcceptListComplete : CommandComplete (command_op_code = LE_ADD_DEVICE_TO_FILTER_ACCEPT_LIST) {
+  status : ErrorCode,
+}
+
+packet LeAddDeviceToFilterAcceptListWithProximityThreshold : Command (op_code = LE_ADD_DEVICE_TO_FILTER_ACCEPT_LIST_WITH_PROXIMITY_THRESHOLD) {
+  address_type : FilterAcceptListAddressType,
+  address : Address,
+  connection_path_loss_threshold : 8,
+  connection_rssi_threshold : 8,
+}
+
+packet LeAddDeviceToFilterAcceptListWithProximityThresholdComplete : CommandComplete (command_op_code = LE_ADD_DEVICE_TO_FILTER_ACCEPT_LIST_WITH_PROXIMITY_THRESHOLD) {
   status : ErrorCode,
 }
 
