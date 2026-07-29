@@ -2145,13 +2145,25 @@ impl IsoManager {
             return;
         }
 
-        // 2. Validate BIG_Handle State (Existence)
+        // 2. Validate BIG_Handle State (Existence & Role)
+        // Spec: "If the Controller is not the Isochronous Broadcaster for the BIG identified by
+        // BIG_Handle, the Controller shall return the error code Command Disallowed (0x0C)."
+        if self.big_sync_config.contains_key(&big_handle) {
+            println!(
+                "LE Terminate BIG: Controller is Synced Receiver, not \
+                 Broadcaster for BIG_Handle 0x{:02X}",
+                big_handle
+            );
+            self.send_hci_event(command_status(hci::ErrorCode::CommandDisallowed));
+            return;
+        }
+
         // Spec: "If the BIG_Handle parameter does not identify a BIG that is
         // currently created, the Controller shall return the error code
         // Unknown Advertising Identifier (0x42)."
         if self.big_config.remove(&big_handle).is_none() {
-            return self
-                .send_hci_event(command_status(hci::ErrorCode::UnknownAdvertisingIdentifier));
+            self.send_hci_event(command_status(hci::ErrorCode::UnknownAdvertisingIdentifier));
+            return;
         };
 
         // Send Command Status (Success) immediately as the command is pending completion.
@@ -2166,6 +2178,24 @@ impl IsoManager {
         // Spec: "The Controller shall send an HCI_LE_Terminate_BIG_Complete
         // event to the Host."
         self.send_hci_event(hci::LeTerminateBigComplete { big_handle, reason });
+    }
+
+    pub fn big_sync_lost(&mut self, sync_handle: u16) {
+        let sync_key = self
+            .big_sync_config
+            .iter()
+            .find(|(_, config)| config.sync_handle == sync_handle)
+            .map(|(&key, _)| key);
+
+        if let Some(big_handle) = sync_key {
+            self.big_sync_config.remove(&big_handle);
+            self.bis_connections
+                .retain(|_, bis| bis.big_handle != big_handle);
+            self.send_hci_event(hci::LeBigSyncLost {
+                big_handle,
+                reason: hci::ErrorCode::RemoteUserTerminatedConnection,
+            });
+        }
     }
 }
 

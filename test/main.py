@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import importlib
 from importlib import resources
 from pathlib import Path
-import importlib
 import sys
 import tempfile
 import unittest
@@ -22,6 +22,9 @@ import unittest
 tests = [
     "HCI.AEN.BV_06_C",
     "HCI.rootcanal_vendor_commands",
+    "LL.BIS.BRD.BV_01_C",
+    "LL.BIS.SNC.BV_01_C",
+    "LL.BIS.SNC.BV_10_C",
     "LL.CIS.CEN.BV_01_C",
     "LL.CIS.CEN.BV_03_C",
     "LL.CIS.CEN.BV_10_C",
@@ -41,6 +44,7 @@ tests = [
     "LL.CS.CEN.INI.BV_01_C",
     "LL.CS.CEN.INI.BV_03_C",
     "LL.CS.CEN.INI.BV_05_C",
+    "LL.CS.CEN.INI.BV_33_C",
     "LL.CS.CEN.REF.BV_24_C",
     "LL.CS.PER.INI.BV_01_C",
     "LL.CS.PER.INI.BV_02_C",
@@ -95,14 +99,14 @@ tests = [
 
 
 def include_test(test: str, patterns) -> bool:
-    return not patterns or any(test.startswith(prefix) for prefix in patterns)
+  return not patterns or any(test.startswith(prefix) for prefix in patterns)
 
 
 if __name__ == "__main__":
-    suite = unittest.TestSuite()
-    patterns = [arg for arg in sys.argv[1:] if not arg.startswith("-")]
-    for test in tests:
-        if include_test(test, patterns):
-            module = importlib.import_module(f"test.{test}")
-            suite.addTest(unittest.defaultTestLoader.loadTestsFromModule(module))
-    unittest.TextTestRunner(verbosity=3).run(suite)
+  suite = unittest.TestSuite()
+  patterns = [arg for arg in sys.argv[1:] if not arg.startswith("-")]
+  for test in tests:
+    if include_test(test, patterns):
+      module = importlib.import_module(f"test.{test}")
+      suite.addTest(unittest.defaultTestLoader.loadTestsFromModule(module))
+  unittest.TextTestRunner(verbosity=3).run(suite)

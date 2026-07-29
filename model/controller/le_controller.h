@@ -144,7 +144,8 @@ public:
                                    Phy::Type, int8_t)>& send_to_remote);
 
   void RegisterRangingEstimator(
-          std::function<unsigned(void const* cookie1, void const* cookie2)> const& callback);
+          std::function<unsigned(const Address source_address, const Address target_address)> const&
+                  callback);
 
   void Reset();
 
@@ -174,6 +175,9 @@ public:
 
   bool LeFilterAcceptListContainsDevice(FilterAcceptListAddressType address_type, Address address);
   bool LeFilterAcceptListContainsDevice(AddressWithType address);
+  bool LeFilterAcceptListContainsDeviceWithThreshold(AddressWithType address, int8_t rssi,
+                                                     const std::vector<uint8_t>& adv_data,
+                                                     int8_t pdu_tx_power = 127);
 
   bool LePeriodicAdvertiserListContainsDevice(
           bluetooth::hci::AdvertiserAddressType advertiser_address_type, Address advertiser_address,
@@ -234,6 +238,11 @@ public:
 
   // Returns true if the specified ACL connection handle is valid.
   bool HasLeAclConnection(uint16_t connection_handle);
+
+  // Return the connection handle for a LE ACL connection identified with
+  // local and remote addresses.
+  std::optional<uint16_t> GetLeAclConnectionHandle(bluetooth::hci::Address local_address,
+                                                   bluetooth::hci::Address remote_address) const;
 
   void HandleAcl(bluetooth::hci::AclView acl);
   void HandleIso(bluetooth::hci::IsoView iso);
@@ -581,6 +590,10 @@ public:
                                std::vector<uint8_t> apcf_ad_data_mask,
                                uint8_t* apcf_available_spaces);
 
+  ErrorCode LeAddDeviceToFilterAcceptListWithProximityThreshold(
+          FilterAcceptListAddressType address_type, Address address, int8_t path_loss_threshold,
+          int8_t rssi_threshold);
+
 protected:
   void SendLeLinkLayerPacket(std::unique_ptr<model::packets::LinkLayerPacketBuilder> packet,
                              int8_t tx_power = 0);
@@ -597,8 +610,10 @@ protected:
                                           uint8_t rssi);
   void ScanIncomingLeExtendedAdvertisingPdu(model::packets::LeExtendedAdvertisingPduView& pdu,
                                             uint8_t rssi);
-  void ConnectIncomingLeLegacyAdvertisingPdu(model::packets::LeLegacyAdvertisingPduView& pdu);
-  void ConnectIncomingLeExtendedAdvertisingPdu(model::packets::LeExtendedAdvertisingPduView& pdu);
+  void ConnectIncomingLeLegacyAdvertisingPdu(model::packets::LeLegacyAdvertisingPduView& pdu,
+                                             uint8_t rssi);
+  void ConnectIncomingLeExtendedAdvertisingPdu(model::packets::LeExtendedAdvertisingPduView& pdu,
+                                               uint8_t rssi);
 
   void IncomingLeLegacyAdvertisingPdu(model::packets::LinkLayerPacketView incoming, uint8_t rssi);
   void IncomingLeExtendedAdvertisingPdu(model::packets::LinkLayerPacketView incoming, uint8_t rssi);
@@ -777,7 +792,8 @@ private:
   std::function<void(std::shared_ptr<bluetooth::hci::IsoBuilder>)> send_iso_;
 
   // Ranging estimator callback.
-  std::function<unsigned(void const* cookie1, void const* cookie2)> ranging_estimator_{};
+  std::function<unsigned(const Address source_address, const Address target_address)>
+          ranging_estimator_{};
 
   // Callback to send packets to remote devices.
   std::function<void(std::shared_ptr<model::packets::LinkLayerPacketBuilder>, Phy::Type phy_type,
@@ -785,8 +801,13 @@ private:
           send_to_remote_;
 
   struct FilterAcceptListEntry {
+    static constexpr int8_t kPathLossThresholdNoFiltering = 127;
+    static constexpr int8_t kRssiThresholdNoFiltering = 127;
+
     FilterAcceptListAddressType address_type;
     Address address;
+    int8_t path_loss_threshold{kPathLossThresholdNoFiltering};
+    int8_t rssi_threshold{kRssiThresholdNoFiltering};
   };
 
   std::vector<FilterAcceptListEntry> le_filter_accept_list_;
