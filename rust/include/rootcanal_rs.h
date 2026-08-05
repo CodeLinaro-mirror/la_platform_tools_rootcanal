@@ -42,6 +42,7 @@ struct ControllerOps {
                             uint16_t* iso_interval, uint8_t* bn, uint8_t* pto, uint8_t* irc,
                             uint16_t* max_pdu, uint32_t* sdu_interval, uint16_t* max_sdu,
                             uint8_t* phy, uint8_t* framing, uint8_t* encryption);
+  void (*send_big_terminate_ind)(void* user, uint8_t advertising_handle, uint8_t reason);
 };
 
 extern "C" {
@@ -150,10 +151,11 @@ bool link_layer_remove_link(const LinkLayer* ll, uint16_t handle, uint8_t reason
 /// # Arguments
 /// * `ll` - link layer pointer
 /// * `sync_handle` - periodic advertising sync train handle
+/// * `reason` - disconnect/termination reason code
 /// # Safety
 /// - This should be called from the thread of creation
 /// - `ll` must be a valid pointer
-bool link_layer_big_sync_lost(const LinkLayer* ll, uint16_t sync_handle);
+bool link_layer_big_sync_lost(const LinkLayer* ll, uint16_t sync_handle, uint8_t reason);
 
 /// Run the Link Manager procedures
 /// # Arguments
