@@ -1272,6 +1272,121 @@ ErrorCode LeController::LePeriodicAdvertisingTerminateSync(uint16_t sync_handle)
   return ErrorCode::SUCCESS;
 }
 
+ErrorCode LeController::LeSetDefaultPeriodicAdvertisingSyncTransferParameters(
+        bluetooth::hci::SyncTransferMode mode, uint16_t skip, uint16_t sync_timeout,
+        bluetooth::hci::CteType cte_type) {
+  // Vol 4, Part E § 7.8.90:
+  // If the Host sets all the non-reserved bits of CTE_Type to 1, then the
+  // Controller should return an error using the error code Command Disallowed (0x0C).
+  if ((static_cast<uint8_t>(cte_type) & 0x0F) == 0x0F) {
+    return ErrorCode::COMMAND_DISALLOWED;
+  }
+  // If the Host sets Mode to 0x03 and the Controller does not support the
+  // Periodic Advertising ADI Support feature, then the Controller shall return
+  // an error which should use the error code Unsupported Feature or Parameter Value (0x11).
+  if (mode == bluetooth::hci::SyncTransferMode::
+                      SYNC_ENABLED_REPORTS_ENABLED_WITH_DUPLICATE_FILTERING &&
+      !properties_.SupportsLLFeature(LLFeaturesBits::PERIODIC_ADVERTISING_ADI_SUPPORT)) {
+    return ErrorCode::UNSUPPORTED_FEATURE_OR_PARAMETER_VALUE;
+  }
+
+  default_periodic_advertising_sync_transfer_parameters_ = {
+          .mode = mode,
+          .skip = skip,
+          .sync_timeout = sync_timeout,
+          .cte_type = cte_type,
+  };
+  return ErrorCode::SUCCESS;
+}
+
+ErrorCode LeController::LeSetPeriodicAdvertisingSyncTransferParameters(
+        uint16_t connection_handle, bluetooth::hci::SyncTransferMode mode, uint16_t skip,
+        uint16_t sync_timeout, bluetooth::hci::CteType cte_type) {
+  if (!connections_.HasLeAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+  // Vol 4, Part E § 7.8.89:
+  // If the Host sets all the non-reserved bits of CTE_Type to 1, then the
+  // Controller should return an error using the error code Command Disallowed (0x0C).
+  if ((static_cast<uint8_t>(cte_type) & 0x0F) == 0x0F) {
+    return ErrorCode::COMMAND_DISALLOWED;
+  }
+  // If the Host sets Mode to 0x03 and the Controller does not support the
+  // Periodic Advertising ADI Support feature, then the Controller shall return
+  // an error which should use the error code Unsupported Feature or Parameter Value (0x11).
+  if (mode == bluetooth::hci::SyncTransferMode::
+                      SYNC_ENABLED_REPORTS_ENABLED_WITH_DUPLICATE_FILTERING &&
+      !properties_.SupportsLLFeature(LLFeaturesBits::PERIODIC_ADVERTISING_ADI_SUPPORT)) {
+    return ErrorCode::UNSUPPORTED_FEATURE_OR_PARAMETER_VALUE;
+  }
+
+  auto& connection = connections_.GetLeAclConnection(connection_handle);
+  connection.periodic_advertising_sync_transfer_parameters = {
+          .mode = mode,
+          .skip = skip,
+          .sync_timeout = sync_timeout,
+          .cte_type = cte_type,
+  };
+  return ErrorCode::SUCCESS;
+}
+
+ErrorCode LeController::LePeriodicAdvertisingSyncTransfer(uint16_t connection_handle,
+                                                          uint16_t service_data,
+                                                          uint16_t sync_handle) {
+  if (!connections_.HasLeAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+  if (synchronized_.count(sync_handle) == 0) {
+    return ErrorCode::UNKNOWN_ADVERTISING_IDENTIFIER;
+  }
+  auto const& sync = synchronized_.at(sync_handle);
+  auto& connection = connections_.GetLeAclConnection(connection_handle);
+
+  SendLeLinkLayerPacket(model::packets::LlPeriodicSyncIndBuilder::Create(
+          connection.own_address.GetAddress(), connection.address.GetAddress(),
+          model::packets::PeriodicSyncType::SYNC_TRANSFER,
+          static_cast<model::packets::AddressType>(sync.advertiser_address_type),
+          sync.advertiser_address, sync.advertising_sid, sync.advertising_interval, service_data,
+          sync.big_info.has_value(), sync.big_info.value_or(model::packets::BigInfo{}),
+          static_cast<model::packets::PhyType>(sync.secondary_phy)));
+
+  return ErrorCode::SUCCESS;
+}
+
+ErrorCode LeController::LePeriodicAdvertisingSetInfoTransfer(uint16_t connection_handle,
+                                                             uint16_t service_data,
+                                                             uint8_t advertising_handle) {
+  if (!connections_.HasLeAclHandle(connection_handle)) {
+    return ErrorCode::UNKNOWN_CONNECTION;
+  }
+  auto it = extended_advertisers_.find(advertising_handle);
+  if (it == extended_advertisers_.end()) {
+    return ErrorCode::UNKNOWN_ADVERTISING_IDENTIFIER;
+  }
+  auto const& advertiser = it->second;
+  auto& connection = connections_.GetLeAclConnection(connection_handle);
+
+  uint8_t num_bis = 0, nse = 0, bn = 0, pto = 0, irc = 0, phy = 0, framing = 0, encryption = 0;
+  uint16_t iso_interval = 0, max_pdu = 0, max_sdu = 0;
+  uint32_t sdu_interval = 0;
+  bool has_big_info = link_layer_get_big_info(ll_.get(), advertiser.advertising_handle, &num_bis,
+                                              &nse, &iso_interval, &bn, &pto, &irc, &max_pdu,
+                                              &sdu_interval, &max_sdu, &phy, &framing, &encryption);
+
+  model::packets::BigInfo big_info(num_bis, nse, iso_interval, bn, pto, irc, max_pdu, sdu_interval,
+                                   max_sdu, phy, framing, encryption);
+
+  SendLeLinkLayerPacket(model::packets::LlPeriodicSyncIndBuilder::Create(
+          connection.own_address.GetAddress(), connection.address.GetAddress(),
+          model::packets::PeriodicSyncType::SET_INFO_TRANSFER,
+          static_cast<model::packets::AddressType>(advertiser.advertising_address.GetAddressType()),
+          advertiser.advertising_address.GetAddress(), advertiser.advertising_sid,
+          advertiser.periodic_advertising_interval.count(), service_data, has_big_info ? 1 : 0,
+          big_info, static_cast<model::packets::PhyType>(advertiser.secondary_advertising_phy)));
+
+  return ErrorCode::SUCCESS;
+}
+
 // =============================================================================
 //  LE Legacy Scanning
 // =============================================================================
@@ -3618,41 +3733,37 @@ void LeController::IncomingLlCsConfigReq(LeAclConnection& connection,
   // is created only with local context.
   if (IsLeEventUnmasked(SubeventCode::LE_CS_CONFIG_COMPLETE)) {
     auto build_cs_config_event = [&](bluetooth::hci::CsAction action_type) {
+      bluetooth::hci::CsMainModeType main_mode = bluetooth::hci::CsMainModeType::MODE_1;
+      bluetooth::hci::CsSubModeType sub_mode = bluetooth::hci::CsSubModeType::UNUSED;
+      bluetooth::hci::CsRole role = bluetooth::hci::CsRole::INITIATOR;
+      bluetooth::hci::CsRttType rtt = bluetooth::hci::CsRttType::RTT_AA_ONLY;
+      bluetooth::hci::CsSyncPhy sync_phy = bluetooth::hci::CsSyncPhy::LE_1M_PHY;
+      bluetooth::hci::CsChannelSelectionType channel_selection =
+              bluetooth::hci::CsChannelSelectionType::TYPE_3B;
+      bluetooth::hci::CsCh3cShape shape = bluetooth::hci::CsCh3cShape::HAT_SHAPE;
 
-    bluetooth::hci::CsMainModeType main_mode = bluetooth::hci::CsMainModeType::MODE_1;
-    bluetooth::hci::CsSubModeType sub_mode = bluetooth::hci::CsSubModeType::UNUSED;
-    bluetooth::hci::CsRole role = bluetooth::hci::CsRole::INITIATOR;
-    bluetooth::hci::CsRttType rtt = bluetooth::hci::CsRttType::RTT_AA_ONLY;
-    bluetooth::hci::CsSyncPhy sync_phy = bluetooth::hci::CsSyncPhy::LE_1M_PHY;
-    bluetooth::hci::CsChannelSelectionType channel_selection =
-        bluetooth::hci::CsChannelSelectionType::TYPE_3B;
-    bluetooth::hci::CsCh3cShape shape = bluetooth::hci::CsCh3cShape::HAT_SHAPE;
+      if (action_type == bluetooth::hci::CsAction::CONFIG_CREATED) {
+        main_mode = static_cast<bluetooth::hci::CsMainModeType>(req.GetMainModeType());
+        sub_mode = static_cast<bluetooth::hci::CsSubModeType>(req.GetSubModeType());
+        role = static_cast<bluetooth::hci::CsRole>(local_role);
+        rtt = static_cast<bluetooth::hci::CsRttType>(req.GetRttType());
+        sync_phy = static_cast<bluetooth::hci::CsSyncPhy>(req.GetCsSyncPhy());
+        channel_selection =
+                static_cast<bluetooth::hci::CsChannelSelectionType>(req.GetChannelSelectionType());
+        shape = static_cast<bluetooth::hci::CsCh3cShape>(req.GetCh3CShape());
+      }
 
-
-    if (action_type == bluetooth::hci::CsAction::CONFIG_CREATED) {
-      main_mode = static_cast<bluetooth::hci::CsMainModeType>(req.GetMainModeType());
-      sub_mode = static_cast<bluetooth::hci::CsSubModeType>(req.GetSubModeType());
-      role = static_cast<bluetooth::hci::CsRole>(local_role);
-      rtt = static_cast<bluetooth::hci::CsRttType>(req.GetRttType());
-      sync_phy = static_cast<bluetooth::hci::CsSyncPhy>(req.GetCsSyncPhy());
-      channel_selection =
-          static_cast<bluetooth::hci::CsChannelSelectionType>(req.GetChannelSelectionType());
-      shape = static_cast<bluetooth::hci::CsCh3cShape>(req.GetCh3CShape());
-    }
-
-    return bluetooth::hci::LeCsConfigCompleteBuilder::Create(
-        ErrorCode::SUCCESS, connection.handle, config_id, action_type,
-        main_mode, sub_mode, req.GetMinMainModeSteps(), req.GetMaxMainModeSteps(),
-        req.GetMainModeRepetition(), req.GetMode0Steps(), role, rtt, sync_phy,
-        req.GetChannelMap(), req.GetChannelMapRepetition(), channel_selection, shape,
-        0 /*reserved*/, req.GetCh3CJump(), req.GetTIp1(), req.GetTIp2(), req.GetTFcs(),
-        req.GetTPm());
-};
-
+      return bluetooth::hci::LeCsConfigCompleteBuilder::Create(
+              ErrorCode::SUCCESS, connection.handle, config_id, action_type, main_mode, sub_mode,
+              req.GetMinMainModeSteps(), req.GetMaxMainModeSteps(), req.GetMainModeRepetition(),
+              req.GetMode0Steps(), role, rtt, sync_phy, req.GetChannelMap(),
+              req.GetChannelMapRepetition(), channel_selection, shape, 0 /*reserved*/,
+              req.GetCh3CJump(), req.GetTIp1(), req.GetTIp2(), req.GetTFcs(), req.GetTPm());
+    };
 
     bluetooth::hci::CsAction final_action = (action == 1)
-    ? bluetooth::hci::CsAction::CONFIG_CREATED
-    : bluetooth::hci::CsAction::CONFIG_REMOVED;
+                                                    ? bluetooth::hci::CsAction::CONFIG_CREATED
+                                                    : bluetooth::hci::CsAction::CONFIG_REMOVED;
 
     send_event_(build_cs_config_event(final_action));
   }
@@ -4558,6 +4669,9 @@ void LeController::IncomingPacket(model::packets::LinkLayerPacketView incoming, 
       break;
     case model::packets::PacketType::LE_CONNECTED_ISOCHRONOUS_PDU:
       IncomingLeConnectedIsochronousPdu(incoming);
+      break;
+    case model::packets::PacketType::LL_PERIODIC_SYNC_IND:
+      IncomingLlPeriodicSyncInd(connection, incoming);
       break;
     case model::packets::PacketType::DISCONNECT:
       IncomingLeDisconnectPacket(connection, incoming);
@@ -5628,11 +5742,6 @@ void LeController::IncomingLePeriodicAdvertisingPdu(model::packets::LinkLayerPac
   auto pdu = model::packets::LePeriodicAdvertisingPduView::Create(incoming);
   ASSERT(pdu.IsValid());
 
-  // Synchronization with periodic advertising only occurs while extended
-  // scanning is enabled.
-  if (!scanner_.IsEnabled()) {
-    return;
-  }
   if (!ExtendedAdvertising()) {
     DEBUG(id_, "Extended advertising ignored because the scanner is legacy");
     return;
@@ -5665,68 +5774,12 @@ void LeController::IncomingLePeriodicAdvertisingPdu(model::packets::LinkLayerPac
       break;
   }
 
-  // Check if the periodic advertising PDU matches a pending
-  // LE Periodic Advertising Create Sync command.
-  // The direct parameters or the periodic advertiser list are used
-  // depending on the synchronizing options.
-  bool matches_synchronizing = false;
-  if (synchronizing_.has_value()) {
-    matches_synchronizing =
-            synchronizing_->options.use_periodic_advertiser_list_
-                    ? LePeriodicAdvertiserListContainsDevice(
-                              advertiser_address_type, resolved_advertiser_address.GetAddress(),
-                              advertising_sid)
-                    : synchronizing_->advertiser_address_type == advertiser_address_type &&
-                              synchronizing_->advertiser_address ==
-                                      resolved_advertiser_address.GetAddress() &&
-                              synchronizing_->advertising_sid == advertising_sid;
-  }
-
-  // If the periodic advertising event matches the synchronizing state,
-  // create the synchronized train and report to the Host.
-  if (matches_synchronizing) {
-    INFO(id_, "Established Sync with advertiser {}[{}] - SID 0x{:x}", advertiser_address,
-         bluetooth::hci::AdvertiserAddressTypeText(advertiser_address_type), advertising_sid);
-    // Use the first unused Sync_Handle.
-    // Note: sync handles are allocated from a different number space
-    // compared to connection handles.
-    uint16_t sync_handle = 0;
-    for (; synchronized_.count(sync_handle) != 0; sync_handle++) {
-    }
-
-    // Notify of the new Synchronized train.
-    if (IsLeEventUnmasked(SubeventCode::LE_PERIODIC_ADVERTISING_SYNC_ESTABLISHED_V1)) {
-      send_event_(bluetooth::hci::LePeriodicAdvertisingSyncEstablishedV1Builder::Create(
-              ErrorCode::SUCCESS, sync_handle, advertising_sid,
-              resolved_advertiser_address.GetAddressType(),
-              resolved_advertiser_address.GetAddress(), bluetooth::hci::SecondaryPhyType::LE_1M,
-              pdu.GetAdvertisingInterval(), bluetooth::hci::ClockAccuracy::PPM_500));
-    }
-
-    // Update the synchronization state.
-    synchronized_.insert(
-            {sync_handle,
-             Synchronized{
-                     .advertiser_address_type = advertiser_address_type,
-                     .advertiser_address = resolved_advertiser_address.GetAddress(),
-                     .advertising_sid = advertising_sid,
-                     .sync_handle = sync_handle,
-                     .sync_timeout = synchronizing_->sync_timeout,
-                     .timeout = std::chrono::steady_clock::now() + synchronizing_->sync_timeout,
-             }});
-
-    // Quit synchronizing state.
-    synchronizing_ = {};
-
-    // Create Sync ensure that they are no other established syncs that
-    // already match the advertiser address and advertising SID;
-    // no need to check again.
-    return;
-  }
-
-  // Check if the periodic advertising PDU matches any of the established
-  // syncs.
+  // Check if the periodic advertising PDU matches any of the established syncs.
+  // This does NOT require scanning to be enabled.
   for (auto& [_, sync] : synchronized_) {
+    if (!sync.established_event_sent) {
+      continue;
+    }
     if (sync.advertiser_address_type != advertiser_address_type ||
         sync.advertiser_address != resolved_advertiser_address.GetAddress() ||
         sync.advertising_sid != advertising_sid) {
@@ -5737,6 +5790,7 @@ void LeController::IncomingLePeriodicAdvertisingPdu(model::packets::LinkLayerPac
     // and refresh the timeout for sync termination. The periodic
     // advertising event might need to be fragmented to fit the maximum
     // size of an HCI event.
+
     if (IsLeEventUnmasked(SubeventCode::LE_PERIODIC_ADVERTISING_REPORT_V1)) {
       // Each extended advertising report can only pass 229 bytes of
       // advertising data (255 - 8 = size of report fields).
@@ -5784,6 +5838,73 @@ void LeController::IncomingLePeriodicAdvertisingPdu(model::packets::LinkLayerPac
       link_layer_big_sync_lost(ll_.get(), sync.sync_handle);
       sync.big_info = std::nullopt;
     }
+    return;  // Only match one established sync.
+  }
+
+  // If not matched established sync, we only process it if scanning is enabled
+  // to establish new sync.
+  if (!scanner_.IsEnabled()) {
+    return;
+  }
+
+  bool matches_synchronizing = false;
+  if (synchronizing_.has_value()) {
+    matches_synchronizing =
+            synchronizing_->options.use_periodic_advertiser_list_
+                    ? LePeriodicAdvertiserListContainsDevice(
+                              advertiser_address_type, resolved_advertiser_address.GetAddress(),
+                              advertising_sid)
+                    : synchronizing_->advertiser_address_type == advertiser_address_type &&
+                              synchronizing_->advertiser_address ==
+                                      resolved_advertiser_address.GetAddress() &&
+                              synchronizing_->advertising_sid == advertising_sid;
+  }
+
+  // If the periodic advertising event matches the synchronizing state,
+  // create the synchronized train and report to the Host.
+  if (matches_synchronizing) {
+    INFO(id_, "Established Sync with advertiser {}[{}] - SID 0x{:x}", advertiser_address,
+         bluetooth::hci::AdvertiserAddressTypeText(advertiser_address_type), advertising_sid);
+    // Use the first unused Sync_Handle.
+    // Note: sync handles are allocated from a different number space
+    // compared to connection handles.
+    uint16_t sync_handle = 0;
+    for (; synchronized_.count(sync_handle) != 0; sync_handle++) {
+    }
+
+    // Notify of the new Synchronized train.
+    uint16_t advertising_interval = pdu.GetAdvertisingInterval();
+    AddressType addr_type = resolved_advertiser_address.GetAddressType();
+    Address addr = resolved_advertiser_address.GetAddress();
+
+    if (IsLeEventUnmasked(SubeventCode::LE_PERIODIC_ADVERTISING_SYNC_ESTABLISHED_V1)) {
+      send_event_(bluetooth::hci::LePeriodicAdvertisingSyncEstablishedV1Builder::Create(
+              ErrorCode::SUCCESS, sync_handle, advertising_sid, addr_type, addr,
+              bluetooth::hci::SecondaryPhyType::LE_1M, advertising_interval,
+              bluetooth::hci::ClockAccuracy::PPM_500));
+    }
+
+    // Update the synchronization state.
+    synchronized_.insert(
+            {sync_handle,
+             Synchronized{
+                     .advertiser_address_type = advertiser_address_type,
+                     .advertiser_address = resolved_advertiser_address.GetAddress(),
+                     .advertising_sid = advertising_sid,
+                     .sync_handle = sync_handle,
+                     .sync_timeout = synchronizing_->sync_timeout,
+                     .timeout = std::chrono::steady_clock::now() + synchronizing_->sync_timeout,
+                     .advertising_interval = pdu.GetAdvertisingInterval(),
+                     .established_event_sent = true,
+             }});
+
+    // Quit synchronizing state.
+    synchronizing_ = {};
+
+    // Create Sync ensure that they are no other established syncs that
+    // already match the advertiser address and advertising SID;
+    // no need to check again.
+    return;
   }
 }
 
@@ -5882,6 +6003,67 @@ void LeController::IncomingLeConnectedIsochronousPdu(LinkLayerPacketView incomin
                                    ? bluetooth::hci::IsoPacketBoundaryFlag::LAST_FRAGMENT
                                    : bluetooth::hci::IsoPacketBoundaryFlag::CONTINUATION_FRAGMENT;
   } while (remaining_size > 0);
+}
+
+// Link Layer LL_PERIODIC_SYNC_IND Control PDU (Vol 6, Part B § 2.4.2.30).
+void LeController::IncomingLlPeriodicSyncInd(LeAclConnection& connection,
+                                             model::packets::LinkLayerPacketView incoming) {
+  auto pdu = model::packets::LlPeriodicSyncIndView::Create(incoming);
+  ASSERT(pdu.IsValid());
+
+  LePeriodicAdvertisingSyncTransferParameters periodic_advertising_sync_transfer_params =
+          connection.periodic_advertising_sync_transfer_parameters;
+  if (periodic_advertising_sync_transfer_params.mode ==
+      bluetooth::hci::SyncTransferMode::SYNC_DISABLED) {
+    INFO(id_, "PAST received but disabled on this connection");
+    return;
+  }
+
+  // Find an unused sync_handle.
+  uint16_t sync_handle = 0;
+  for (; synchronized_.count(sync_handle) != 0; sync_handle++) {
+  }
+
+  AddressWithType advertiser_address{pdu.GetAdvertiserAddress(),
+                                     static_cast<AddressType>(pdu.GetAdvertiserAddressType())};
+  AddressWithType resolved_advertiser_address =
+          ResolvePrivateAddress(advertiser_address).value_or(advertiser_address);
+
+  bluetooth::hci::AdvertiserAddressType advertiser_address_type =
+          static_cast<bluetooth::hci::AdvertiserAddressType>(
+                  resolved_advertiser_address.GetAddressType());
+
+  bluetooth::hci::SecondaryPhyType secondary_phy =
+          static_cast<bluetooth::hci::SecondaryPhyType>(pdu.GetPhy());
+
+  if (IsLeEventUnmasked(SubeventCode::LE_PERIODIC_ADVERTISING_SYNC_TRANSFER_RECEIVED_V1)) {
+    AddressType addr_type = static_cast<AddressType>(resolved_advertiser_address.GetAddressType());
+    send_event_(bluetooth::hci::LePeriodicAdvertisingSyncTransferReceivedV1Builder::Create(
+            ErrorCode::SUCCESS, connection.handle, pdu.GetServiceData(), sync_handle,
+            pdu.GetAdvertisingSid(), addr_type, resolved_advertiser_address.GetAddress(),
+            secondary_phy, pdu.GetAdvertisingInterval(), ClockAccuracy::PPM_500));
+  }
+
+  std::optional<model::packets::BigInfo> big_info;
+  if (pdu.GetHasBigInfo() != 0) {
+    big_info = pdu.GetBigInfo();
+  }
+
+  synchronized_.insert(
+          {sync_handle,
+           Synchronized{
+                   .advertiser_address_type = advertiser_address_type,
+                   .advertiser_address = resolved_advertiser_address.GetAddress(),
+                   .advertising_sid = pdu.GetAdvertisingSid(),
+                   .sync_handle = sync_handle,
+                   .sync_timeout = 10ms * periodic_advertising_sync_transfer_params.sync_timeout,
+                   .timeout = std::chrono::steady_clock::now() +
+                              10ms * periodic_advertising_sync_transfer_params.sync_timeout,
+                   .advertising_interval = pdu.GetAdvertisingInterval(),
+                   .secondary_phy = secondary_phy,
+                   .big_info = big_info,
+                   .established_event_sent = true,
+           }});
 }
 
 void LeController::HandleAcl(bluetooth::hci::AclView acl) {
@@ -6066,7 +6248,7 @@ uint16_t LeController::HandleLeConnection(AddressWithType address, AddressWithTy
                                     .conn_subrate_factor = 1,
                                     .conn_peripheral_latency = connection_latency,
                                     .conn_supervision_timeout = supervision_timeout},
-          default_subrate_parameters_);
+          default_subrate_parameters_, default_periodic_advertising_sync_transfer_parameters_);
 
   // Start the keepalive timer for the connection.
   CheckExpiringConnection(handle);

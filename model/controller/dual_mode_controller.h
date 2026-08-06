@@ -26,8 +26,8 @@
 #include <unordered_map>
 #include <vector>
 
-#include "log.h"
 #include "hci/address.h"
+#include "log.h"
 #include "model/controller/bredr_controller.h"
 #include "model/controller/controller_properties.h"
 #include "model/controller/le_controller.h"
@@ -527,6 +527,12 @@ public:
 
   // 7.8.77
   void LeSetPrivacyMode(CommandView command);
+
+  // 7.8.89 - 7.8.92
+  void LeSetPeriodicAdvertisingSyncTransferParameters(CommandView command);
+  void LeSetDefaultPeriodicAdvertisingSyncTransferParameters(CommandView command);
+  void LePeriodicAdvertisingSyncTransfer(CommandView command);
+  void LePeriodicAdvertisingSetInfoTransfer(CommandView command);
 
   // 7.8.108
   void LeRequestPeerSca(CommandView command);

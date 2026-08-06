@@ -2543,6 +2543,71 @@ void DualModeController::LePeriodicAdvertisingTerminateSync(CommandView command)
           kNumCommandPackets, status));
 }
 
+void DualModeController::LePeriodicAdvertisingSyncTransfer(CommandView command) {
+  auto command_view = bluetooth::hci::LePeriodicAdvertisingSyncTransferView::Create(command);
+  CHECK_PACKET_VIEW(command_view);
+
+  DEBUG(id_, "<< LE Periodic Advertising Sync Transfer");
+  DEBUG(id_, "   connection_handle=0x{:x}", command_view.GetConnectionHandle());
+  DEBUG(id_, "   service_data=0x{:x}", command_view.GetServiceData());
+  DEBUG(id_, "   sync_handle=0x{:x}", command_view.GetSyncHandle());
+
+  ErrorCode status = le_controller_.LePeriodicAdvertisingSyncTransfer(
+          command_view.GetConnectionHandle(), command_view.GetServiceData(),
+          command_view.GetSyncHandle());
+  send_event_(bluetooth::hci::LePeriodicAdvertisingSyncTransferCompleteBuilder::Create(
+          kNumCommandPackets, status, command_view.GetConnectionHandle()));
+}
+
+void DualModeController::LePeriodicAdvertisingSetInfoTransfer(CommandView command) {
+  auto command_view = bluetooth::hci::LePeriodicAdvertisingSetInfoTransferView::Create(command);
+  CHECK_PACKET_VIEW(command_view);
+
+  DEBUG(id_, "<< LE Periodic Advertising Set Info Transfer");
+  DEBUG(id_, "   connection_handle=0x{:x}", command_view.GetConnectionHandle());
+  DEBUG(id_, "   service_data=0x{:x}", command_view.GetServiceData());
+  DEBUG(id_, "   advertising_handle=0x{:x}", command_view.GetAdvertisingHandle());
+
+  ErrorCode status = le_controller_.LePeriodicAdvertisingSetInfoTransfer(
+          command_view.GetConnectionHandle(), command_view.GetServiceData(),
+          command_view.GetAdvertisingHandle());
+  send_event_(bluetooth::hci::LePeriodicAdvertisingSetInfoTransferCompleteBuilder::Create(
+          kNumCommandPackets, status, command_view.GetConnectionHandle()));
+}
+
+void DualModeController::LeSetPeriodicAdvertisingSyncTransferParameters(CommandView command) {
+  auto command_view =
+          bluetooth::hci::LeSetPeriodicAdvertisingSyncTransferParametersView::Create(command);
+  CHECK_PACKET_VIEW(command_view);
+
+  DEBUG(id_, "<< LE Set Periodic Advertising Sync Transfer Parameters");
+  DEBUG(id_, "   connection_handle=0x{:x}", command_view.GetConnectionHandle());
+  DEBUG(id_, "   mode={}", bluetooth::hci::SyncTransferModeText(command_view.GetMode()));
+
+  ErrorCode status = le_controller_.LeSetPeriodicAdvertisingSyncTransferParameters(
+          command_view.GetConnectionHandle(), command_view.GetMode(), command_view.GetSkip(),
+          command_view.GetSyncTimeout(), command_view.GetCteType());
+  send_event_(bluetooth::hci::LeSetPeriodicAdvertisingSyncTransferParametersCompleteBuilder::Create(
+          kNumCommandPackets, status, command_view.GetConnectionHandle()));
+}
+
+void DualModeController::LeSetDefaultPeriodicAdvertisingSyncTransferParameters(
+        CommandView command) {
+  auto command_view =
+          bluetooth::hci::LeSetDefaultPeriodicAdvertisingSyncTransferParametersView::Create(
+                  command);
+  CHECK_PACKET_VIEW(command_view);
+
+  DEBUG(id_, "<< LE Set Default Periodic Advertising Sync Transfer Parameters");
+  DEBUG(id_, "   mode={}", bluetooth::hci::SyncTransferModeText(command_view.GetMode()));
+
+  ErrorCode status = le_controller_.LeSetDefaultPeriodicAdvertisingSyncTransferParameters(
+          command_view.GetMode(), command_view.GetSkip(), command_view.GetSyncTimeout(),
+          command_view.GetCteType());
+  send_event_(bluetooth::hci::LeSetDefaultPeriodicAdvertisingSyncTransferParametersCompleteBuilder::
+                      Create(kNumCommandPackets, status));
+}
+
 void DualModeController::LeAddDeviceToPeriodicAdvertiserList(CommandView command) {
   auto command_view = bluetooth::hci::LeAddDeviceToPeriodicAdvertiserListView::Create(command);
   CHECK_PACKET_VIEW(command_view);
@@ -4448,14 +4513,14 @@ DualModeController::GetHciCommandHandlers() {
           //&DualModeController::LeReadAntennaInformation},
           //{OpCode::LE_SET_PERIODIC_ADVERTISING_RECEIVE_ENABLE,
           //&DualModeController::LeSetPeriodicAdvertisingReceiveEnable},
-          //{OpCode::LE_PERIODIC_ADVERTISING_SYNC_TRANSFER,
-          //&DualModeController::LePeriodicAdvertisingSyncTransfer},
-          //{OpCode::LE_PERIODIC_ADVERTISING_SET_INFO_TRANSFER,
-          //&DualModeController::LePeriodicAdvertisingSetInfoTransfer},
-          //{OpCode::LE_SET_PERIODIC_ADVERTISING_SYNC_TRANSFER_PARAMETERS,
-          //&DualModeController::LeSetPeriodicAdvertisingSyncTransferParameters},
-          //{OpCode::LE_SET_DEFAULT_PERIODIC_ADVERTISING_SYNC_TRANSFER_PARAMETERS,
-          //&DualModeController::LeSetDefaultPeriodicAdvertisingSyncTransferParameters},
+          {OpCode::LE_PERIODIC_ADVERTISING_SYNC_TRANSFER,
+           &DualModeController::LePeriodicAdvertisingSyncTransfer},
+          {OpCode::LE_PERIODIC_ADVERTISING_SET_INFO_TRANSFER,
+           &DualModeController::LePeriodicAdvertisingSetInfoTransfer},
+          {OpCode::LE_SET_PERIODIC_ADVERTISING_SYNC_TRANSFER_PARAMETERS,
+           &DualModeController::LeSetPeriodicAdvertisingSyncTransferParameters},
+          {OpCode::LE_SET_DEFAULT_PERIODIC_ADVERTISING_SYNC_TRANSFER_PARAMETERS,
+           &DualModeController::LeSetDefaultPeriodicAdvertisingSyncTransferParameters},
           //{OpCode::LE_GENERATE_DHKEY_V2,
           //&DualModeController::LeGenerateDhkeyV2},
           //{OpCode::LE_MODIFY_SLEEP_CLOCK_ACCURACY,
