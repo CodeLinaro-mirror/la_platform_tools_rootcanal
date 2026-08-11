@@ -4436,9 +4436,10 @@ packet LePeriodicAdvertisingSetInfoTransferComplete : CommandComplete (command_o
 }
 
 enum SyncTransferMode : 8 {
-  NO_SYNC = 0,
-  SEND_SYNC_RECEIVED_DISABLE_REPORTS = 1,
-  SEND_SYNC_RECEIVED_SEND_REPORTS = 2,
+  SYNC_DISABLED = 0,
+  SYNC_ENABLED_REPORTS_DISABLED = 1,
+  SYNC_ENABLED_REPORTS_ENABLED = 2,
+  SYNC_ENABLED_REPORTS_ENABLED_WITH_DUPLICATE_FILTERING = 3,
 }
 
 enum CteType : 8 {
