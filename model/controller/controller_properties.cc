@@ -114,6 +114,8 @@ static constexpr uint64_t LlFeatures() {
           LLFeaturesBits::LE_CODED_PHY,
           LLFeaturesBits::LE_EXTENDED_ADVERTISING,
           LLFeaturesBits::LE_PERIODIC_ADVERTISING,
+          LLFeaturesBits::PERIODIC_ADVERTISING_SYNC_TRANSFER_SENDER,
+          LLFeaturesBits::PERIODIC_ADVERTISING_SYNC_TRANSFER_RECIPIENT,
 
           LLFeaturesBits::CONNECTED_ISOCHRONOUS_STREAM_CENTRAL,
           LLFeaturesBits::CONNECTED_ISOCHRONOUS_STREAM_PERIPHERAL,
@@ -412,10 +414,10 @@ static std::array<uint8_t, 64> SupportedCommands() {
           // OpCodeIndex::LE_CONNECTION_CTE_RESPONSE_ENABLE,
           // OpCodeIndex::LE_READ_ANTENNA_INFORMATION,
           // OpCodeIndex::LE_SET_PERIODIC_ADVERTISING_RECEIVE_ENABLE,
-          // OpCodeIndex::LE_PERIODIC_ADVERTISING_SYNC_TRANSFER,
-          // OpCodeIndex::LE_PERIODIC_ADVERTISING_SET_INFO_TRANSFER,
-          // OpCodeIndex::LE_SET_PERIODIC_ADVERTISING_SYNC_TRANSFER_PARAMETERS,
-          // OpCodeIndex::LE_SET_DEFAULT_PERIODIC_ADVERTISING_SYNC_TRANSFER_PARAMETERS,
+          OpCodeIndex::LE_PERIODIC_ADVERTISING_SYNC_TRANSFER,
+          OpCodeIndex::LE_PERIODIC_ADVERTISING_SET_INFO_TRANSFER,
+          OpCodeIndex::LE_SET_PERIODIC_ADVERTISING_SYNC_TRANSFER_PARAMETERS,
+          OpCodeIndex::LE_SET_DEFAULT_PERIODIC_ADVERTISING_SYNC_TRANSFER_PARAMETERS,
           // OpCodeIndex::LE_GENERATE_DHKEY_V2,
           // OpCodeIndex::LE_MODIFY_SLEEP_CLOCK_ACCURACY,
           OpCodeIndex::LE_READ_BUFFER_SIZE_V2,
@@ -1085,8 +1087,7 @@ bool ControllerProperties::CheckSupportedCommands() const {
   auto c75 = mandatory_or_excluded(SupportsLLFeature(LLFeaturesBits::CHANNEL_SOUNDING));
   // C76: Mandatory if LE Feature (Channel Sounding) and initiator role are
   // supported, otherwise excluded.
-  auto c76 = mandatory_or_excluded(
-          SupportsLLFeature(LLFeaturesBits::CHANNEL_SOUNDING) &&
+  auto c76 = mandatory_or_excluded(SupportsLLFeature(LLFeaturesBits::CHANNEL_SOUNDING) &&
                                    (cs_local_supported_capabilities.roles_supported &
                                     static_cast<uint8_t>(CsRolesSupported::INITIATOR)));
   // C94: Mandatory if the LE Create Connection or LE Extended Create Connection
@@ -1746,6 +1747,14 @@ static std::vector<OpCodeIndex> le_periodic_advertising_commands_ = {
         OpCodeIndex::LE_SET_PERIODIC_ADVERTISING_PARAMETERS_V1,
 };
 
+// Commands enabled by the LE Periodic Advertising Sync Transfer feature bits.
+static std::vector<OpCodeIndex> le_past_commands_ = {
+        OpCodeIndex::LE_PERIODIC_ADVERTISING_SYNC_TRANSFER,
+        OpCodeIndex::LE_PERIODIC_ADVERTISING_SET_INFO_TRANSFER,
+        OpCodeIndex::LE_SET_PERIODIC_ADVERTISING_SYNC_TRANSFER_PARAMETERS,
+        OpCodeIndex::LE_SET_DEFAULT_PERIODIC_ADVERTISING_SYNC_TRANSFER_PARAMETERS,
+};
+
 // Commands enabled by the LL Privacy feature bit.
 static std::vector<OpCodeIndex> ll_privacy_commands_ = {
         OpCodeIndex::LE_ADD_DEVICE_TO_RESOLVING_LIST,
@@ -1959,7 +1968,13 @@ ControllerProperties::ControllerProperties(rootcanal::configuration::Controller 
     if (features.has_le_periodic_advertising()) {
       SetLLFeatureBit(le_features, LLFeaturesBits::LE_PERIODIC_ADVERTISING,
                       features.le_periodic_advertising());
+      SetLLFeatureBit(le_features, LLFeaturesBits::PERIODIC_ADVERTISING_SYNC_TRANSFER_SENDER,
+                      features.le_periodic_advertising());
+      SetLLFeatureBit(le_features, LLFeaturesBits::PERIODIC_ADVERTISING_SYNC_TRANSFER_RECIPIENT,
+                      features.le_periodic_advertising());
       SetSupportedCommandBits(supported_commands, le_periodic_advertising_commands_,
+                              features.le_periodic_advertising());
+      SetSupportedCommandBits(supported_commands, le_past_commands_,
                               features.le_periodic_advertising());
     }
     if (features.has_ll_privacy()) {

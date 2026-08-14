@@ -75,6 +75,7 @@ enum PacketType : 8 {
     LL_CS_TERMINATE_REQ = 0xFB,
     LL_CS_TERMINATE_RSP = 0xFC,
     LL_CS_CHANNEL_MAP_IND = 0xFD,
+    LL_PERIODIC_SYNC_IND = 0x55,
 }
 
 packet LinkLayerPacket {
@@ -620,4 +621,21 @@ packet LlCsTerminateRsp : LinkLayerPacket (type = LL_CS_TERMINATE_RSP) {
 packet LlCsChannelMapInd : LinkLayerPacket (type = LL_CS_CHANNEL_MAP_IND) {
   channel_map : 8[10],
   instant : 16,
+}
+
+enum PeriodicSyncType : 8 {
+    SYNC_TRANSFER = 0,
+    SET_INFO_TRANSFER = 1,
+}
+
+packet LlPeriodicSyncInd : LinkLayerPacket (type = LL_PERIODIC_SYNC_IND) {
+    transfer_type: PeriodicSyncType,
+    advertiser_address_type: AddressType,
+    advertiser_address: Address,
+    advertising_sid: 8,
+    advertising_interval: 16,
+    service_data: 16,
+    has_big_info: 8,
+    big_info: BigInfo,
+    phy: PhyType,
 }
