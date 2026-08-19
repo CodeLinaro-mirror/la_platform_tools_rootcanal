@@ -2209,10 +2209,21 @@ void BrEdrController::IncomingRoleSwitchResponse(model::packets::LinkLayerPacket
   }
 }
 
-ErrorCode BrEdrController::WriteLinkSupervisionTimeout(uint16_t handle, uint16_t /* timeout */) {
+ErrorCode BrEdrController::WriteLinkSupervisionTimeout(uint16_t handle, uint16_t timeout) {
   if (!connections_.HasAclHandle(handle)) {
     return ErrorCode::UNKNOWN_CONNECTION;
   }
+  if (timeout == 0) {
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  auto& connection = connections_.GetAclConnection(handle);
+
+  // The HCI Link Supervision Timeout parameter is expressed in Bluetooth Baseband slots:
+  // - Unit: 1 Baseband slot = 625 microseconds (0.625 ms).
+  // - Range: 0x0001 (0.625 ms) to 0xFFFF (40.9 seconds).
+  auto timeout_duration = std::chrono::microseconds(static_cast<uint64_t>(timeout) * 625);
+  connection.SetTimeout(timeout_duration);
   return ErrorCode::SUCCESS;
 }
 
