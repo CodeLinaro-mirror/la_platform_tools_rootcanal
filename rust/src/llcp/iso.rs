@@ -2161,7 +2161,7 @@ impl IsoManager {
         // Spec: "If the BIG_Handle parameter does not identify a BIG that is
         // currently created, the Controller shall return the error code
         // Unknown Advertising Identifier (0x42)."
-        if self.big_config.remove(&big_handle).is_none() {
+        let Some(big) = self.big_config.remove(&big_handle) else {
             self.send_hci_event(command_status(hci::ErrorCode::UnknownAdvertisingIdentifier));
             return;
         };
@@ -2178,9 +2178,13 @@ impl IsoManager {
         // Spec: "The Controller shall send an HCI_LE_Terminate_BIG_Complete
         // event to the Host."
         self.send_hci_event(hci::LeTerminateBigComplete { big_handle, reason });
+
+        // 5. Transmit LL_BIG_TERMINATE_IND over the Link Layer to Synced Receivers
+        self.ops
+            .send_big_terminate_ind(big.advertising_handle, reason.into());
     }
 
-    pub fn big_sync_lost(&mut self, sync_handle: u16) {
+    pub fn big_sync_lost(&mut self, sync_handle: u16, reason: hci::ErrorCode) {
         let sync_key = self
             .big_sync_config
             .iter()
@@ -2191,10 +2195,7 @@ impl IsoManager {
             self.big_sync_config.remove(&big_handle);
             self.bis_connections
                 .retain(|_, bis| bis.big_handle != big_handle);
-            self.send_hci_event(hci::LeBigSyncLost {
-                big_handle,
-                reason: hci::ErrorCode::RemoteUserTerminatedConnection,
-            });
+            self.send_hci_event(hci::LeBigSyncLost { big_handle, reason });
         }
     }
 }
@@ -2271,5 +2272,13 @@ mod test {
         assert!(iso_interval(Some(0x7530), Some(0x7530), false, 0x7530, 0x7530).is_some());
         assert!(iso_interval(Some(0x7530), None, false, 0x7530, 0x7530).is_some());
         assert!(iso_interval(Some(0x7530), Some(0x7530), false, 0x7000, 0x7000).is_none());
+    }
+
+    #[test]
+    fn test_transport_latency() {
+        // framed = true: cig_sync_delay + ft * iso_interval + sdu_interval
+        assert_eq!(transport_latency(1000, 10, 2, 5000, true), 1000 + 2 * 12500 + 5000);
+        // framed = false: cig_sync_delay + ft * iso_interval - sdu_interval
+        assert_eq!(transport_latency(10000, 10, 2, 5000, false), 10000 + 2 * 12500 - 5000);
     }
 }
