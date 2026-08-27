@@ -76,6 +76,7 @@ enum PacketType : 8 {
     LL_CS_TERMINATE_RSP = 0xFC,
     LL_CS_CHANNEL_MAP_IND = 0xFD,
     LL_PERIODIC_SYNC_IND = 0x55,
+    LL_BIG_TERMINATE_IND = 0x56,
 }
 
 packet LinkLayerPacket {
@@ -638,4 +639,10 @@ packet LlPeriodicSyncInd : LinkLayerPacket (type = LL_PERIODIC_SYNC_IND) {
     has_big_info: 8,
     big_info: BigInfo,
     phy: PhyType,
+}
+
+packet LlBigTerminateInd : LinkLayerPacket (type = LL_BIG_TERMINATE_IND) {
+    sid: 8,
+    reason: 8,
+    instant: 16,
 }
