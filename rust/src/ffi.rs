@@ -73,9 +73,21 @@ pub struct ControllerOps {
         framing: *mut u8,
         encryption: *mut u8,
     ) -> bool,
+    // SAFETY:
+    // - `user` must be exactly the value `ControllerOps::user_pointer`.
+    send_big_terminate_ind: unsafe extern "C" fn(user: *mut (), advertising_handle: u8, reason: u8),
 }
 
 impl ControllerOps {
+    pub(crate) fn send_big_terminate_ind(&self, advertising_handle: u8, reason: u8) {
+        // SAFETY:
+        // - `self.user_pointer` is the value provided when the callbacks are registered.
+        //    The value is not manipulated in the rust module.
+        // - `self.send_big_terminate_ind` is a valid function pointer
+        //    enforced by requirements on ControllerOps.
+        unsafe { (self.send_big_terminate_ind)(self.user_pointer, advertising_handle, reason) }
+    }
+
     pub(crate) fn get_address(&self, handle: u16) -> Option<hci::Address> {
         let mut result = [0; 6];
         unsafe { (self.get_address)(self.user_pointer, handle, &mut result as *mut _) };
@@ -392,14 +404,20 @@ pub unsafe extern "C" fn link_layer_remove_link(
 /// # Arguments
 /// * `ll` - link layer pointer
 /// * `sync_handle` - periodic advertising sync train handle
+/// * `reason` - disconnect/termination reason code
 /// # Safety
 /// - This should be called from the thread of creation
 /// - `ll` must be a valid pointer
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn link_layer_big_sync_lost(ll: *const LinkLayer, sync_handle: u16) -> bool {
+pub unsafe extern "C" fn link_layer_big_sync_lost(
+    ll: *const LinkLayer,
+    sync_handle: u16,
+    reason: u8,
+) -> bool {
     let mut ll = ManuallyDrop::new(unsafe { Rc::from_raw(ll) });
     let ll = Rc::get_mut(&mut ll).unwrap();
-    ll.big_sync_lost(sync_handle).is_ok()
+    let error_code = hci::ErrorCode::try_from(reason).unwrap_or(hci::ErrorCode::ConnectionTimeout);
+    ll.big_sync_lost(sync_handle, error_code).is_ok()
 }
 
 /// Run the Link Manager procedures

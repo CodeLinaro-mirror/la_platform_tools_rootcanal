@@ -468,6 +468,27 @@ public:
   // § 7.8.69).
   ErrorCode LePeriodicAdvertisingTerminateSync(uint16_t sync_handle);
 
+  // HCI LE Set Default Periodic Advertising Sync Transfer Parameters command
+  // (Vol 4, Part E § 7.8.90).
+  ErrorCode LeSetDefaultPeriodicAdvertisingSyncTransferParameters(
+          bluetooth::hci::SyncTransferMode mode, uint16_t skip, uint16_t sync_timeout,
+          bluetooth::hci::CteType cte_type);
+
+  // HCI LE Set Periodic Advertising Sync Transfer Parameters command
+  // (Vol 4, Part E § 7.8.89).
+  ErrorCode LeSetPeriodicAdvertisingSyncTransferParameters(uint16_t connection_handle,
+                                                           bluetooth::hci::SyncTransferMode mode,
+                                                           uint16_t skip, uint16_t sync_timeout,
+                                                           bluetooth::hci::CteType cte_type);
+
+  // HCI LE Periodic Advertising Sync Transfer command (Vol 4, Part E § 7.8.91).
+  ErrorCode LePeriodicAdvertisingSyncTransfer(uint16_t connection_handle, uint16_t service_data,
+                                              uint16_t sync_handle);
+
+  // HCI LE Periodic Advertising Set Info Transfer command (Vol 4, Part E § 7.8.92).
+  ErrorCode LePeriodicAdvertisingSetInfoTransfer(uint16_t connection_handle, uint16_t service_data,
+                                                 uint8_t advertising_handle);
+
   // Periodic Advertiser List
 
   // HCI LE Add Device To Periodic Advertiser List command (Vol 4, Part E
@@ -605,6 +626,8 @@ protected:
   void IncomingLlcpPacket(model::packets::LinkLayerPacketView incoming);
   void IncomingLeBroadcastIsochronousPdu(model::packets::LinkLayerPacketView incoming);
   void IncomingLeConnectedIsochronousPdu(model::packets::LinkLayerPacketView incoming);
+  void IncomingLlPeriodicSyncInd(LeAclConnection& connection,
+                                 model::packets::LinkLayerPacketView incoming);
 
   void ScanIncomingLeLegacyAdvertisingPdu(model::packets::LeLegacyAdvertisingPduView& pdu,
                                           uint8_t rssi);
@@ -618,6 +641,7 @@ protected:
   void IncomingLeLegacyAdvertisingPdu(model::packets::LinkLayerPacketView incoming, uint8_t rssi);
   void IncomingLeExtendedAdvertisingPdu(model::packets::LinkLayerPacketView incoming, uint8_t rssi);
   void IncomingLePeriodicAdvertisingPdu(model::packets::LinkLayerPacketView incoming, uint8_t rssi);
+  void IncomingLlBigTerminateInd(model::packets::LinkLayerPacketView incoming);
 
   void IncomingLeConnectPacket(model::packets::LinkLayerPacketView incoming);
   void IncomingLeConnectCompletePacket(model::packets::LinkLayerPacketView incoming);
@@ -679,12 +703,9 @@ protected:
                                model::packets::LinkLayerPacketView incoming);
   void IncomingLlCsSecurityRsp(LeAclConnection& connection,
                                model::packets::LinkLayerPacketView incoming);
-  void IncomingLlCsReq(LeAclConnection& connection,
-                               model::packets::LinkLayerPacketView incoming);
-  void IncomingLlCsRsp(LeAclConnection& connection,
-                               model::packets::LinkLayerPacketView incoming);
-  void IncomingLlCsInd(LeAclConnection& connection,
-                               model::packets::LinkLayerPacketView incoming);
+  void IncomingLlCsReq(LeAclConnection& connection, model::packets::LinkLayerPacketView incoming);
+  void IncomingLlCsRsp(LeAclConnection& connection, model::packets::LinkLayerPacketView incoming);
+  void IncomingLlCsInd(LeAclConnection& connection, model::packets::LinkLayerPacketView incoming);
   void IncomingLlCsTerminateReq(LeAclConnection& connection,
                                 model::packets::LinkLayerPacketView incoming);
   void IncomingLlCsTerminateRsp(LeAclConnection& connection,
@@ -774,6 +795,10 @@ private:
 
   // LE Default Subrate parameters (Vol 4, Part E § 7.8.123).
   LeAclSubrateParameters default_subrate_parameters_{};
+
+  // LE Default PAST parameters (Vol 4, Part E § 7.8.90).
+  LePeriodicAdvertisingSyncTransferParameters
+          default_periodic_advertising_sync_transfer_parameters_{};
 
   // LE CS Channel Classification (Vol 4, Part E § 7.8.139).
   std::array<uint8_t, 10> le_cs_channel_classification_{0xfc, 0xff, 0x7f, 0xfc, 0xff,
@@ -970,8 +995,11 @@ private:
     uint16_t sync_handle;
     std::chrono::steady_clock::duration sync_timeout;
     std::chrono::steady_clock::time_point timeout;
+    uint16_t advertising_interval{0};
+    bluetooth::hci::SecondaryPhyType secondary_phy{bluetooth::hci::SecondaryPhyType::LE_1M};
     // BIG configuration fetched from BIGInfo.
     std::optional<model::packets::BigInfo> big_info;
+    bool established_event_sent{false};
   };
 
   // Periodic advertising synchronizing and synchronized states.
