@@ -4587,6 +4587,21 @@ LeController::LeController(const Address& address, const ControllerProperties& p
                       return true;
                     }
                     return false;
+                  },
+
+          .send_big_terminate_ind =
+                  [](void* user, uint8_t advertising_handle, uint8_t reason) {
+                    auto controller = static_cast<LeController*>(user);
+                    Address source = controller->address_;
+                    uint8_t sid = 0;
+                    auto it = controller->extended_advertisers_.find(advertising_handle);
+                    if (it != controller->extended_advertisers_.end()) {
+                      source = it->second.GetAdvertisingAddress().GetAddress();
+                      sid = it->second.advertising_sid;
+                    }
+                    controller->SendLeLinkLayerPacket(
+                            model::packets::LlBigTerminateIndBuilder::Create(
+                                    source, bluetooth::hci::Address::kEmpty, sid, reason, 0));
                   }};
 
   ll_.reset(link_layer_create(controller_ops_));
@@ -4639,6 +4654,8 @@ void LeController::IncomingPacket(model::packets::LinkLayerPacketView incoming, 
       return IncomingLeExtendedAdvertisingPdu(incoming, rssi);
     case model::packets::PacketType::LE_PERIODIC_ADVERTISING_PDU:
       return IncomingLePeriodicAdvertisingPdu(incoming, rssi);
+    case model::packets::PacketType::LL_BIG_TERMINATE_IND:
+      return IncomingLlBigTerminateInd(incoming);
     case model::packets::PacketType::LE_CONNECT:
       return IncomingLeConnectPacket(incoming);
     case model::packets::PacketType::LE_CONNECT_COMPLETE:
@@ -5835,7 +5852,8 @@ void LeController::IncomingLePeriodicAdvertisingPdu(model::packets::LinkLayerPac
       }
     } else if (sync.big_info.has_value()) {
       // BIG has been terminated by the Broadcaster!
-      link_layer_big_sync_lost(ll_.get(), sync.sync_handle);
+      link_layer_big_sync_lost(ll_.get(), sync.sync_handle,
+                               static_cast<uint8_t>(ErrorCode::REMOTE_USER_TERMINATED_CONNECTION));
       sync.big_info = std::nullopt;
     }
     return;  // Only match one established sync.
@@ -5905,6 +5923,39 @@ void LeController::IncomingLePeriodicAdvertisingPdu(model::packets::LinkLayerPac
     // already match the advertiser address and advertising SID;
     // no need to check again.
     return;
+  }
+}
+
+void LeController::IncomingLlBigTerminateInd(model::packets::LinkLayerPacketView incoming) {
+  auto pdu = model::packets::LlBigTerminateIndView::Create(incoming);
+  if (!pdu.IsValid()) {
+    return;
+  }
+  Address source_address = incoming.GetSourceAddress();
+  uint8_t sid = pdu.GetSid();
+  uint8_t reason = pdu.GetReason();
+  uint16_t instant = pdu.GetInstant();
+
+  AddressType source_type = ((source_address.data()[5] & 0xc0) == 0x40)
+                                    ? AddressType::RANDOM_DEVICE_ADDRESS
+                                    : AddressType::PUBLIC_DEVICE_ADDRESS;
+  AddressWithType source_with_type{source_address, source_type};
+  Address resolved_source =
+          ResolvePrivateAddress(source_with_type).value_or(source_with_type).GetAddress();
+
+  for (auto& [_, sync] : synchronized_) {
+    if (sync.big_info.has_value()) {
+      if ((sync.advertiser_address == source_address ||
+           sync.advertiser_address == resolved_source) &&
+          sync.advertising_sid == sid) {
+        INFO(id_,
+             "Received LL_BIG_TERMINATE_IND from {} (sid: {}, reason: 0x{:x}, "
+             "instant: {})",
+             source_address, sid, reason, instant);
+        link_layer_big_sync_lost(ll_.get(), sync.sync_handle, reason);
+        sync.big_info = std::nullopt;
+      }
+    }
   }
 }
 
@@ -7014,12 +7065,17 @@ void LeController::LeScanning() {
 void LeController::LeSynchronization() {
   std::vector<uint16_t> removed_sync_handles;
   for (auto& [_, sync] : synchronized_) {
-    if (sync.timeout > std::chrono::steady_clock::now()) {
+    if (sync.timeout <= std::chrono::steady_clock::now()) {
       INFO(id_, "Periodic advertising sync with handle 0x{:x} lost", sync.sync_handle);
       removed_sync_handles.push_back(sync.sync_handle);
-    }
-    if (IsLeEventUnmasked(SubeventCode::LE_PERIODIC_ADVERTISING_SYNC_LOST)) {
-      send_event_(bluetooth::hci::LePeriodicAdvertisingSyncLostBuilder::Create(sync.sync_handle));
+      if (IsLeEventUnmasked(SubeventCode::LE_PERIODIC_ADVERTISING_SYNC_LOST)) {
+        send_event_(bluetooth::hci::LePeriodicAdvertisingSyncLostBuilder::Create(sync.sync_handle));
+      }
+      if (sync.big_info.has_value()) {
+        link_layer_big_sync_lost(ll_.get(), sync.sync_handle,
+                                 static_cast<uint8_t>(ErrorCode::CONNECTION_TIMEOUT));
+        sync.big_info = std::nullopt;
+      }
     }
   }
 
@@ -7032,6 +7088,7 @@ void LeController::Tick() {
   RunPendingTasks();
   LeAdvertising();
   LeScanning();
+  LeSynchronization();
   LeChannelSounding();
 }
 

@@ -641,6 +641,7 @@ protected:
   void IncomingLeLegacyAdvertisingPdu(model::packets::LinkLayerPacketView incoming, uint8_t rssi);
   void IncomingLeExtendedAdvertisingPdu(model::packets::LinkLayerPacketView incoming, uint8_t rssi);
   void IncomingLePeriodicAdvertisingPdu(model::packets::LinkLayerPacketView incoming, uint8_t rssi);
+  void IncomingLlBigTerminateInd(model::packets::LinkLayerPacketView incoming);
 
   void IncomingLeConnectPacket(model::packets::LinkLayerPacketView incoming);
   void IncomingLeConnectCompletePacket(model::packets::LinkLayerPacketView incoming);
