@@ -113,7 +113,7 @@ void ScriptedBeacon::set_state(PlaybackEvent::PlaybackEventType state) {
     }
   }
   populate_event(&event, state);
-  event.SerializeToOstream(&events_ostream_);
+  (void)event.SerializeToOstream(&events_ostream_);
   events_ostream_.flush();
 }
 
