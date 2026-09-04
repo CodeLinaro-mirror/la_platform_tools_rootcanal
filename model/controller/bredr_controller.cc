@@ -238,6 +238,9 @@ ErrorCode BrEdrController::AcceptConnectionRequest(Address bd_addr, bool try_rol
       // This implementation considers that a unique HCI Connection Complete
       // event is expected for both the HCI Create Connection and HCI Accept
       // Connection Request commands.
+      // Reset the page scan state.
+      page_scan_ = {};
+
       return ErrorCode::SUCCESS;
     }
 
@@ -2122,6 +2125,10 @@ void BrEdrController::WriteCurrentIacLap(std::vector<bluetooth::hci::Lap> iac_la
 void BrEdrController::RejectPeripheralConnection(const Address& addr, uint8_t reason) {
   INFO(id_, "Sending page reject to {} (reason 0x{:02x})", addr, reason);
   SendLinkLayerPacket(model::packets::PageRejectBuilder::Create(GetAddress(), addr, reason));
+
+  if (page_scan_.has_value() && page_scan_->bd_addr == addr) {
+    page_scan_ = {};
+  }
 
   if (IsEventUnmasked(EventCode::CONNECTION_COMPLETE)) {
     send_event_(bluetooth::hci::ConnectionCompleteBuilder::Create(
