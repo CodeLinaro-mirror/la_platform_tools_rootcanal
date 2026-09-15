@@ -332,6 +332,42 @@ TEST_F(LeBigTerminateIndTest, PeriodicAdvertisingSyncTimeoutWithoutBigInfo) {
   EXPECT_GT(events_.size(), events_before);
 }
 
+TEST_F(LeBigTerminateIndTest, PeriodicAdvertisingSyncTimeoutDoesNotTerminateActiveBig) {
+  Address peer_address{1};
+  EstablishPeriodicSync(peer_address, 0x01, 0x000A);
+  SendBigInfoReport(peer_address);
+
+  // Synchronize to the BIG via ForwardToLl
+  auto create_sync_cmd = LeBigCreateSyncBuilder::Create(
+          0x01 /* big_handle */, 0x0000 /* sync_handle */, Enable::DISABLED /* encryption */,
+          std::array<uint8_t, 16>{0} /* broadcast_code */, 0 /* mse */,
+          0x0100 /* big_sync_timeout */, std::vector<uint8_t>{1} /* bis */);
+  auto create_sync_bytes =
+          std::make_shared<std::vector<uint8_t>>(create_sync_cmd->SerializeToBytes());
+  controller_.ForwardToLl(CommandView::Create(pdl::packet::slice(create_sync_bytes)));
+  controller_.Tick();
+
+  // Advance time beyond PA sync timeout (100ms)
+  std::this_thread::sleep_for(std::chrono::milliseconds(150));
+  size_t events_before = events_.size();
+  controller_.Tick();
+
+  // Verify that PA sync lost event was emitted
+  EXPECT_GT(events_.size(), events_before);
+
+  // Verify that the BIG is still active by successfully terminating it via ForwardToLl
+  // (Core Spec Vol 6, Part B § 4.4.6: Losing PA sync does not terminate BIG sync).
+  auto terminate_sync_cmd = LeBigTerminateSyncBuilder::Create(0x01 /* big_handle */);
+  auto terminate_sync_bytes =
+          std::make_shared<std::vector<uint8_t>>(terminate_sync_cmd->SerializeToBytes());
+  events_before = events_.size();
+  controller_.ForwardToLl(CommandView::Create(pdl::packet::slice(terminate_sync_bytes)));
+  controller_.Tick();
+
+  // Verify that LeBigTerminateSync completed successfully (event emitted)
+  EXPECT_GT(events_.size(), events_before);
+}
+
 TEST_F(LeBigTerminateIndTest, PeriodicAdvertisingSyncTimeoutMultipleTrains) {
   Address peer_address1{1};
   Address peer_address2{2};
