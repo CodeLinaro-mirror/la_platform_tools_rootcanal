@@ -872,13 +872,36 @@ ErrorCode BrEdrController::SniffMode(uint16_t connection_handle, uint16_t sniff_
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
-  if (sniff_max_interval < sniff_min_interval || sniff_attempt < 0x0001 || sniff_attempt > 0x7FFF ||
-      sniff_timeout > 0x7FFF) {
+  const auto& connection = connections_.GetAclConnection(connection_handle);
+
+  if (connection.GetMode() != AclConnectionState::kSniffMode && !connection.IsSniffModeEnabled()) {
+    return ErrorCode::COMMAND_DISALLOWED;
+  }
+
+  auto sniff_interval_checks = [](uint16_t value) {
+    return value >= 0x0002 && value <= 0xFFFE && value % 2 == 0;
+  };
+
+  if (!sniff_interval_checks(sniff_max_interval) || !sniff_interval_checks(sniff_min_interval) ||
+      sniff_min_interval > sniff_max_interval) {
     return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
   }
 
-  // TODO: implement real logic
-  return ErrorCode::COMMAND_DISALLOWED;
+  if (sniff_attempt < 0x0001 || sniff_attempt > 0x7FFF || sniff_timeout > 0x7FFF) {
+    return ErrorCode::INVALID_HCI_COMMAND_PARAMETERS;
+  }
+
+  // For PDU parameter constraints please refer Vol 2, Part C, section 5.2.
+  uint16_t t_sniff = sniff_max_interval;
+  uint16_t d_sniff = t_sniff - 2;
+
+  auto bd_addr = connection.address;
+  ScheduleTask(kNoDelayMs, [=, this]() {
+    SendLinkLayerPacket(model::packets::SniffReqBuilder::Create(
+            GetAddress(), bd_addr, 0 /*timing_control_flag*/, d_sniff, t_sniff, sniff_attempt,
+            sniff_timeout));
+  });
+  return ErrorCode::SUCCESS;
 }
 
 // HCI Exit Sniff Mode command (Vol 4, Part E § 7.2.3).
@@ -887,8 +910,23 @@ ErrorCode BrEdrController::ExitSniffMode(uint16_t connection_handle) {
     return ErrorCode::UNKNOWN_CONNECTION;
   }
 
-  // TODO: implement real logic
-  return ErrorCode::COMMAND_DISALLOWED;
+  const auto& connection = connections_.GetAclConnection(connection_handle);
+  if (connection.GetMode() != AclConnectionState::kSniffMode) {
+    if (IsEventUnmasked(EventCode::MODE_CHANGE)) {
+      ScheduleTask(kNoDelayMs, [this, connection_handle]() {
+        send_event_(bluetooth::hci::ModeChangeBuilder::Create(ErrorCode::SUCCESS, connection_handle,
+                                                              bluetooth::hci::Mode::ACTIVE, 0));
+      });
+    }
+    return ErrorCode::SUCCESS;
+  }
+
+  auto bd_addr = connection.address;
+  ScheduleTask(kNoDelayMs, [=, this]() {
+    SendLinkLayerPacket(model::packets::UnsniffReqBuilder::Create(GetAddress(), bd_addr));
+  });
+
+  return ErrorCode::SUCCESS;
 }
 
 // HCI QoS Setup command (Vol 4, Part E § 7.2.6).
@@ -1473,6 +1511,18 @@ void BrEdrController::IncomingPacket(model::packets::LinkLayerPacketView incomin
       break;
     case model::packets::PacketType::ROLE_SWITCH_RESPONSE:
       IncomingRoleSwitchResponse(incoming);
+      break;
+    case model::packets::PacketType::SNIFF_REQ:
+      IncomingSniffReq(incoming);
+      break;
+    case model::packets::PacketType::SNIFF_RSP:
+      IncomingSniffRsp(incoming);
+      break;
+    case model::packets::PacketType::UNSNIFF_REQ:
+      IncomingUnsniffReq(incoming);
+      break;
+    case model::packets::PacketType::UNSNIFF_RSP:
+      IncomingUnsniffRsp(incoming);
       break;
     default:
       WARNING(id_, "Dropping unhandled packet of type {}",
@@ -2214,6 +2264,142 @@ void BrEdrController::IncomingRoleSwitchResponse(model::packets::LinkLayerPacket
       send_event_(bluetooth::hci::RoleChangeBuilder::Create(status, bd_addr, new_role));
     });
   }
+}
+
+void BrEdrController::IncomingSniffReq(model::packets::LinkLayerPacketView incoming) {
+  auto bd_addr = incoming.GetSourceAddress();
+  auto connection_handle = connections_.GetAclConnectionHandle(bd_addr);
+
+  if (!connection_handle.has_value()) {
+    INFO(id_, "ignoring Sniff Req received on unknown connection");
+    return;
+  }
+
+  auto& connection = connections_.GetAclConnection(*connection_handle);
+
+  if (connection.GetMode() != AclConnectionState::kSniffMode && !connection.IsSniffModeEnabled()) {
+    INFO(id_, "sniff mode disabled by local link policy settings");
+    SendLinkLayerPacket(model::packets::SniffRspBuilder::Create(
+            GetAddress(), bd_addr, static_cast<uint8_t>(ErrorCode::COMMAND_DISALLOWED), 0));
+    return;
+  }
+
+  auto sniff_req = model::packets::SniffReqView::Create(incoming);
+  ASSERT(sniff_req.IsValid());
+
+  auto interval = sniff_req.GetTSniff();
+
+  SendLinkLayerPacket(model::packets::SniffRspBuilder::Create(
+          GetAddress(), bd_addr, static_cast<uint8_t>(ErrorCode::SUCCESS), interval));
+
+  if (IsEventUnmasked(EventCode::MODE_CHANGE)) {
+    send_event_(bluetooth::hci::ModeChangeBuilder::Create(ErrorCode::SUCCESS, *connection_handle,
+                                                          bluetooth::hci::Mode::SNIFF, interval));
+  }
+  connection.SetMode(AclConnectionState::kSniffMode);
+  connection.SetSniffInterval(interval);
+}
+
+void BrEdrController::IncomingSniffRsp(model::packets::LinkLayerPacketView incoming) {
+  auto bd_addr = incoming.GetSourceAddress();
+  auto connection_handle = connections_.GetAclConnectionHandle(bd_addr);
+
+  if (!connection_handle.has_value()) {
+    INFO(id_, "ignoring Sniff Rsp received on unknown connection");
+    return;
+  }
+
+  auto sniff_rsp = model::packets::SniffRspView::Create(incoming);
+  ASSERT(sniff_rsp.IsValid());
+
+  auto status = ErrorCode(sniff_rsp.GetStatus());
+
+  if (status != ErrorCode::SUCCESS) {
+    DEBUG(id_, "Sniff Rsp failed with status: {}, connection_handle: {}", static_cast<int>(status),
+          *connection_handle);
+    if (IsEventUnmasked(EventCode::MODE_CHANGE)) {
+      const auto& connection = connections_.GetAclConnection(*connection_handle);
+      bluetooth::hci::Mode current_mode = connection.GetMode() == AclConnectionState::kSniffMode
+                                                  ? bluetooth::hci::Mode::SNIFF
+                                                  : bluetooth::hci::Mode::ACTIVE;
+      send_event_(bluetooth::hci::ModeChangeBuilder::Create(
+              status, *connection_handle, current_mode, connection.GetSniffInterval()));
+    }
+    return;
+  }
+
+  if (IsEventUnmasked(EventCode::MODE_CHANGE)) {
+    send_event_(bluetooth::hci::ModeChangeBuilder::Create(
+            status, *connection_handle, bluetooth::hci::Mode::SNIFF, sniff_rsp.GetInterval()));
+  }
+
+  auto& connection = connections_.GetAclConnection(*connection_handle);
+  connection.SetMode(AclConnectionState::kSniffMode);
+  connection.SetSniffInterval(sniff_rsp.GetInterval());
+}
+
+void BrEdrController::IncomingUnsniffReq(model::packets::LinkLayerPacketView incoming) {
+  auto bd_addr = incoming.GetSourceAddress();
+  auto connection_handle = connections_.GetAclConnectionHandle(bd_addr);
+
+  if (!connection_handle.has_value()) {
+    INFO(id_, "ignoring Unsniff Req received on unknown connection");
+    return;
+  }
+
+  auto& connection = connections_.GetAclConnection(*connection_handle);
+
+  if (connection.GetMode() != AclConnectionState::kSniffMode) {
+    SendLinkLayerPacket(model::packets::UnsniffRspBuilder::Create(
+            GetAddress(), bd_addr, static_cast<uint8_t>(ErrorCode::COMMAND_DISALLOWED)));
+    return;
+  }
+
+  SendLinkLayerPacket(model::packets::UnsniffRspBuilder::Create(
+          GetAddress(), bd_addr, static_cast<uint8_t>(ErrorCode::SUCCESS)));
+
+  if (IsEventUnmasked(EventCode::MODE_CHANGE)) {
+    send_event_(bluetooth::hci::ModeChangeBuilder::Create(ErrorCode::SUCCESS, *connection_handle,
+                                                          bluetooth::hci::Mode::ACTIVE, 0));
+  }
+
+  connection.SetMode(AclConnectionState::kActiveMode);
+}
+
+void BrEdrController::IncomingUnsniffRsp(model::packets::LinkLayerPacketView incoming) {
+  auto bd_addr = incoming.GetSourceAddress();
+  auto connection_handle = connections_.GetAclConnectionHandle(bd_addr);
+
+  if (!connection_handle.has_value()) {
+    INFO(id_, "ignoring Unsniff Rsp received on unknown connection");
+    return;
+  }
+
+  auto unsniff_rsp = model::packets::UnsniffRspView::Create(incoming);
+  ASSERT(unsniff_rsp.IsValid());
+
+  auto status = ErrorCode(unsniff_rsp.GetStatus());
+
+  if (status != ErrorCode::SUCCESS) {
+    DEBUG(id_, "UnsniffRsp failed with status: {}, connection_handle: {}", static_cast<int>(status),
+          *connection_handle);
+    if (IsEventUnmasked(EventCode::MODE_CHANGE)) {
+      // The link remains in Sniff mode: report the current sniff interval.
+      const auto& connection = connections_.GetAclConnection(*connection_handle);
+      send_event_(bluetooth::hci::ModeChangeBuilder::Create(status, *connection_handle,
+                                                            bluetooth::hci::Mode::SNIFF,
+                                                            connection.GetSniffInterval()));
+    }
+    return;
+  }
+
+  if (IsEventUnmasked(EventCode::MODE_CHANGE)) {
+    send_event_(bluetooth::hci::ModeChangeBuilder::Create(status, *connection_handle,
+                                                          bluetooth::hci::Mode::ACTIVE, 0));
+  }
+
+  auto& connection = connections_.GetAclConnection(*connection_handle);
+  connection.SetMode(AclConnectionState::kActiveMode);
 }
 
 ErrorCode BrEdrController::WriteLinkSupervisionTimeout(uint16_t handle, uint16_t timeout) {
