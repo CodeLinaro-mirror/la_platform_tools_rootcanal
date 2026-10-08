@@ -470,9 +470,7 @@ class Test(ControllerTest):
 
         # 2. The Host replies with the matching Long Term Key.
         controller.send_cmd(
-            hci.LeLongTermKeyRequestReply(
-                connection_handle=handle, long_term_key=ltk
-            )
+            hci.LeLongTermKeyRequestReply(connection_handle=handle, long_term_key=ltk)
         )
 
         # 3. Encryption is enabled and the peer Central is notified.
