@@ -38,4 +38,8 @@ void ffi_controller_tick(void* controller);
 void ffi_generate_rpa(uint8_t const irk[16], uint8_t rpa[6]);
 bool ffi_controller_has_le_connection(void* controller, uint8_t const source_address[6],
                                       uint8_t const target_address[6]);
+// Log callback for RootCanal events.
+// level: 0 = kDebug, 1 = kInfo, 2 = kWarning, 3 = kError, 4 = kFatal
+typedef void (*ffi_log_callback_t)(int level, char const* file, int line, char const* message);
+void ffi_set_log_callback(ffi_log_callback_t callback);
 };  // extern "C"
