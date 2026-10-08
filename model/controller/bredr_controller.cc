@@ -235,13 +235,18 @@ ErrorCode BrEdrController::AcceptConnectionRequest(Address bd_addr, bool try_rol
 
       // TODO: the core specification is very unclear as to what behavior
       // is expected when two connections are established simultaneously.
-      // This implementation considers that a unique HCI Connection Complete
-      // event is expected for both the HCI Create Connection and HCI Accept
-      // Connection Request commands.
+      // When two controllers page each other simultaneously and the peer
+      // responds to our page first, the outgoing ACL connection is already
+      // established by the time the Host accepts the peer's incoming page.
+      // Return `ErrorCode::CONNECTION_ALREADY_EXISTS` instead of `SUCCESS`
+      // (which would promise a second `HCI_Connection_Complete` event that is
+      // never sent) so the Host immediately terminates the duplicate incoming
+      // request and clears its pending incoming connection state.
+
       // Reset the page scan state.
       page_scan_ = {};
 
-      return ErrorCode::SUCCESS;
+      return ErrorCode::CONNECTION_ALREADY_EXISTS;
     }
 
     auto connection_handle = connections_.CreateConnection(bd_addr, GetAddress());
