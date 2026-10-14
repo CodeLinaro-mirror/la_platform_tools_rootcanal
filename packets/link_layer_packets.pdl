@@ -54,6 +54,11 @@ enum PacketType : 8 {
     ROLE_SWITCH_REQUEST = 0x38,
     ROLE_SWITCH_RESPONSE = 0x39,
 
+    SNIFF_REQ = 0x23,
+    UNSNIFF_REQ = 0x24,
+    SNIFF_RSP = 0x25,
+    UNSNIFF_RSP = 0x26,
+
     LL_PHY_REQ = 0x50,
     LL_PHY_RSP = 0x51,
     LL_PHY_UPDATE_IND = 0x52,
@@ -399,6 +404,26 @@ packet RoleSwitchRequest : LinkLayerPacket (type = ROLE_SWITCH_REQUEST) {
 }
 
 packet RoleSwitchResponse : LinkLayerPacket (type = ROLE_SWITCH_RESPONSE) {
+  status: 8,
+}
+
+packet SniffReq : LinkLayerPacket (type = SNIFF_REQ) {
+  timing_control_flags: 8,
+  d_sniff: 16,
+  t_sniff: 16,
+  sniff_attempt: 16,
+  sniff_timeout: 16,
+}
+
+packet UnsniffReq : LinkLayerPacket (type = UNSNIFF_REQ) {
+}
+
+packet SniffRsp : LinkLayerPacket (type = SNIFF_RSP) {
+  status: 8,
+  interval: 16,
+}
+
+packet UnsniffRsp : LinkLayerPacket (type = UNSNIFF_RSP) {
   status: 8,
 }
 

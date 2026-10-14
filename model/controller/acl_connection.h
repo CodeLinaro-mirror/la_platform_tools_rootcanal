@@ -55,6 +55,12 @@ public:
   bool IsSniffModeEnabled() const { return (link_policy_settings_ & 0x4) != 0; }
 
   AclConnectionState GetMode() const { return state_; }
+  void SetMode(AclConnectionState state) { state_ = state; }
+
+  // Sniff interval (in baseband slots) negotiated when the link entered
+  // Sniff mode. Only meaningful while GetMode() == kSniffMode.
+  uint16_t GetSniffInterval() const { return sniff_interval_; }
+  void SetSniffInterval(uint16_t interval) { sniff_interval_ = interval; }
 
   bluetooth::hci::Role GetRole() const;
   void SetRole(bluetooth::hci::Role role);
@@ -81,6 +87,7 @@ private:
   bool encrypted_{false};
   uint16_t link_policy_settings_{0};
   AclConnectionState state_{kActiveMode};
+  uint16_t sniff_interval_{0};
   bluetooth::hci::Role role_{bluetooth::hci::Role::CENTRAL};
   std::chrono::steady_clock::time_point last_packet_timestamp_;
 

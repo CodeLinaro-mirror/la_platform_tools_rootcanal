@@ -98,6 +98,13 @@ class Test(ControllerTest):
             )
         )
 
+    # Verify that when both the local and remote devices initiate a BR/EDR page
+    # simultaneously and the remote device responds to our page first (completing
+    # the outgoing ACL connection before the local Host accepts the incoming
+    # connection request), the controller rejects HCI_Accept_Connection_Request
+    # with ErrorCode.CONNECTION_ALREADY_EXISTS and clears its pending page scan
+    # state so the Host does not wait indefinitely for a second
+    # HCI_Connection_Complete event.
     async def test_scenario_2(self):
         controller = self.controller
         peer_address = Address("11:22:33:44:55:66")
@@ -176,9 +183,14 @@ class Test(ControllerTest):
             )
         )
 
+        # Because the ACL connection for peer_address was already established by
+        # the peer's PageResponse, accepting the duplicate incoming connection
+        # request returns CONNECTION_ALREADY_EXISTS so the Host immediately
+        # clears its pending incoming connection state.
         await self.expect_evt(
             hci.AcceptConnectionRequestStatus(
-                status=ErrorCode.SUCCESS, num_hci_command_packets=1
+                status=ErrorCode.CONNECTION_ALREADY_EXISTS,
+                num_hci_command_packets=1,
             )
         )
 
