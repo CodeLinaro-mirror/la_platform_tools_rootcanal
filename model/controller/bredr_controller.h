@@ -279,6 +279,10 @@ protected:
   void IncomingPingRequest(model::packets::LinkLayerPacketView incoming);
   void IncomingRoleSwitchRequest(model::packets::LinkLayerPacketView incoming);
   void IncomingRoleSwitchResponse(model::packets::LinkLayerPacketView incoming);
+  void IncomingSniffReq(model::packets::LinkLayerPacketView incoming);
+  void IncomingSniffRsp(model::packets::LinkLayerPacketView incoming);
+  void IncomingUnsniffReq(model::packets::LinkLayerPacketView incoming);
+  void IncomingUnsniffRsp(model::packets::LinkLayerPacketView incoming);
 
 public:
   bool IsEventUnmasked(bluetooth::hci::EventCode event) const;
