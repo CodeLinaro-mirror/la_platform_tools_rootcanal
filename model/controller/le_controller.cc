@@ -7071,8 +7071,11 @@ void LeController::LeSynchronization() {
       if (IsLeEventUnmasked(SubeventCode::LE_PERIODIC_ADVERTISING_SYNC_LOST)) {
         send_event_(bluetooth::hci::LePeriodicAdvertisingSyncLostBuilder::Create(sync.sync_handle));
       }
-      // Note: Losing synchronization with the Periodic Advertising train does not
-      // terminate synchronization with the BIG (Core Spec Vol 6, Part B, 4.4.6).
+      if (sync.big_info.has_value()) {
+        link_layer_big_sync_lost(ll_.get(), sync.sync_handle,
+                                 static_cast<uint8_t>(ErrorCode::CONNECTION_TIMEOUT));
+        sync.big_info = std::nullopt;
+      }
     }
   }
 
@@ -7294,39 +7297,27 @@ ErrorCode LeController::LeLongTermKeyRequestReply(uint16_t handle,
   }
 
   auto& connection = connections_.GetLeAclConnection(handle);
-  auto status = ErrorCode::SUCCESS;
-  auto encryption_enabled = bluetooth::hci::EncryptionEnabled::ON;
 
-  // The Long Term Key provided by the Host must match the Long Term Key used
-  // by the peer Central to start the encryption procedure, otherwise the
-  // session keys differ and the authentication of the encryption start
-  // procedure fails on both sides.
-  if (connection.ltk.has_value() && connection.ltk.value() != ltk) {
-    INFO(id_, "Long Term Key mismatch for connection {:04x}", handle);
-    status = ErrorCode::AUTHENTICATION_FAILURE;
-    encryption_enabled = bluetooth::hci::EncryptionEnabled::OFF;
-  }
-
+  // TODO: Check keys
   if (connection.IsEncrypted()) {
     if (IsEventUnmasked(EventCode::ENCRYPTION_KEY_REFRESH_COMPLETE)) {
-      send_event_(bluetooth::hci::EncryptionKeyRefreshCompleteBuilder::Create(status, handle));
+      send_event_(bluetooth::hci::EncryptionKeyRefreshCompleteBuilder::Create(ErrorCode::SUCCESS,
+                                                                              handle));
     }
   } else {
-    uint8_t key_size = (status == ErrorCode::SUCCESS) ? 0x10 : 0;
-    if (status == ErrorCode::SUCCESS) {
-      connection.Encrypt();
-    }
+    connection.Encrypt();
     if (IsEventUnmasked(EventCode::ENCRYPTION_CHANGE_V2)) {
-      send_event_(bluetooth::hci::EncryptionChangeV2Builder::Create(status, handle,
-                                                                    encryption_enabled, key_size));
+      send_event_(bluetooth::hci::EncryptionChangeV2Builder::Create(
+              ErrorCode::SUCCESS, handle, bluetooth::hci::EncryptionEnabled::ON,
+              0x10 /* key_size */));
     } else if (IsEventUnmasked(EventCode::ENCRYPTION_CHANGE)) {
-      send_event_(
-              bluetooth::hci::EncryptionChangeBuilder::Create(status, handle, encryption_enabled));
+      send_event_(bluetooth::hci::EncryptionChangeBuilder::Create(
+              ErrorCode::SUCCESS, handle, bluetooth::hci::EncryptionEnabled::ON));
     }
   }
   SendLeLinkLayerPacket(model::packets::LeEncryptConnectionResponseBuilder::Create(
           connection.own_address.GetAddress(), connection.address.GetAddress(),
-          static_cast<uint8_t>(status), std::array<uint8_t, 8>(), uint16_t(), ltk));
+          static_cast<uint8_t>(ErrorCode::SUCCESS), std::array<uint8_t, 8>(), uint16_t(), ltk));
 
   return ErrorCode::SUCCESS;
 }

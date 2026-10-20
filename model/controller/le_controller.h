@@ -26,7 +26,6 @@
 #include <functional>
 #include <memory>
 #include <optional>
-#include <random>
 #include <set>
 #include <unordered_map>
 #include <utility>
@@ -1053,9 +1052,6 @@ private:
 
   // Return the next valid unused task identifier.
   TaskId NextTaskId();
-
-  // Pseudo-random generator for BLE link layer random delays (e.g. advDelay).
-  std::mt19937_64 random_generator_{};
 };
 
 }  // namespace rootcanal

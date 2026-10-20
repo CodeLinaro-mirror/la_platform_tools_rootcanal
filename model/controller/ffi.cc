@@ -18,7 +18,6 @@
 
 #include <iostream>
 
-#include "log.h"
 #include "model/controller/dual_mode_controller.h"
 #include "rootcanal/configuration.pb.h"
 
@@ -174,10 +173,6 @@ __attribute__((visibility("default"))) bool ffi_controller_has_le_connection(
   Address src(*reinterpret_cast<const uint8_t (*)[Address::kLength]>(source_address));
   Address dst(*reinterpret_cast<const uint8_t (*)[Address::kLength]>(target_address));
   return controller->GetLeAclConnectionHandle(dst, src).has_value();
-}
-
-__attribute__((visibility("default"))) void ffi_set_log_callback(ffi_log_callback_t callback) {
-  rootcanal::log::SetLogCallback(callback);
 }
 
 };  // extern "C"

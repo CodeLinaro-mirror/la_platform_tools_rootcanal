@@ -1602,8 +1602,7 @@ void LeController::LeAdvertising() {
   // Generate Link Layer Advertising events when advertising is enabled
   // and a full interval has passed since the last event.
   if (legacy_advertiser_.IsEnabled() && now >= legacy_advertiser_.next_event) {
-    legacy_advertiser_.next_event = now + legacy_advertiser_.advertising_interval +
-            legacy_advertiser_.AdvDelay(random_generator_);
+    legacy_advertiser_.next_event = now + legacy_advertiser_.advertising_interval;
     model::packets::LegacyAdvertisingType type;
     bool attach_advertising_data = true;
     switch (legacy_advertiser_.advertising_type) {
@@ -1711,8 +1710,7 @@ void LeController::LeAdvertising() {
     // Generate Link Layer Advertising events when advertising is enabled
     // and a full interval has passed since the last event.
     if (advertiser.IsEnabled() && now >= advertiser.next_event) {
-      advertiser.next_event = now + advertiser.primary_advertising_interval +
-              advertiser.AdvDelay(random_generator_);
+      advertiser.next_event += advertiser.primary_advertising_interval;
       advertiser.num_completed_extended_advertising_events++;
 
       if (advertiser.advertising_event_properties.legacy_) {

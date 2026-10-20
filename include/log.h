@@ -32,12 +32,7 @@ enum Verbosity {
   kFatal,
 };
 
-extern "C" {
-using LogCallback = void (*)(int level, char const* file, int line, char const* message);
-}
-
 void SetLogColorEnable(bool);
-void SetLogCallback(LogCallback);
 
 void VLog(Verbosity verb, char const* file, int line, std::optional<int> instance,
           char const* format, fmt::format_args args);
