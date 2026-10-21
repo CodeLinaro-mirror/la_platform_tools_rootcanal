@@ -16,8 +16,6 @@
 
 #include "model/controller/ffi.h"
 
-#include <iostream>
-
 #include "log.h"
 #include "model/controller/dual_mode_controller.h"
 #include "rootcanal/configuration.pb.h"
@@ -121,7 +119,7 @@ __attribute__((visibility("default"))) void ffi_controller_receive_hci(void* con
       controller->HandleIso(bytes);
       break;
     default:
-      std::cerr << "Dropping HCI packet with unknown type " << (int)idc << std::endl;
+      WARNING("Dropping HCI packet with unknown type {}", idc);
       break;
   }
 }
@@ -136,7 +134,7 @@ __attribute__((visibility("default"))) void ffi_controller_receive_ll(void* cont
   model::packets::LinkLayerPacketView packet =
           model::packets::LinkLayerPacketView::Create(pdl::packet::slice(bytes));
   if (!packet.IsValid()) {
-    std::cerr << "Dropping malformed LL packet" << std::endl;
+    WARNING("Dropping malformed LL packet");
     return;
   }
   controller->ReceiveLinkLayerPacket(packet, Phy::Type(phy), rssi);
