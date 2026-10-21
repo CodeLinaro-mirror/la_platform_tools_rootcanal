@@ -7071,11 +7071,8 @@ void LeController::LeSynchronization() {
       if (IsLeEventUnmasked(SubeventCode::LE_PERIODIC_ADVERTISING_SYNC_LOST)) {
         send_event_(bluetooth::hci::LePeriodicAdvertisingSyncLostBuilder::Create(sync.sync_handle));
       }
-      if (sync.big_info.has_value()) {
-        link_layer_big_sync_lost(ll_.get(), sync.sync_handle,
-                                 static_cast<uint8_t>(ErrorCode::CONNECTION_TIMEOUT));
-        sync.big_info = std::nullopt;
-      }
+      // Note: Losing synchronization with the Periodic Advertising train does not
+      // terminate synchronization with the BIG (Core Spec Vol 6, Part B, 4.4.6).
     }
   }
 

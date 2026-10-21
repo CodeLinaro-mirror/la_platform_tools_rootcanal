@@ -37,8 +37,9 @@ class Test(ControllerTest):
     )
 
     # LL/BIS/SNC/BV-02-C [Broadcast Isochronous Stream Loss - Supervision Timeout]
-    # Conformance Rule: Tests that when Periodic Advertising / BIS PDUs cease,
-    # the Synced Receiver correctly triggers Supervision Timeout and emits LeBigSyncLost.
+    # Conformance Rule: Tests that when Periodic Advertising PDUs cease,
+    # the Synced Receiver triggers PA Sync Lost, while BIG synchronization is NOT
+    # terminated (Core Spec Vol 6, Part B, § 4.4.6).
     async def test(self):
         controller = self.controller
         peer_address = Address("11:11:11:11:11:11")
@@ -242,27 +243,39 @@ class Test(ControllerTest):
             )
         )
 
-        # 5. Do NOT send any further Periodic Advertising or BIS PDUs
+        # 5. Do NOT send any further Periodic Advertising PDUs
         # Advance simulated time beyond sync_timeout (2.5 seconds + margin)
         await asyncio.sleep(3.0)
 
-        # 6. Verify that LePeriodicAdvertisingSyncLost and LeBigSyncLost are received
-        sync_lost = hci.LePeriodicAdvertisingSyncLost(sync_handle=sync_handle)
-        big_sync_lost = hci.LeBigSyncLost(
-            big_handle=self.BIG_Sync_Handle,
-            reason=ErrorCode.CONNECTION_TIMEOUT,
+        # 6. Verify that LePeriodicAdvertisingSyncLost is received
+        await self.expect_evt(
+            hci.LePeriodicAdvertisingSyncLost(sync_handle=sync_handle),
+            timeout=5.0,
         )
 
-        matched_sync_lost = False
-        matched_big_sync_lost = False
-        while not (matched_sync_lost and matched_big_sync_lost):
-            evt = await self.expect_evt([sync_lost, big_sync_lost], timeout=5.0)
-            if isinstance(evt, hci.LePeriodicAdvertisingSyncLost):
-                matched_sync_lost = True
-            elif isinstance(evt, hci.LeBigSyncLost):
-                matched_big_sync_lost = True
+        # Ensure no LeBigSyncLost is received (Core Spec Vol 6, Part B, 4.4.6:
+        # Losing synchronization with the Periodic Advertising train does not
+        # terminate synchronization with the BIG).
+        try:
+            unexpected_evt = await self.expect_evt(
+                hci.LeBigSyncLost(big_handle=self.BIG_Sync_Handle, reason=self.Any),
+                timeout=0.5,
+            )
+            self.fail(f"Unexpected LeBigSyncLost received: {unexpected_evt}")
+        except asyncio.TimeoutError:
+            pass
 
-        # 7. Disable Extended Scanning
+        # 7. Verify BIG is still synchronized by terminating it successfully
+        controller.send_cmd(hci.LeBigTerminateSync(big_handle=self.BIG_Sync_Handle))
+        await self.expect_evt(
+            hci.LeBigTerminateSyncComplete(
+                status=ErrorCode.SUCCESS,
+                num_hci_command_packets=1,
+                big_handle=self.BIG_Sync_Handle,
+            )
+        )
+
+        # 8. Disable Extended Scanning
         controller.send_cmd(
             hci.LeSetExtendedScanEnable(
                 enable=hci.Enable.DISABLED,
