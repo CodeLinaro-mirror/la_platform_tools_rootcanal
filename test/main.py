@@ -87,6 +87,8 @@ tests = [
     "LMP.LIH.BV_15_C",
     "LMP.LIH.BV_16_C",
     "LMP.LIH.BV_17_C",
+    "LMP.LIH.BV_19_C",
+    "LMP.LIH.BV_20_C",
     "LMP.LIH.BV_78_C",
     "LMP.LIH.BV_79_C",
     "LMP.LIH.BV_142_C",
