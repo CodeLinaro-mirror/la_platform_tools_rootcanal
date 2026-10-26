@@ -4212,6 +4212,7 @@ void LeController::LeChannelSounding() {
               config.remaining_procedure_count);
         config.remaining_procedure_count--;
         SendLeCsSubeventResult(connection, config);
+        connection.cs_parameters.procedure_count++;
         if (config.remaining_procedure_count > 0) {
           config.result_timeout = now + kCsProcedureInterval;
         } else {
