@@ -104,6 +104,7 @@ tests = [
     "LL.le_encryption",
     "LMP.connection_keepalive",
     "LMP.page_collision",
+    "LMP.sniff_mode",
 ]
 
 

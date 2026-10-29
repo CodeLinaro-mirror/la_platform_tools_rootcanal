@@ -371,12 +371,12 @@ class Test(ControllerTest):
         # LeCsSubeventResultContinue packet (9-byte header, handles up to 27
         # steps). Since max_procedure_count=2, we expect 2 total bursts of these
         # 2 packets.
-        for _ in range(2):
+        for procedure in range(2):
             await self.expect_evt(
                 hci.LeCsSubeventResult(
                     connection_handle=acl_connection_handle,
                     config_id=2,
-                    procedure_counter=self.Any,
+                    procedure_counter=procedure,
                     frequency_compensation=self.Any,
                     reference_power_level=self.Any,
                     procedure_done_status=self.Any,

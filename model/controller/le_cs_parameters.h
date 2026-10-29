@@ -84,7 +84,7 @@ struct LeCsParameters {
   std::optional<std::array<uint8_t, 72>> remote_fae_table;
   LeCsDefaultSettings default_settings;
   std::unordered_map<uint8_t, LeCsConfig> config_map;
-  uint8_t procedure_count{};
+  uint16_t procedure_count{};
 
   // CS Security
   bool security_enabled{};
